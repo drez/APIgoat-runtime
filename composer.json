@@ -1,5 +1,5 @@
 {
-    "name": "fred/apigoat-runtime",
+    "name": "apigoat/runtime",
     "description": "",
     "homepage": "https://apigoat.com/",
     "type": "library",
