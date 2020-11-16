@@ -1,0 +1,16 @@
+{
+    "name": "fred/APIgoat-runtime",
+    "description": "",
+    "homepage": "https://apigoat.com/",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "slim/slim": "^4.0",
+        "slim/http": "^0.8.0",
+        "php-di/slim-bridge": "^3.0",
+        "php-di/php-di": "^6.0",
+        "selective/config": "^0.1.1",
+        "symfony/filesystem": "^5.0",
+        "phpmailer/phpmailer": "~6.1"
+    }
+}
