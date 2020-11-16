@@ -1,0 +1,143 @@
+<?php
+
+namespace ApiGoat\Middlewares;
+
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Slim\Exception\HttpForbiddenException;
+use ApiGoat\Handlers\InvalidSessionRenderer;
+use Slim\Psr7\Response;
+use Psr\Http\Message\ResponseFactoryInterface;
+use ApiGoat\Api\ApiResponse;
+use Apigoat\Sessions\AuthySession;
+
+/**
+ * Description of Authy
+ *
+ * @author sysadmin
+ */
+class AuthyMiddleware implements MiddlewareInterface
+{
+    use \ApiGoat\ACL\AuthyACL;
+
+    public function __construct(ResponseFactoryInterface $responseFactory = null)
+    {
+        $this->privilegeMap = (require _BASE_DIR . "config/privileges.map.php");
+    }
+
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        $this->args = $request->getAttribute('parsed_args');
+
+        // public API route
+        if ($request->getAttribute('rbac_public') == 'passed') {
+            $response = $handler->handle($request);
+            return $response;
+        }
+
+        // validate authentication if not an API call
+        if (!$this->args['is_api']) {
+            if (!is_object($_SESSION[_AUTH_VAR]) or (get_class($_SESSION[_AUTH_VAR]) != 'ApiGoat\Sessions\AuthySession')) {
+                unset($_SESSION[_AUTH_VAR]);
+                $_SESSION[_AUTH_VAR] = new AuthySession();
+                $_SESSION[_AUTH_VAR]->set('connected', 'NO');
+            }
+
+            if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES') {
+
+                if (
+                    $this->args['route'] != 'Authy/login' && $this->args['route'] != 'Authy/auth' && $this->args['route'] != 'Authy/reset'
+                    && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth"
+                ) {
+                    $response = new Response();
+                    return $response->withHeader('Location', _SUB_DIR . 'Authy/login')->withStatus(401);
+                } else {
+                    $response = $handler->handle($request);
+                    return $response;
+                }
+            }
+        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $this->args['route'] != 'Authy/auth' && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
+            $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
+            $ApiResponse->setStatus(401);
+            return $ApiResponse->getResponse();
+        }
+
+        $access = $this->checkPrivileges($request);
+        if (false !==  $access) {
+            // access denied
+            if ($access instanceof InvalidSessionRenderer) {
+                if ($this->args['is_api']) {
+                    $ApiResponse = new ApiResponse($this->args, $this->response, (($access->getMessage()) ? $access->getMessage() : []));
+                    $ApiResponse->setStatus(403);
+                    return $ApiResponse->getResponse();
+                } else {
+                    // progress anyways
+                    $response = $handler->handle($request);
+                    $response = new Response();
+                    $request = $request->withAttribute('authy_access', 'denied');
+                    $request = $request->withAttribute('authy_message', $access->getMessage());
+                    $response->getBody()->write($access->getMessage());
+                    return $response->withStatus(403);
+                }
+            } else {
+                throw new HttpForbiddenException($request, $access);
+            }
+        } else {
+            $request = $request->withAttribute('authy_access', 'full');
+            $response = $handler->handle($request);
+        }
+        return $response;
+    }
+
+    private function checkPrivileges($request)
+    {
+
+        if ($this->checkExclude($this->args['route'])) {
+            return false;
+        }
+
+        $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
+        if ($requiredPrivileges === false) {
+            $model = $this->args['model'] . '-' . $this->args['action'];
+            $requiredPrivileges = 'r';
+        } else {
+            $model = $this->args['model'];
+        }
+
+        if (!empty($requiredPrivileges)) {
+            if (!$this->authorize($model, $requiredPrivileges) && $requiredPrivileges != 'none') {
+                return new InvalidSessionRenderer($this->args['is_api'], "You do not have permissions to perform this action. [" . $model . ", " . $requiredPrivileges . "]");
+            } else {
+                return false;
+            }
+        } else {
+            return new InvalidSessionRenderer($this->args['is_api'], "Missing privileges in the Privileges Map for the requested action");
+        }
+    }
+
+    private function checkExclude($route)
+    {
+        if (in_array($route, $this->privilegeMap['exclude'])) {
+            return true;
+        }
+    }
+
+    /**
+     * Try to get an equivalent action in the privilege map
+     *
+     * @param String $action
+     * @return String|false
+     */
+    private function getRequiredPrivilege(String $action, String $model = '')
+    {
+        if (!empty($this->privilegeMap['action'][$action])) {
+            return $this->privilegeMap['action'][$action];
+        } elseif (!empty($this->privilegeMap['action'][$model . "-" . $action])) {
+            return $this->privilegeMap['action'][$model . "-" . $action];
+        } else {
+            return false;
+        }
+    }
+}
