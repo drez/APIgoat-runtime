@@ -120,7 +120,7 @@ class Api
             // Use Query Builder
             $ModelQuery = $this->setAclFilter($this->queryObjName::create());
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $request);
-            $DataObj = $QueryBuilder->getData();
+            $DataObj = $QueryBuilder->getDataObj();
             $this->response['messages'] = $QueryBuilder->getMessages();
             if ($QueryBuilder->debug) {
                 $this->response['debug'] = $QueryBuilder->getDebug();
@@ -274,7 +274,7 @@ class Api
                 $ModelQuery = $this->setAclFilter($this->queryObjName::create());
                 $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $data);
             }
-            $obj = $QueryBuilder->getData();
+            $obj = $QueryBuilder->getDataObj();
             if ($QueryBuilder->getMessages()) {
                 $ret['errors'][] = $QueryBuilder->getMessages();
             }

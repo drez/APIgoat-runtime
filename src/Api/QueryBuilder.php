@@ -96,6 +96,11 @@ class QueryBuilder
         return $this->Data;
     }
 
+    public function getDataObj()
+    {
+        return $this->DataObj;
+    }
+
     public function setQueryObject($query)
     {
         if (\is_object($query)) {
@@ -318,9 +323,9 @@ class QueryBuilder
             $pmpo = $this->Query->paginate($this->request['page'], $this->request['max_page']);
             $this->Data = $pmpo->getResults();
         } else {
-            $this->Data = $this->Query->find();
-            if (!is_array($this->Data)) {
-                $this->Data = $this->Data->toArray();
+            $this->DataObj = $this->Query->find();
+            if (!is_array($this->DataObj)) {
+                $this->Data = $this->DataObj->toArray();
             }
         }
 
@@ -357,18 +362,14 @@ class QueryBuilder
                 }
             }
 
-            if (is_array($this->Data)) {
-                foreach ($this->Data as &$row) {
-                    if (is_array($row)) {
-                        foreach ($row as $key => &$value) {
-                            if (!in_array($key, $this->selectKey)) {
-                                // remove unwanted Key
-                                unset($row[$key]);
-                            } elseif (isset($enumVal[$key])) {
-                                // Set the ENUM value
-                                $value = $enumVal[$key][$value];
-                            }
-                        }
+            foreach ($this->Data as &$row) {
+                foreach ($row as $key => &$value) {
+                    if (!in_array($key, $this->selectKey)) {
+                        // remove unwanted Key
+                        unset($row[$key]);
+                    } elseif (isset($enumVal[$key])) {
+                        // Set the ENUM value
+                        $value = $enumVal[$key][$value];
                     }
                 }
             }
