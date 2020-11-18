@@ -86,7 +86,7 @@ class RouteParser implements MiddlewareInterface
         if (empty($this->args['action'])) {
             if ($this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
                 // check if its a QueryBuilder request
-                if (($this->args['body']['query'] && count($this->args['body']) == 1) || ($this->args['body']['query'] && count($this->args['body']) == 2 && $this->args['body']['debug'])) {
+                if (($this->args['body']['query'] && count($this->args['body']) == 1) || ($this->args['body']['query'] && count($this->args['body']) == 2 && isset($this->args['body']['debug']))) {
                     $this->args['action'] = 'list';
                 } elseif (!empty($this->args['id']) || $this->args['method'] == 'PATCH') {
                     $this->args['action'] = 'update';

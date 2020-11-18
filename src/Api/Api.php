@@ -101,6 +101,11 @@ class Api
 
         $data = $this->filterRequest($request);
 
+        if (!empty($data)) {
+            $this->response['errors'][] = "Wrong input 1007";
+            return $this->response;
+        }
+
         if ($request['rbac_public'] != 'passed') {
             if ($data["Id{$this->tableName}"] || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['query'])))) {
                 $acl = $this->authorize($this->tableName, 'w');
