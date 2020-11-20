@@ -120,7 +120,13 @@ class BuilderReturn
             foreach ($this->messages as $message) {
                 if (is_array($message)) {
                     foreach ($message as $msg) {
-                        $messages .= $msg . "<br>";
+                        if (is_array($msg)) {
+                            foreach ($msg as $text) {
+                                $messages .= nl2br($text) . "<br>";
+                            }
+                        } else {
+                            $messages .= $msg . "<br>";
+                        }
                     }
                 } else {
                     $messages .= $message . "<br>";
