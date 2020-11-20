@@ -188,11 +188,11 @@ class Api
 
         try {
             // Add a global settings permit whole object
-            if (!$QueryBuilder->selectIsSet()) {
+            /*if (!$QueryBuilder->selectIsSet()) {
                 $ret['status'] = 'failure';
                 $ret['errors'][] = "Invalid parameter: Select * are not allowed. Use 'select' key in your query parameter to select some columns. ";
                 return $ret;
-            }
+            }*/
 
             $Data = $QueryBuilder->getData();
             $ret['messages'][] = $QueryBuilder->getMessages();

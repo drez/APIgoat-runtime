@@ -342,14 +342,23 @@ class QueryBuilder
      */
     private function correctData()
     {
+        $collection = false;
+
         if (is_object($this->Data) && get_class($this->Data) == 'PropelObjectCollection') {
             foreach ($this->Data as $obj) {
                 $data[] = $obj->toArray(\BasePeer::TYPE_FIELDNAME);
             }
             $this->Data = $data;
+            $collection = true;
         } elseif (!is_array($this->Data)) {
             $this->Data = $this->Data->toArray(\BasePeer::TYPE_FIELDNAME);
         }
+
+        if (count($this->Data) == 1) {
+            $this->Data = $this->Data[0];
+            $collection = false;
+        }
+
 
         if ($this->selectIsSet() && is_array($this->Data)) {
 
@@ -362,8 +371,20 @@ class QueryBuilder
                 }
             }
 
-            foreach ($this->Data as &$row) {
-                foreach ($row as $key => &$value) {
+            if ($collection) {
+                foreach ($this->Data as &$row) {
+                    foreach ($row as $key => &$value) {
+                        if (!in_array($key, $this->selectKey)) {
+                            // remove unwanted Key
+                            unset($row[$key]);
+                        } elseif (isset($enumVal[$key])) {
+                            // Set the ENUM value
+                            $value = $enumVal[$key][$value];
+                        }
+                    }
+                }
+            } else {
+                foreach ($this->Data as $key => &$value) {
                     if (!in_array($key, $this->selectKey)) {
                         // remove unwanted Key
                         unset($row[$key]);
@@ -372,6 +393,21 @@ class QueryBuilder
                         $value = $enumVal[$key][$value];
                     }
                 }
+            }
+        } elseif (is_array($this->Data)) {
+            $tableMap = $this->Query->getTableMap()->getColumns();
+            if ($collection) {
+                foreach ($this->Data as $record) {
+                    foreach ($tableMap as $Column) {
+                        $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                    }
+                    $this->Data[] = $data;
+                }
+            } else {
+                foreach ($tableMap as $Column) {
+                    $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                }
+                $this->Data = $data;
             }
         }
     }
