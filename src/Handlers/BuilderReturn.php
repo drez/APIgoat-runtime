@@ -141,7 +141,9 @@ $('#alertDialog').dialog('open');
 alert_close = function (){
     {$alert_close}
 }";
-            }
+            } else {
+            $this->return['onReadyJs'] = $action_success;
+        }
         } else {
             $this->return['onReadyJs'] = $action_success;
         }
