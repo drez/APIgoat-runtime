@@ -101,8 +101,8 @@ class Api
 
         $data = $this->filterRequest($request);
 
-        if (!empty($data)) {
-            $this->response['errors'][] = "Wrong input 1007";
+        if (empty($data)) {
+            $this->response['errors'][] = "Wrong input 1007, nothing found to update";
             return $this->response;
         }
 
@@ -145,14 +145,14 @@ class Api
                         $data["Id{$this->tableName}"] = $Obj->getPrimaryKey();
                         $this->setEntry($data, $Obj);
                     } else {
-                        $this->response['errors'][] = "Wrong input 1004";
+                        $this->response['errors'][] = "Wrong input 1004, nothing found to update";
                     }
                 }
             } else {
                 if (!empty($data)) {
                     $this->setEntry($data);
                 } else {
-                    $this->response['errors'][] = "Wrong input 1003";
+                    $this->response['errors'][] = "Wrong input 1003, nothing found to update";
                     $this->response['errors'][] = $data;
                 }
             }
@@ -188,11 +188,11 @@ class Api
 
         try {
             // Add a global settings permit whole object
-            if (!$QueryBuilder->selectIsSet()) {
+            /*if (!$QueryBuilder->selectIsSet()) {
                 $ret['status'] = 'failure';
                 $ret['errors'][] = "Invalid parameter: Select * are not allowed. Use 'select' key in your query parameter to select some columns. ";
                 return $ret;
-            }
+            }*/
 
             $Data = $QueryBuilder->getData();
             $ret['messages'][] = $QueryBuilder->getMessages();
