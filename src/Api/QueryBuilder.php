@@ -354,11 +354,10 @@ class QueryBuilder
             $this->Data = $this->Data->toArray(\BasePeer::TYPE_FIELDNAME);
         }
 
-        if (count($this->Data) == 1) {
+        if ($this->primaryKey) {
             $this->Data = $this->Data[0];
             $collection = false;
         }
-
 
         if ($this->selectIsSet() && is_array($this->Data)) {
 
