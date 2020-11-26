@@ -83,7 +83,7 @@ class BuilderReturn
         if ($this->request['action'] == 'create') {
             $alert_close = "
     $('#form" . $this->request['p'] . " #save" . $this->request['p'] . "').removeAttr('disabled').removeClass('unsaved').css('cursor', 'auto');
-	$('body').css('cursor', 'auto');";
+    $('body').css('cursor', 'auto');";
         } else {
             $alert_close = "
     $('#form" . $this->request['p'] . " #save" . $this->request['p'] . "').removeAttr('disabled').removeClass('unsaved').css('cursor', 'auto');
@@ -115,6 +115,8 @@ class BuilderReturn
             // save existing // reload
             $action_success = "document.location='" . _SITE_URL . $this->request['p'] . "/edit/{$this->request['i']}';";
         }
+
+        $alert_close .= $action_success;
 
         if (is_array($this->messages)) {
             foreach ($this->messages as $message) {
