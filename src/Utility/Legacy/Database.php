@@ -14,9 +14,9 @@ define('MYSQL_OBJ_ARRAY', '8');
 */
 global $cn;
 
-function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR)
+function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$error='')
 {
-	$conf = include($base_dir . "config/Built/db.php");
+	$conf = require($base_dir . "config/Built/db.php");
 	$source = $conf['datasources']['default'];
 	try {
 
@@ -65,11 +65,8 @@ function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR)
 				break;
 		}
 	} else {
-		if ($debug) {
-			echo "Query error ";
-			foreach ($con->errorInfo() as $info) {
-				echo $info . "<br >";
-			}
+		foreach ($con->errorInfo() as $info) {
+			$error = $info . "<br >";
 		}
 		return false;
 	}
