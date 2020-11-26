@@ -136,7 +136,7 @@ class BuilderReturn
             if (!empty($messages)) {
                 $this->return['onReadyJs'] =
                     "$('#ui-dialog-title-alertDialog').html('Alert');
-$('#alert_text').show().html('" . addslashes($messages) . "');
+$('#alert_text').show().html('" . addslashes($this->removeNl($messages)) . "');
 $('#alertDialog').dialog('open');
 alert_close = function (){
     {$alert_close}
@@ -163,5 +163,10 @@ alert_close = function (){
             return false;
         }
         return true;
+    }
+
+    private function removeNl($string)
+    {
+        return trim(preg_replace('/\s+/', ' ', $string));
     }
 }

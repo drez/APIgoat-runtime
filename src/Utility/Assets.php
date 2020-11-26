@@ -577,9 +577,10 @@ class Assets
 					$link = $protocol . $link;
 				}
 			} else {
-				$link = realpath(_BASE_DIR . $this->public_dir . DIRECTORY_SEPARATOR . $link);
+				$link = realpath(_BASE_DIR . $this->public_dir . $link);
+
 				if ($link === false) {
-					throw new \Exception("File not found : " . $originalLink);
+					throw new \Exception("File not found : (" . $link . ")" . $originalLink);
 					continue;
 				}
 			}
