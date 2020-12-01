@@ -470,8 +470,8 @@ function htmlHeader($title = "", $style = "", $desciption = "", $keywords = "", 
         $Html_head .= "<meta name=\"keywords\" content=\"$keywords\" />";
     if (!empty($title))
         $Html_head .= "<title>$title</title>";
-    //if(!empty($favicon))
-    $Html_head .= "<link rel=\"icon\" type=\"image/png\" href=\"" . _SITE_URL . $favicon . "\" />";
+    if (!empty($favicon))
+        $Html_head .= "<link rel=\"icon\" type=\"image/png\" href=\"" . _SITE_URL . $favicon . "\" />";
     if (!empty($style))
         $Html_head .= $style;
     $Html_head .= $others;
