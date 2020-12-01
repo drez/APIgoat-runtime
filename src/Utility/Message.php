@@ -27,7 +27,9 @@ class Message extends AbstractLogger
 
     public function log($facility = 'info', $log, $context = [])
     {
-        $this->addMessages($log, $facility, false);
+        if (!empty($log)) {
+            $this->addMessages($log, $facility, false);
+        }
     }
 
     public function getMessages($facility = 'all')
@@ -56,12 +58,16 @@ class Message extends AbstractLogger
 
     public function addMessage($str)
     {
-        $this->output[0]['info'][] = $str;
+        if (!empty($log)) {
+            $this->output[0]['info'][] = $str;
+        }
     }
 
     public function addLog($log, $facility = 'info')
     {
-        $this->addMessages($log, $facility, false);
+        if (!empty($log)) {
+            $this->addMessages($log, $facility, false);
+        }
     }
 
     /**
@@ -80,10 +86,14 @@ class Message extends AbstractLogger
         }
         if (\is_array($log)) {
             foreach ($log as $entry) {
-                $this->output[$this->index][$facility][] = $this->replaceAbsPath($entry);
+                if (!empty($entry)) {
+                    $this->output[$this->index][$facility][] = $this->replaceAbsPath($entry);
+                }
             }
         } else {
-            $this->output[$this->index][$facility][] = $this->replaceAbsPath($log);
+            if (!empty($log)) {
+                $this->output[$this->index][$facility][] = $this->replaceAbsPath($log);
+            }
         }
         if ($increment) {
             $this->index++;
