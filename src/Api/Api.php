@@ -188,13 +188,15 @@ class Api
 
         try {
             // Add a global settings permit whole object
-            /*if (!$QueryBuilder->selectIsSet()) {
+            /* if (!$QueryBuilder->selectIsSet()) {
                 $ret['status'] = 'failure';
                 $ret['errors'][] = "Invalid parameter: Select * are not allowed. Use 'select' key in your query parameter to select some columns. ";
                 return $ret;
             }*/
+            if ($QueryBuilder->getDataObj()) {
+                $Data = $QueryBuilder->getData();
+            }
 
-            $Data = $QueryBuilder->getData();
             $ret['messages'][] = $QueryBuilder->getMessages();
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
@@ -203,15 +205,18 @@ class Api
         }
 
         try {
-            if (count($Data) == 0) {
+            if (is_array($Data) && count($Data) == 0) {
                 $ret['status'] = 'success';
                 $ret['data'] = [];
                 $ret['count'] = 0;
-            } else {
+            } elseif (is_array($Data)) {
                 $ret['status'] = 'success';
                 // if select is set, lower case field name is ok
                 $ret['data'] = $Data;
                 $ret['count'] = count($Data);
+            } else {
+                $ret['status'] = 'failure';
+                $ret['errors'][] = $QueryBuilder->getMessages();
             }
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
