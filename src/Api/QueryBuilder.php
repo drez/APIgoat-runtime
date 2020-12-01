@@ -55,8 +55,9 @@ class QueryBuilder
         $this->setDebug($request['debug']);
         $this->setQueryObject($query);
 
-        $this->buildQuery();
-        $this->runQuery();
+        if ($this->buildQuery() === false) {
+            $this->runQuery();
+        }
     }
 
     public function selectIsSet()
@@ -117,7 +118,8 @@ class QueryBuilder
             if (is_array($select)) {
                 // Foreign column
                 if (count($select) !== 2) {
-                    throw new InvalidArgumentException("QueryBuilder: Select parameters incorrect.");
+                    $this->messages[] = "QueryBuilder: Select parameters incorrect.";
+                    return true;
                 }
 
                 $this->Query->withColumn($select[0], $select[1]);
@@ -135,6 +137,7 @@ class QueryBuilder
             $this->selectSet = true;
             $this->Query->select($selectVal);
         }
+        return false;
     }
 
     private function setFilters(array $filtersRequest)
@@ -229,7 +232,8 @@ class QueryBuilder
             foreach ($joinsRequest as $join) {
                 if (is_array($join)) {
                     if (count($join) !== 2) {
-                        throw new InvalidArgumentException("QueryBuilder: Join parameters incorrect.");
+                        $this->messages[] = "QueryBuilder: Join parameters incorrect.";
+                        return true;
                     }
                     $criteria = \Criteria::LEFT_JOIN;
                     switch ($join[1]) {
@@ -248,6 +252,7 @@ class QueryBuilder
                 }
             }
         }
+        return false;
     }
 
     /**
@@ -258,7 +263,9 @@ class QueryBuilder
     public function buildQuery()
     {
         if ($this->request['select']) {
-            $this->setSelect($this->request['select']);
+            if ($this->setSelect($this->request['select'])) {
+                return true;
+            }
         }
 
         if ($this->primaryKey) {
@@ -270,7 +277,9 @@ class QueryBuilder
         }
 
         if ($this->request['join']) {
-            $this->setJoins($this->request['join']);
+            if ($this->setJoins($this->request['join'])) {
+                return true;
+            }
         }
 
         if ($this->request['f']) {
@@ -309,6 +318,8 @@ class QueryBuilder
             $this->request['limit'] = $this->validateLimit($this->request['limit']);
             $this->Query->limit($this->request['limit']);
         }
+
+        return false;
     }
 
     /**
@@ -352,6 +363,8 @@ class QueryBuilder
             $collection = true;
         } elseif (!is_array($this->Data)) {
             $this->Data = $this->Data->toArray(\BasePeer::TYPE_FIELDNAME);
+        } elseif (!empty($this->Data[0])) {
+            $collection = true;
         }
 
         if ($this->primaryKey) {
@@ -386,7 +399,7 @@ class QueryBuilder
                 foreach ($this->Data as $key => &$value) {
                     if (!in_array($key, $this->selectKey)) {
                         // remove unwanted Key
-                        unset($row[$key]);
+                        unset($this->Data[$key]);
                     } elseif (isset($enumVal[$key])) {
                         // Set the ENUM value
                         $value = $enumVal[$key][$value];
@@ -395,16 +408,32 @@ class QueryBuilder
             }
         } elseif (is_array($this->Data)) {
             $tableMap = $this->Query->getTableMap()->getColumns();
+            $enumVal = [];
             if ($collection) {
+
                 foreach ($this->Data as $record) {
                     foreach ($tableMap as $Column) {
-                        $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                        if ($Column->getType() == 'ENUM') {
+                            if (!is_array($enumVal[$Column->getName()])) {
+                                $enumVal[$Column->getName()] = $Column->getValueSet();
+                            }
+                            $data[$Column->getName()] = $enumVal[$Column->getName()][$this->Data[$Column->getPhpName()]];
+                        } else {
+                            $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                        }
                     }
                     $this->Data[] = $data;
                 }
             } else {
                 foreach ($tableMap as $Column) {
-                    $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                    if ($Column->getType() == 'ENUM') {
+                        if (!is_array($enumVal[$Column->getName()])) {
+                            $enumVal[$Column->getName()] = $Column->getValueSet();
+                        }
+                        $data[$Column->getName()] = $enumVal[$Column->getName()][$this->Data[$Column->getPhpName()]];
+                    } else {
+                        $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                    }
                 }
                 $this->Data = $data;
             }
