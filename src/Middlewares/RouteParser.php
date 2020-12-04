@@ -71,39 +71,42 @@ class RouteParser implements MiddlewareInterface
     private function setAction()
     {
 
-        if ($this->args['action'] == 'edit' && $this->args['method'] != 'GET') {
-            if (!empty($this->args['id']) || !empty($this->args['Id' . $this->args['model']])) {
-                $this->args['action'] = 'edit';
-            } else {
-                $this->args['action'] = 'create';
-            }
-        }
-
-        if ($this->args['method'] == 'DELETE') {
-            $this->args['action'] = 'delete';
-        }
-
-        if (empty($this->args['action'])) {
-            if ($this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
-                // check if its a QueryBuilder request
-                if (($this->args['body']['query'] && count($this->args['body']) == 1) || ($this->args['body']['query'] && count($this->args['body']) == 2 && isset($this->args['body']['debug']))) {
-                    $this->args['action'] = 'list';
-                } elseif (!empty($this->args['id']) || $this->args['method'] == 'PATCH') {
-                    $this->args['action'] = 'update';
+        if ($this->args['action'] != 'auth') {
+            if ($this->args['action'] == 'edit' && $this->args['method'] != 'GET') {
+                if (!empty($this->args['id']) || !empty($this->args['Id' . $this->args['model']])) {
+                    $this->args['action'] = 'edit';
                 } else {
                     $this->args['action'] = 'create';
                 }
-            } else {
-                $this->args['action'] = 'list';
             }
-        } elseif ($this->args['action'] == 'update') {
-            if (empty($this->args['id'])) {
-                $this->args['action'] = 'create';
+
+            if ($this->args['method'] == 'DELETE') {
+                $this->args['action'] = 'delete';
+            }
+
+            if (empty($this->args['action'])) {
+                if ($this->args['method'] == 'GET' || $this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
+                    // check if its a QueryBuilder request
+                    $body = ($this->args['method'] == 'GET') ? $this->args['query'] : $this->args['body'];
+                    $this->args['body'] = $this->args['query'];
+                    if (($body['query'] && count($body) == 1) || ($body['query'] && count($body) == 2 && isset($body['debug']))) {
+                        $this->args['action'] = 'list';
+                    } elseif ($this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
+                        if (!empty($this->args['id']) || $this->args['method'] == 'PATCH') {
+                            $this->args['action'] = 'update';
+                        } else {
+                            $this->args['action'] = 'create';
+                        }
+                    }
+                } else {
+                    $this->args['action'] = 'list';
+                }
+            } elseif ($this->args['action'] == 'update') {
+                if (empty($this->args['id'])) {
+                    $this->args['action'] = 'create';
+                }
             }
         }
-
-        //print_r($this->args);
-        //die();
     }
 
     private function decodePath()
