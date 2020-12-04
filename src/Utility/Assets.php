@@ -87,7 +87,7 @@ class Assets
 	 *
 	 * @var string
 	 */
-	protected $pipeline_dir = 'min';
+	protected $pipeline_dir = '';
 	/**
 	 * Enable pipelined assets compression with Gzip. Do not enable unless you know what you are doing!.
 	 * Useful only if your webserver supports Gzip HTTP_ACCEPT_ENCODING.
@@ -504,7 +504,7 @@ class Assets
 		}
 
 		// Generate paths
-		$filename = $this->calculatePipelineHash($assets) . $extension;
+		$filename = $this->calculatePipelineHash($assets) . ".min" . $extension;
 
 		$relative_path = "$subdirectory/{$this->pipeline_dir}/$filename";
 
