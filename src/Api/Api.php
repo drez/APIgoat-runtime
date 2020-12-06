@@ -77,9 +77,9 @@ class Api
             }
         }
 
-        if ($request['i']) {
+        /*if ($request['i']) {
             $return['Id' . $this->tableName] = $request['i'];
-        }
+        }*/
 
         return $return;
     }
