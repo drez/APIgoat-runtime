@@ -59,6 +59,7 @@ class RouteParser implements MiddlewareInterface
         $this->request = $request;
         $this->method = $request->getMethod();
         $this->args['method'] = $this->method;
+        $this->headers = $request->getHeaders();
 
         $this->decodePath();
         $this->getArgs();
@@ -66,6 +67,28 @@ class RouteParser implements MiddlewareInterface
         $request = $request->withAttribute('parsed_args', $this->args);
 
         return $handler->handle($request);
+    }
+
+    private function getContentType()
+    {
+        $contentTypes = [
+            'application/xml',
+            'text/xml',
+            'application/x-www-form-urlencoded',
+            'application/json'
+        ];
+
+        if (is_array($this->headers['Content-Type'])) {
+            $this->headers['Content-Type'] = $this->headers['Content-Type'][0];
+        }
+
+        if (!in_array($this->headers['Content-Type'], $contentTypes)) {
+            // warning, missing or malformed Content-Type Header
+        }
+
+        if ($this->headers['Content-Type']) {
+            return $this->headers['Content-Type'];
+        }
     }
 
     private function setAction()
@@ -110,6 +133,10 @@ class RouteParser implements MiddlewareInterface
                 }
             }
         }
+
+        if (empty($this->args['action'])) {
+            $this->args['action'] = 'list';
+        }
     }
 
     private function decodePath()
@@ -118,6 +145,7 @@ class RouteParser implements MiddlewareInterface
         $path =  preg_replace('*' . _SUB_DIR . '*', '', $this->request->getUri()->getPath(), 1);
 
         # API call
+        $data['is_api'] = false;
         if (strstr($path, 'api/')) {
             $path = preg_replace('/api\/v[0-9]\//', '', $path, 1);
             $data['is_api'] = true;
@@ -189,7 +217,8 @@ class RouteParser implements MiddlewareInterface
     private function getGETArgs()
     {
         $this->args['query'] = $this->request->getQueryParams();
-        $this->args['body'] = ($this->request->getParsedBody()) ? (array)$this->request->getParsedBody() : null;
+        $this->args['body'] = $this->request->getQueryParams();
+        //$this->args['body'] = ($this->request->getParsedBody()) ? (array)$this->request->getParsedBody() : null;
     }
 
     /**
@@ -199,6 +228,21 @@ class RouteParser implements MiddlewareInterface
     private function getPOSTArgs()
     {
         $raw = file_get_contents('php://input');
-        $this->args['body'] = ($this->request->getParsedBody()) ? (array)$this->request->getParsedBody() : null;
+        $this->args['raw'] = $raw;
+
+        $this->args['body'] = $this->pasreBody($raw);
+    }
+
+    private function pasreBody($raw)
+    {
+        $contentType = $this->getContentType();
+        if (strstr($contentType, 'json')) {
+            return json_decode($raw, true);
+        }
+        if (strstr($contentType, 'form-urlencoded')) {
+            parse_str($raw, $data);
+            return $data;
+        }
+        return $raw;
     }
 }

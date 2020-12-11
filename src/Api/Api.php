@@ -99,7 +99,7 @@ class Api
 
         #one entry, or multiple with querybuilder
 
-        $data = $this->filterRequest($request);
+        $data = $this->filterRequest($request['body']);
 
         if (empty($data)) {
             $this->response['errors'][] = "Wrong input 1007, nothing found to update";

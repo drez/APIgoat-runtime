@@ -56,17 +56,31 @@ class RouteHelper
         $routeContext = RouteContext::fromRequest($request);
         $this->route = $routeContext->getRoute();
         $this->method = $request->getMethod();
-        $this->route_helper_args = $request->getAttribute('parsed_args');
+        $this->args = $request->getAttribute('parsed_args');
         $this->args['normalized_query'] = $request->getAttribute('normalized_query');
-        $this->args['action'] = $this->route_helper_args['action'];
+        //$this->args['action'] = $this->args['action'];
 
         //legacy
-        $this->args['a'] = $args['a'];
-        $this->args['i'] = $this->route_helper_args['id'];
+        if (!$this->args['is_api']) {
+            $this->args['a'] = $args['a'];
+            $this->setLegacyVarFromBody();
+            $this->args['i'] = ($this->args['id']) ? $this->args['id'] : $this->args['i'];
+            if (empty($this->args['i'])) {
+                $this->args['i'] = $this->args['body']['i'];
+            }
+        }
 
         $this->args['method'] = $this->method;
         $this->args['rbac_public'] = $request->getAttribute('rbac_public');
         $this->baseRouteName = $this->route->getName();
+    }
+
+    private function setLegacyVarFromBody()
+    {
+        $legacyVars = ['ui', 'pui', 'ms', 'order', 'pg', 'd', 'jet', 'dialog'];
+        foreach ($legacyVars as $legacyVar) {
+            $this->args[$legacyVar] = $this->args['body'][$legacyVar];
+        }
     }
 
     /**
@@ -114,6 +128,8 @@ class RouteHelper
             $path =  preg_replace('/' . _SUB_DIR . '/', '', $this->request->getUri()->getPath(), 1);
             throw new \Exception('Route name empty: ' . $path);
         }
+
+        $this->args['p'] = $this->routeName;
 
         return $this->routeName;
     }
@@ -184,7 +200,8 @@ class RouteHelper
      */
     public function getService($response)
     {
-        $this->getArgs();
+        //$this->getArgs();
+        $this->getRouteName();
         $ServiceClass = '\\App\\' . $this->routeName . 'ServiceWrapper';
         if (class_exists($ServiceClass)) {
             return new $ServiceClass($this->request, $response, $this->args);
