@@ -71,7 +71,7 @@ class Assets
 	 *
 	 * @var string
 	 */
-	protected $composer_dir = '../../';
+	protected $composer_dir = '';
 	/**
 	 * Enable assets pipeline (concatenation and minification).
 	 * Use a string that evaluates to `true` to provide the salt of the pipeline hash.
@@ -580,7 +580,7 @@ class Assets
 				$link = realpath(_BASE_DIR . $this->public_dir . $link);
 
 				if ($link === false) {
-					throw new \Exception("File not found : (" . $link . ")" . $originalLink);
+					throw new \Exception("File not found : base(" . _BASE_DIR . $this->public_dir . ")" . $originalLink);
 					continue;
 				}
 			}
