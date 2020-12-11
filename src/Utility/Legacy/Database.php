@@ -14,8 +14,11 @@ define('MYSQL_OBJ_ARRAY', '8');
 */
 global $cn;
 
-function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$error='')
+function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$error = '')
 {
+	if (!file_exists($base_dir . "config/Built/db.php")) {
+		throw new Exception("Error legacy-db-4: missing db.php");
+	}
 	$conf = require($base_dir . "config/Built/db.php");
 	$source = $conf['datasources']['default'];
 	try {
