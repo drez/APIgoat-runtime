@@ -42,7 +42,7 @@ class RbacMiddleware implements MiddlewareInterface
             } elseif ($request->getAttribute('rbac_complete') != 'yes') {
                 // first pass for public route
                 $private = $this->authorizePublicRequest();
-                $request = $request->withAttribute('normalized_query', $this->args['body']['query']);
+                $request = $request->withAttribute('normalized_query', $this->args['data']['query']);
                 $request = $request->withAttribute('rbac_id', $this->rbac_id);
 
                 if ($private === false) {
@@ -100,7 +100,7 @@ class RbacMiddleware implements MiddlewareInterface
     private function authorizePublicRequest()
     {
         // process body
-        if ($this->args['body'] == '' || $this->args['body'] == null) {
+        if ($this->args['data'] == '' || $this->args['data'] == null) {
             $q = \App\ApiRbacQuery::create()
                 ->filterByModel($this->args['model'])
                 ->filterByAction($this->args['action'])
@@ -111,7 +111,7 @@ class RbacMiddleware implements MiddlewareInterface
             $wildBody[0] = null;
         } else {
             // check for some wildcard
-            $this->normalizeFilter($this->args['body']);
+            $this->normalizeFilter($this->args['data']);
             $this->excludeBody();
             $bestMatch = $this->findBestMatch();
 
@@ -119,7 +119,7 @@ class RbacMiddleware implements MiddlewareInterface
                 $ApiRbac = \App\ApiRbacQuery::create()->findPk($bestMatch);
             }
             //get the wildcard rule
-            $wildBody = $this->getBodyWildcarded($this->args['body']);
+            $wildBody = $this->getBodyWildcarded($this->args['data']);
         }
 
         if (!$ApiRbac) {
@@ -173,8 +173,8 @@ class RbacMiddleware implements MiddlewareInterface
                     && ($exclude['model'] == '*' || $exclude['model'] == $this->args['model'])
                     && ($exclude['action'] == '*' || $exclude['action'] == $this->args['action'])
                 ) {
-                    unset($this->args['body']);
-                    $this->args['body'] = null;
+                    unset($this->args['data']);
+                    $this->args['data'] = null;
                 }
             }
         }
@@ -182,9 +182,9 @@ class RbacMiddleware implements MiddlewareInterface
 
     function normalizeFilter()
     {
-        if (is_array($this->args['body']['query']['filter'])) {
+        if (is_array($this->args['data']['query']['filter'])) {
             $normalized = [];
-            foreach ($this->args['body']['query']['filter'] as $model => $filters) {
+            foreach ($this->args['data']['query']['filter'] as $model => $filters) {
 
                 if (\is_numeric($model)) {
                     $model = $this->args['model'];
@@ -196,7 +196,7 @@ class RbacMiddleware implements MiddlewareInterface
                     $normalized[$model] = $filters;
                 }
             }
-            $this->args['body']['query']['filter'] = $normalized;
+            $this->args['data']['query']['filter'] = $normalized;
         }
     }
 
@@ -204,13 +204,13 @@ class RbacMiddleware implements MiddlewareInterface
     {
 
         $i = 0;
-        if (is_array($this->args['body'])) {
-            foreach ($this->args['body'] as $key => $val) {
+        if (is_array($this->args['data'])) {
+            foreach ($this->args['data'] as $key => $val) {
                 if ($key == 'query') {
-                    if ($this->args['body']['query']['select']) {
+                    if ($this->args['data']['query']['select']) {
                         $path = 'query.select';
-                        $select[] = "IF(JSON_CONTAINS(`body`, '" . json_encode($this->args['body']['query']['select']) . "', '$.{$path}'), 1, 0) as 'm{$i}'";
-                        $where[] = "(JSON_CONTAINS(`body`,  '" . json_encode($this->args['body']['query']['select']) . "', '$.{$path}')
+                        $select[] = "IF(JSON_CONTAINS(`body`, '" . json_encode($this->args['data']['query']['select']) . "', '$.{$path}'), 1, 0) as 'm{$i}'";
+                        $where[] = "(JSON_CONTAINS(`body`,  '" . json_encode($this->args['data']['query']['select']) . "', '$.{$path}')
                              OR JSON_CONTAINS(`body`,  '[[\"" . $val[0] . "\", \"*\"]]', '$.{$path}')
                              OR JSON_VALUE(`body`, '$.{$path}') = '*')
             ";
@@ -219,8 +219,8 @@ class RbacMiddleware implements MiddlewareInterface
                     }
 
 
-                    if (is_array($this->args['body']['query']['filter'])) {
-                        foreach ($this->args['body']['query']['filter'] as $model => $filters) {
+                    if (is_array($this->args['data']['query']['filter'])) {
+                        foreach ($this->args['data']['query']['filter'] as $model => $filters) {
 
                             if (is_array($filters)) {
                                 foreach ($filters as $val) {

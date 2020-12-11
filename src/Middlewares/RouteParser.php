@@ -217,7 +217,7 @@ class RouteParser implements MiddlewareInterface
     private function getGETArgs()
     {
         $this->args['query'] = $this->request->getQueryParams();
-        $this->args['body'] = $this->request->getQueryParams();
+        $this->args['data'] = $this->request->getQueryParams();
         //$this->args['body'] = ($this->request->getParsedBody()) ? (array)$this->request->getParsedBody() : null;
     }
 
@@ -230,7 +230,7 @@ class RouteParser implements MiddlewareInterface
         $raw = file_get_contents('php://input');
         $this->args['raw'] = $raw;
 
-        $this->args['body'] = $this->pasreBody($raw);
+        $this->args['data'] = $this->pasreBody($raw);
     }
 
     private function pasreBody($raw)
