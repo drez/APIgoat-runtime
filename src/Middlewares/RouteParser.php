@@ -110,18 +110,18 @@ class RouteParser implements MiddlewareInterface
             if (empty($this->args['action'])) {
                 if ($this->args['method'] == 'GET' || $this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
                     // check if its a QueryBuilder request
-                    $body = ($this->args['method'] == 'GET') ? $this->args['query'] : $this->args['body'];
-                    $this->args['body'] = $body;
+                    $body = ($this->args['method'] == 'GET') ? $this->args['query'] : $this->args['data'];
+                    $this->args['data'] = $body;
 
                     if (($body['query'] && count($body) == 1) || ($body['query'] && count($body) == 2 && isset($body['debug']))) {
                         $this->args['action'] = 'list';
                     } elseif ($this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
-                        if (!empty($this->args['id']) || $this->args['method'] == 'PATCH') {
+                        if (!empty($this->args['id']) || $this->args['method'] == 'PATCH' || $body['query']) {
                             $this->args['action'] = 'update';
                         } else {
                             $this->args['action'] = 'create';
                         }
-                    } elseif (empty($this->args['body'])) {
+                    } elseif (empty($this->args['data'])) {
                         $this->args['action'] = 'list';
                     }
                 } else {

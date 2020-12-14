@@ -99,7 +99,7 @@ class Api
 
         #one entry, or multiple with querybuilder
 
-        $data = $this->filterRequest($request['body']);
+        $data = $this->filterRequest($request['data']);
 
         if (empty($data)) {
             $this->response['errors'][] = "Wrong input 1007, nothing found to update";
@@ -107,7 +107,7 @@ class Api
         }
 
         if ($request['rbac_public'] != 'passed') {
-            if ($data["Id{$this->tableName}"] || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['query'])))) {
+            if ($data["Id{$this->tableName}"] || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])))) {
                 $acl = $this->authorize($this->tableName, 'w');
             } else {
                 $acl = $this->authorize($this->tableName, 'a');
@@ -121,7 +121,11 @@ class Api
             return $this->response;
         }
 
-        if ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['query']))) {
+        if ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query']))) {
+            if ($request['data']['query']['select']) {
+                $this->response['errors'][] = "Do not use 'select' when updating";
+                return $this->response;
+            }
             // Use Query Builder
             $ModelQuery = $this->setAclFilter($this->queryObjName::create());
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $request);
