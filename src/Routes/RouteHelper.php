@@ -61,13 +61,11 @@ class RouteHelper
         //$this->args['action'] = $this->args['action'];
 
         //legacy
-        if (!$this->args['is_api']) {
-            $this->args['a'] = $args['a'];
-            $this->setLegacyVarFromBody();
-            $this->args['i'] = ($this->args['id']) ? $this->args['id'] : $this->args['i'];
-            if (empty($this->args['i'])) {
-                $this->args['i'] = $this->args['data']['i'];
-            }
+        $this->args['a'] = $args['a'];
+        $this->setLegacyVarFromBody();
+        $this->args['i'] = ($this->args['id']) ? $this->args['id'] : $this->args['i'];
+        if (empty($this->args['i'])) {
+            $this->args['i'] = $this->args['data']['i'];
         }
 
         $this->args['method'] = $this->method;
