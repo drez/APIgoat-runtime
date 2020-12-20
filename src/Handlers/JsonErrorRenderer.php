@@ -62,9 +62,24 @@ class JsonErrorRenderer implements ErrorRendererInterface
         ];
 
         if ($displayErrorDetails) {
-            $result['messages'] = $detailedErrorMessage;
+            if (strstr(get_class($exception), "Exception")) {
+                $detailedErrorMessage = $this->parseException($detailedErrorMessage);
+            }
+            if (!is_array($detailedErrorMessage)) {
+                $result['messages'][] = $detailedErrorMessage;
+            } else {
+                $result['messages'] = $detailedErrorMessage;
+            }
         }
 
         return (string) json_encode($result, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    }
+
+    private function parseException(string $detailedErrorMessage)
+    {
+        preg_match('/at line [0-9]/', $detailedErrorMessage, $matches, PREG_OFFSET_CAPTURE);
+        if ($matches[0][1]) {
+            return substr($detailedErrorMessage, 0, $matches[0][1]);
+        }
     }
 }

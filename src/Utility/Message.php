@@ -25,11 +25,17 @@ class Message extends AbstractLogger
 
     public $index = 0;
 
-    public function log($facility = 'info', $log, $context = [])
+    public function log($facility, $log, array $context = [])
     {
+        $facility = ($facility) ? $facility : 'info';
         if (!empty($log)) {
             $this->addMessages($log, $facility, false);
         }
+    }
+
+    static function exception(\Throwable $t)
+    {
+        return "[Error]" . $t->getMessage();
     }
 
     public function getMessages($facility = 'all')

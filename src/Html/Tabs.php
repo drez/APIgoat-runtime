@@ -142,7 +142,7 @@ class tabs
         if ($this->AjaxLoad) {
             $AjaxLoad = "
         $('#" . $this->parentContentDivId . "').hide();
-        $(' #axContentDiv' ).children('div').html( $('<img>').attr('src', '" . _SITE_URL . "css/img/Ellipsis-3.9s-200px.svg') );
+        $(' #axContentDiv' ).children('div').html( $('<img>').attr('src', '" . _SITE_URL . "img/Ellipsis-3.9s-200px.svg') );
         $.post($(this).attr('load'), {}, function (data){
             $(' #axContentDiv' ).children('div').html(data);
         });

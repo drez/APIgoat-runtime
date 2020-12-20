@@ -63,7 +63,7 @@ function img($path, $height = "", $width = "", $options = "", $alt = "", $title 
     /* bug au niveau explorer il voyais pas les photo maintenant corrigé avec cette patch */
     if (!empty($height)) {
         if ($height === true) {
-            $path = _SITE_URL . 'css/img/' . $path;
+            $path = _SITE_URL . 'img/' . $path;
         } else {
             $height =  ' height="' . $height . '" ';
         }

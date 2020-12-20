@@ -64,7 +64,7 @@ class RouteHelper
         $this->args['a'] = $args['a'];
         $this->setLegacyVarFromBody();
         $this->args['i'] = ($this->args['id']) ? $this->args['id'] : $this->args['i'];
-        if (empty($this->args['i'])) {
+        if (empty($this->args['i']) && isset($this->args['data']['i'])) {
             $this->args['i'] = $this->args['data']['i'];
         }
 
@@ -77,7 +77,9 @@ class RouteHelper
     {
         $legacyVars = ['ui', 'pui', 'ms', 'order', 'pg', 'd', 'je', 'jet', 'dialog', 'modelName', 'destUi', 'pc', 'tp'];
         foreach ($legacyVars as $legacyVar) {
-            $this->args[$legacyVar] = $this->args['data'][$legacyVar];
+            if (isset($this->args['data'][$legacyVar])) {
+                $this->args[$legacyVar] = $this->args['data'][$legacyVar];
+            }
         }
     }
 
