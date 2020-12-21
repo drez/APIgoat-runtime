@@ -42,7 +42,7 @@ class RbacMiddleware implements MiddlewareInterface
             } elseif ($request->getAttribute('rbac_complete') != 'yes') {
                 // first pass for public route
                 $private = $this->authorizePublicRequest();
-                $request = $request->withAttribute('normalized_query', $this->args['data']['query']);
+                $request = $request->withAttribute('normalized_query', ((isset($this->args['data']['query']) ? $this->args['data']['query'] : null)));
                 $request = $request->withAttribute('rbac_id', $this->rbac_id);
 
                 if ($private === false) {
