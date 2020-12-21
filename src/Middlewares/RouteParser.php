@@ -230,7 +230,12 @@ class RouteParser implements MiddlewareInterface
         $raw = file_get_contents('php://input');
         $this->args['raw'] = $raw;
 
-        $this->args['data'] = $this->pasreBody($raw);
+        if(is_array($this->request->getParsedBody())){
+            $this->args['data'] = $this->request->getParsedBody();
+        }else{
+            $this->args['data'] = $this->pasreBody($raw);
+        }
+        
     }
 
     private function pasreBody($raw)
