@@ -52,7 +52,7 @@ class QueryBuilder
         $this->primaryKey = $request['i'];
         $this->setRequest($request);
 
-        $this->setDebug($request['debug']);
+        $this->setDebug($request['data']['debug']);
         $this->setQueryObject($query);
 
         if ($this->buildQuery() === false) {

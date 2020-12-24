@@ -144,14 +144,20 @@ class Api
         if (is_array($request)) {
 
             if ($DataObj instanceof PropelCollection) {
-                foreach ($DataObj as $Obj) {
-                    if (!empty($data)) {
-                        $data["Id{$this->tableName}"] = $Obj->getPrimaryKey();
-                        $this->setEntry($data, $Obj);
-                    } else {
-                        $this->response['errors'][] = "Wrong input 1004, nothing found to update";
+                $count = $DataObj->count();
+                if($count > 0){
+                    foreach ($DataObj as $Obj) {
+                        if (!empty($data)) {
+                            $data["Id{$this->tableName}"] = $Obj->getPrimaryKey();
+                            $this->setEntry($data, $Obj);
+                        } else {
+                            $this->response['errors'][] = "Wrong input 1004, nothing found to update";
+                        }
                     }
+                }else{
+                    $this->response['errors'][] = "Found no result for this query";
                 }
+                
             } else {
                 if (!empty($data)) {
                     $this->setEntry($data);
