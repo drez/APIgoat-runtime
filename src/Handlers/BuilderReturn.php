@@ -93,12 +93,12 @@ class BuilderReturn
         if (!empty($this->request['jet'])) {
             switch ($this->request['jet']) {
                 case 'refreshChild':
-                    $child = ($this->request['tp']) ? $this->request['tp'] : $this->request['p'];
+                    $child = ($this->request['data']['tp']) ? $this->request['data']['tp'] : $this->request['p'];
                     $action_success =
-                        "$.get('" . _SITE_URL . "{$this->request['pc']}/{$child}/{$this->request['ip']}', { ui: '{$this->request['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['pc']}'}, function(data){
+                        "$.get('" . _SITE_URL . "{$this->request['data']['pc']}/{$child}/{$this->request['data']['ip']}', { ui: '{$this->request['data']['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['data']['pc']}'}, function(data){
                             $('#cnt{$this->request['pc']}Child').html(data);
-                            $('[j=conglet_{$this->request['pc']}]').parent().attr('class','ui-corner-top ui-state-default');
-                            $('[j=conglet_{$this->request['pc']}][p={$this->request['tp']}]').parent().addClass('ui-state-active');
+                            $('[j=conglet_{$this->request['data']['pc']}]').parent().attr('class','ui-corner-top ui-state-default');
+                            $('[j=conglet_{$this->request['data']['pc']}][p={$this->request['data']['tp']}]').parent().addClass('ui-state-active');
                          });"
                         . "$('body').css('cursor', 'auto');"
                         . "$('#{$this->request['ui']}').dialog('close');";
