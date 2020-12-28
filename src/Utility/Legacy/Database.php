@@ -17,7 +17,7 @@ global $cn;
 function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$error = '')
 {
 	if (!file_exists($base_dir . "config/Built/db.php")) {
-		throw new Exception("Error legacy-db-4: missing db.php");
+		throw new Exception("Error legacy-db-4: missing db.php at line".__LINE__);
 	}
 	$conf = require($base_dir . "config/Built/db.php");
 	$source = $conf['datasources']['default'];
@@ -25,14 +25,14 @@ function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$e
 
 		$initPdo = new PDO($conf['datasources'][$source]['connection']['dsn'], $conf['datasources'][$source]['connection']['user'], $conf['datasources'][$source]['connection']['password']);
 	} catch (PDOException $e) {
-		throw new Exception("Error legacy-db-1: " . $e->getMessage());
+		throw new Exception("Error legacy-db-1: " . $e->getMessage()." at line".__LINE__);
 	}
 	if ($debug)
 		echo "<br /> - $debug :" . $sql . "<br />";
 	try {
 		$con = $initPdo->prepare($sql);
 	} catch (PDOException $e) {
-		throw new Exception("Error legacy-db-2: " . $e->getMessage());
+		throw new Exception("Error legacy-db-2: " . $e->getMessage()." at line".__LINE__);
 	}
 	$rs = $con->execute();
 	if ($rs) {
