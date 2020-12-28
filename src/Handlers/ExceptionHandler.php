@@ -20,6 +20,8 @@ use Slim\Interfaces\ErrorHandlerInterface;
 use Slim\Interfaces\ErrorRendererInterface;
 use Slim\Logger;
 use Throwable;
+use Selective\Config\Configuration;
+use Psr\Container\ContainerInterface;
 
 use function array_intersect;
 use function array_key_exists;
@@ -129,7 +131,8 @@ class ExceptionHandler implements ErrorHandlerInterface
     public function __construct(
         CallableResolverInterface $callableResolver,
         ResponseFactoryInterface $responseFactory,
-        ?LoggerInterface $logger = null
+        ?LoggerInterface $logger = null,
+        ContainerInterface $container
     ) {
         $this->callableResolver = $callableResolver;
         $this->responseFactory = $responseFactory;
@@ -340,6 +343,7 @@ class ExceptionHandler implements ErrorHandlerInterface
     protected function respond(): ResponseInterface
     {
         $response = $this->responseFactory->createResponse($this->statusCode);
+        
         if ($this->contentType !== null && array_key_exists($this->contentType, $this->errorRenderers)) {
             $response = $response->withHeader('Content-type', $this->contentType);
         } else {
@@ -350,10 +354,16 @@ class ExceptionHandler implements ErrorHandlerInterface
             $allowedMethods = implode(', ', $this->exception->getAllowedMethods());
             $response = $response->withHeader('Allow', $allowedMethods);
         }
-
+        
         $renderer = $this->determineRenderer();
         $body = call_user_func($renderer, $this->exception, $this->displayErrorDetails);
         $response->getBody()->write($body);
+
+        $config = $container->get(Configuration::class);
+        $cors_defaults_settings = $container->get(Configuration::class)->getArray('cors');
+
+        $response = $response->withHeader('Access-Control-Allow-Origin', $cors_defaults_settings['defaults']['origin']);
+        
 
         return $response;
     }
