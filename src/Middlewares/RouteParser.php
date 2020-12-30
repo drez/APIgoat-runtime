@@ -56,16 +56,17 @@ class RouteParser implements MiddlewareInterface
 
     public function process(Request $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $this->request = $request;
-        $this->method = $request->getMethod();
-        $this->args['method'] = $this->method;
-        $this->headers = $request->getHeaders();
+        if($this->method != 'OPTIONS'){
+            $this->request = $request;
+            $this->method = $request->getMethod();
+            $this->args['method'] = $this->method;
+            $this->headers = $request->getHeaders();
 
-        $this->decodePath();
-        $this->getArgs();
-        $this->setAction();
-        $request = $request->withAttribute('parsed_args', $this->args);
-
+            $this->decodePath();
+            $this->getArgs();
+            $this->setAction();
+            $request = $request->withAttribute('parsed_args', $this->args);
+        }
         return $handler->handle($request);
     }
 
