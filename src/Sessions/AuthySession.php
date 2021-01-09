@@ -214,9 +214,14 @@ class AuthySession
 
     public function setRights(array $rights)
     {
+        include_once _BASE_DIR."config/permissions.php";
         foreach ($rights as $group => $acls) {
             if (is_array($acls)) {
                 foreach ($acls as $model => $acl) {
+                    $parentMenu = $this->hasParentMenu($omMap, $model);
+                    if($parentMenu){
+                        $this->menuAccess[] = $parentMenu;
+                    }
                     $this->menuAccess[] = $model;
                     $this->accessControl[$model][$group] = $acl;
                 }
@@ -225,6 +230,14 @@ class AuthySession
 
         if (is_array($this->menuAccess)) {
             $this->menuAccess = array_unique($this->menuAccess);
+        }
+    }
+
+    private function hasParentMenu(array $map, string $model){
+        foreach($map as $modelMap){
+            if($modelMap['name'] == $model){
+                return $modelMap['parent_menu'];
+            }
         }
     }
 
