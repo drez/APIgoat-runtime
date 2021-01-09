@@ -137,6 +137,7 @@ class ExceptionHandler implements ErrorHandlerInterface
         $this->callableResolver = $callableResolver;
         $this->responseFactory = $responseFactory;
         $this->logger = $logger ?: $this->getDefaultLogger();
+        $this->container = $container;
     }
 
     /**
@@ -359,8 +360,8 @@ class ExceptionHandler implements ErrorHandlerInterface
         $body = call_user_func($renderer, $this->exception, $this->displayErrorDetails);
         $response->getBody()->write($body);
 
-        $config = $container->get(Configuration::class);
-        $cors_defaults_settings = $container->get(Configuration::class)->getArray('cors');
+        $config = $this->container->get(Configuration::class);
+        $cors_defaults_settings = $this->container->get(Configuration::class)->getArray('cors');
 
         $response = $response->withHeader('Access-Control-Allow-Origin', $cors_defaults_settings['defaults']['origin']);
         
