@@ -375,6 +375,9 @@ class QueryBuilder
             $collection = false;
         }
 
+        $tableMap = $this->Query->getTableMap()->getColumns();
+        $enumVal = [];
+        $i=0;$data = [];
         if ($this->selectIsSet() && is_array($this->Data)) {
 
             // for each Selected column
@@ -409,23 +412,22 @@ class QueryBuilder
                     }
                 }
             }
-        } elseif (is_array($this->Data)) {
-            $tableMap = $this->Query->getTableMap()->getColumns();
-            $enumVal = [];
+        } else{
             if ($collection) {
-
+                
                 foreach ($this->Data as $record) {
+                    
                     foreach ($tableMap as $Column) {
                         if ($Column->getType() == 'ENUM') {
                             if (!is_array($enumVal[$Column->getName()])) {
                                 $enumVal[$Column->getName()] = $Column->getValueSet();
                             }
-                            $data[$Column->getName()] = $enumVal[$Column->getName()][$this->Data[$Column->getPhpName()]];
+                            $data[$i][$Column->getName()] = $enumVal[$Column->getName()][$record[$Column->getPhpName()]];
                         } else {
-                            $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                            $data[$i][$Column->getName()] = $record[$Column->getPhpName()];
                         }
                     }
-                    $this->Data[] = $data;
+                    $i++;
                 }
             } else {
                 foreach ($tableMap as $Column) {
@@ -438,9 +440,11 @@ class QueryBuilder
                         $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
                     }
                 }
-                $this->Data = $data;
             }
+            $this->Data = $data;
         }
+            
+        
     }
 
     private function validateLimit($value)
