@@ -234,12 +234,12 @@ class RouteParser implements MiddlewareInterface
         if(is_array($this->request->getParsedBody())){
             $this->args['data'] = $this->request->getParsedBody();
         }else{
-            $this->args['data'] = $this->pasreBody($raw);
+            $this->args['data'] = $this->parseBody($raw);
         }
         
     }
 
-    private function pasreBody($raw)
+    private function parseBody($raw)
     {
         $contentType = $this->getContentType();
         if (strstr($contentType, 'json')) {
