@@ -66,7 +66,7 @@ class JsonErrorRenderer implements ErrorRendererInterface
                 $detailedErrorMessage = $this->parseException($detailedErrorMessage);
             }
             if (!is_array($detailedErrorMessage)) {
-                $result['messages'][] = $detailedErrorMessage;
+                $result['messages']['error'][] = $detailedErrorMessage;
             } else {
                 $result['messages'] = $detailedErrorMessage;
             }
@@ -77,9 +77,11 @@ class JsonErrorRenderer implements ErrorRendererInterface
 
     private function parseException(string $detailedErrorMessage)
     {
-        preg_match('/at line [0-9]/', $detailedErrorMessage, $matches, PREG_OFFSET_CAPTURE);
+        preg_match('/ in \/var\/www\/c/', $detailedErrorMessage, $matches, PREG_OFFSET_CAPTURE);
         if ($matches[0][1]) {
             return substr($detailedErrorMessage, 0, $matches[0][1]);
+        }else{
+            return $detailedErrorMessage;
         }
     }
 }
