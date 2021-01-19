@@ -107,7 +107,7 @@ class Api
         }
 
         if ($request['rbac_public'] != 'passed') {
-            if ($data["Id{$this->tableName}"] || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])))) {
+            if ($request["action"] == 'update' || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])))) {
                 $acl = $this->authorize($this->tableName, 'w');
             } else {
                 $acl = $this->authorize($this->tableName, 'a');
@@ -121,7 +121,7 @@ class Api
             return $this->response;
         }
 
-        if ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query']))) {
+        if ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])) || $request["action"] == 'update') {
             if ($request['data']['query']['select']) {
                 $this->response['errors'][] = "Do not use 'select' when updating";
                 return $this->response;

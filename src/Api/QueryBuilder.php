@@ -115,6 +115,101 @@ class QueryBuilder
         }
     }
 
+    /**
+     * Use passed request parameters Query to build a SQL query
+     *
+     * @return void
+     */
+    public function buildQuery()
+    {
+        if (\is_numeric($this->primaryKey)) {
+            $this->Query->filterByPrimaryKey($this->primaryKey);
+            return false;
+        }
+
+        if ($this->request['select']) {
+            if ($this->setSelect($this->request['select'])) {
+                return true;
+            }
+        }
+
+        if ($this->primaryKey) {
+            $this->Query->filterByPrimaryKey($this->primaryKey);
+        }
+
+        if ($this->request['filter']) {
+            $this->setFilters($this->request['filter']);
+        }
+
+        if ($this->request['join']) {
+            if ($this->setJoins($this->request['join'])) {
+                return true;
+            }
+        }
+
+        if ($this->request['f']) {
+            $filterStr = "filterBy" . $this->request['f'];
+            if (method_exists($this->Query, $filterStr)) {
+                if ($this->request['fo']) {
+                    switch ($this->request['fo']) {
+                        case 'NE':
+                            $this->Query->$filterStr($this->request['i'], \Criteria::NOT_EQUAL);
+                            break;
+                        case 'LT':
+                            $this->Query->$filterStr($this->request['i'], \Criteria::LESS_THAN);
+                            break;
+                        case 'GT':
+                            $this->Query->$filterStr($this->request['i'], \Criteria::GREATER_THAN);
+                            break;
+                    }
+                } else
+                    $this->Query->$filterStr($this->request['i']);
+            }
+        }
+
+        if ($this->request['order']) {
+            foreach ($this->request['order'] as $order) {
+                if ($order[1]) {
+                    $this->Query->orderBy($order[0], $order[1]);
+                }
+            }
+        }
+
+        if ($this->debug) {
+            $this->info['query'] = $this->Query->toString();
+        }
+
+        if ($this->request['limit']) {
+            $this->request['limit'] = $this->validateLimit($this->request['limit']);
+            $this->Query->limit($this->request['limit']);
+        }
+
+        return false;
+    }
+
+    /**
+     * Run the preset query, find or paginate
+     *
+     * @return Array
+     */
+    private function runQuery()
+    {
+        if ($this->request['page']) {
+            $this->request['max_page'] = ($this->request['max_page']) ? $this->request['max_page'] : 50;
+            $pmpo = $this->Query->paginate($this->request['page'], $this->request['max_page']);
+            $this->Data = $pmpo->getResults();
+        } else {
+            $this->DataObj = $this->Query->find();
+            if (!is_array($this->DataObj)) {
+                $this->Data = $this->DataObj->toArray();
+            }
+        }
+
+        $this->correctData();
+
+        return $this->Data;
+    }
+
     private function setSelect(array $selectRequest)
     {
         foreach ($selectRequest as $select) {
@@ -259,96 +354,6 @@ class QueryBuilder
     }
 
     /**
-     * Use passed request parameters Query to build a SQL query
-     *
-     * @return void
-     */
-    public function buildQuery()
-    {
-        if ($this->request['select']) {
-            if ($this->setSelect($this->request['select'])) {
-                return true;
-            }
-        }
-
-        if ($this->primaryKey) {
-            $this->Query->filterByPrimaryKey($this->primaryKey);
-        }
-
-        if ($this->request['filter']) {
-            $this->setFilters($this->request['filter']);
-        }
-
-        if ($this->request['join']) {
-            if ($this->setJoins($this->request['join'])) {
-                return true;
-            }
-        }
-
-        if ($this->request['f']) {
-            $filterStr = "filterBy" . $this->request['f'];
-            if (method_exists($this->Query, $filterStr)) {
-                if ($this->request['fo']) {
-                    switch ($this->request['fo']) {
-                        case 'NE':
-                            $this->Query->$filterStr($this->request['i'], \Criteria::NOT_EQUAL);
-                            break;
-                        case 'LT':
-                            $this->Query->$filterStr($this->request['i'], \Criteria::LESS_THAN);
-                            break;
-                        case 'GT':
-                            $this->Query->$filterStr($this->request['i'], \Criteria::GREATER_THAN);
-                            break;
-                    }
-                } else
-                    $this->Query->$filterStr($this->request['i']);
-            }
-        }
-
-        if ($this->request['order']) {
-            foreach ($this->request['order'] as $order) {
-                if ($order[1]) {
-                    $this->Query->orderBy($order[0], $order[1]);
-                }
-            }
-        }
-
-        if ($this->debug) {
-            $this->info['query'] = $this->Query->toString();
-        }
-
-        if ($this->request['limit']) {
-            $this->request['limit'] = $this->validateLimit($this->request['limit']);
-            $this->Query->limit($this->request['limit']);
-        }
-
-        return false;
-    }
-
-    /**
-     * Run the preset query, find or paginate
-     *
-     * @return Array
-     */
-    private function runQuery()
-    {
-        if ($this->request['page']) {
-            $this->request['max_page'] = ($this->request['max_page']) ? $this->request['max_page'] : 50;
-            $pmpo = $this->Query->paginate($this->request['page'], $this->request['max_page']);
-            $this->Data = $pmpo->getResults();
-        } else {
-            $this->DataObj = $this->Query->find();
-            if (!is_array($this->DataObj)) {
-                $this->Data = $this->DataObj->toArray();
-            }
-        }
-
-        $this->correctData();
-
-        return $this->Data;
-    }
-
-    /**
      * Clean the Data array from unwanted key
      * and set the ENUM values
      *
@@ -431,14 +436,7 @@ class QueryBuilder
                 }
             } else {
                 foreach ($tableMap as $Column) {
-                    if ($Column->getType() == 'ENUM') {
-                        if (!is_array($enumVal[$Column->getName()])) {
-                            $enumVal[$Column->getName()] = $Column->getValueSet();
-                        }
-                        $data[$Column->getName()] = $enumVal[$Column->getName()][$this->Data[$Column->getPhpName()]];
-                    } else {
-                        $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
-                    }
+                    $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
                 }
             }
             $this->Data = $data;
