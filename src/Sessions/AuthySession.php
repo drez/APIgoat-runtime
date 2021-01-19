@@ -95,11 +95,25 @@ class AuthySession
         return $this->csrf;
     }
 
-    public function getEmail()
-    {
-        return $this->email;
+    public function getUsername(){
+        return $this->username;
     }
 
+    public function getEmail(){
+        return $this->email;
+    }
+    
+    public function getFirstname(){
+        return $this->firstname;
+    }
+
+    public function getFullname(){
+        return $this->firstname." ".$this->lastname;
+    }
+
+    /**
+    * Legacy get/set
+    */
     public function get($val)
     {
         switch ($val) {
