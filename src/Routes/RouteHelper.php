@@ -125,7 +125,7 @@ class RouteHelper
 
         # if not route name, get the name from the uri
         if (empty($this->routeName)) {
-            $path =  preg_replace('/' . _SUB_DIR . '/', '', $this->request->getUri()->getPath(), 1);
+            $path =  preg_replace('/' . _SUB_DIR_URL . '/', '', $this->request->getUri()->getPath(), 1);
             throw new \Exception('Route name empty: ' . $path);
         }
 

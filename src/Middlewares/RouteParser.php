@@ -143,7 +143,7 @@ class RouteParser implements MiddlewareInterface
     private function decodePath()
     {
         $data = [];
-        $path =  preg_replace('*' . _SUB_DIR . '*', '', $this->request->getUri()->getPath(), 1);
+        $path =  preg_replace('*' . _SUB_DIR_URL . '*', '', $this->request->getUri()->getPath(), 1);
 
         # API call
         $data['is_api'] = false;
