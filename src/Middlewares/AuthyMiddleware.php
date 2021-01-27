@@ -52,7 +52,7 @@ class AuthyMiddleware implements MiddlewareInterface
                     && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth"
                 ) {
                     $response = new Response();
-                    return $response->withHeader('Location', _SUB_DIR . 'Authy/login')->withStatus(401);
+                    return $response->withHeader('Location', _SUB_DIR_URL . 'Authy/login')->withStatus(401);
                 } else {
                     $response = $handler->handle($request);
                     return $response;

@@ -21,7 +21,7 @@ class RecallMiddleware implements MiddlewareInterface
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $path = str_replace(_SUB_DIR, '', $request->getUri()->getPath());
+        $path = str_replace(_SUB_DIR_URL, '', $request->getUri()->getPath());
         $url_parts = explode('/', $path);
         $entity = $url_parts[0];
 
