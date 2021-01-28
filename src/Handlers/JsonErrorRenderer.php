@@ -66,7 +66,7 @@ class JsonErrorRenderer implements ErrorRendererInterface
                 $detailedErrorMessage = $this->parseException($detailedErrorMessage);
             }
             if (!is_array($detailedErrorMessage)) {
-                $result['messages']['error'][] = $detailedErrorMessage;
+                $result['messages'][] = $detailedErrorMessage;
             } else {
                 $result['messages'] = $detailedErrorMessage;
             }

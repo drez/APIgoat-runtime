@@ -98,7 +98,7 @@ trait Message
         $body['status'] = $this->getStatus();
         $body['data'] = $this->getData();
         $body['messages'] = $this->getMessages('info');
-        $body['errors'] = $this->getMessages('errors');
+        $body['error'] = $this->getMessages('errors');
         $body['debug'] = $this->getMessages('debug');
 
         return $body;

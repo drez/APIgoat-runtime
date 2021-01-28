@@ -48,13 +48,13 @@ class OauthService extends Service
             if (is_array($data)) {
                 $result = $this->process($data);
 
-                if ($result['errors']) {
+                if ($result['error']) {
                     $errors = '';
-                    foreach ($result['errors'] as $error) {
+                    foreach ($result['error'] as $error) {
                         $errors .= div($error);
                     }
 
-                    $result['errors'] = $this->BuilderLayout->decorate(
+                    $result['error'] = $this->BuilderLayout->decorate(
                         $errors,
                         [
                             'type' => 'warning',
@@ -64,7 +64,7 @@ class OauthService extends Service
                     );
                 }
             } else {
-                $result['errors'] = $this->BuilderLayout->decorate(
+                $result['error'] = $this->BuilderLayout->decorate(
                     "Something went wrong",
                     [
                         'type' => 'warning',
@@ -89,7 +89,8 @@ class OauthService extends Service
         $result['status'] = 'failure';
         if ($this->args['action'] == 'callback') {
             if ($this->args['error']) {
-                $result['errors'][] = $this->args['error_description'];
+                $result['error'] = "callback error";
+                $result['messages'][] = $this->args['error_description'];
             } else {
                 if ($this->args['opauth']) {
                     $data = json_decode(base64_decode($this->args['opauth']), true);
@@ -100,7 +101,8 @@ class OauthService extends Service
                 $result = $this->process($data);
                 $result['status'] = 'success';
             } else {
-                $result['errors'][] = "Something went wrong";
+                $result['error'] = "fatal error";
+                $result['messages'][] = "Something went wrong";
             }
 
             $ApiResponse = new ApiResponse($this->args, $this->response, $result);
@@ -119,12 +121,13 @@ class OauthService extends Service
         if ($response['code']) {
             switch ($response['code']) {
                 case 'access_token_error':
-                    $return['errors'][] = $response['message'];
+                    $return['error'] = 'access_token_error';
+                    $return['messages'][] = $response['message'];
                     break;
             }
         } elseif ($response['error']) {
-            $return['errors'][] = $response['error'];
-            $return['errors'][] = $response['error_description'];
+            $return['erros'] = $response['error'];
+            $return['messages'][] = $response['error_description'];
         } else {
             $return = $this->authenticate($response['auth']);
         }
@@ -136,9 +139,9 @@ class OauthService extends Service
     {
 
         if (!is_array($auth) || !is_array($auth['info'])) {
-            return ['errors' => ["General: decryption error."]];
+            return ['error' => "General: decryption error."];
         } elseif (empty($auth['info']['email'])) {
-            return ['errors' => ["General: cant access email."]];
+            return ['error' => "General: cant access email."];
         }
 
         $Authy = \App\AuthyQuery::create()
