@@ -38,8 +38,25 @@ class Message extends AbstractLogger
         return "[Error]" . $t->getMessage();
     }
 
+    public function clearPreviousError(){
+        unset($this->output[0]['error']);
+    }
+
+    public function getSimpleApiMessages($facility = 'all'){
+        $multiple = count($this->output);
+        if($multiple == 1){
+            return [
+                'messages' => $this->output[0]['info'],
+                'error' => $this->output[0]['error'],
+            ];
+        }else{
+            throw new \Exception("Cant use simple form, multiple task messages used");
+        }
+    }
+
     public function getMessages($facility = 'all')
     {
+        $output = [];
         switch ($facility) {
             case 'all':
                 return $this->output;
@@ -48,7 +65,12 @@ class Message extends AbstractLogger
                 foreach ($this->output as $id => $arMsg) {
                     foreach ($arMsg as $name => $msg) {
                         if ($name == $facility) {
-                            $output[] = $msg;
+                            if(\is_array($msg)){
+                                $output = array_merge($output, $msg);
+                            }else{
+                                $output[] = $msg;
+                            }
+                            
                         }
                     }
                 }
@@ -64,8 +86,8 @@ class Message extends AbstractLogger
 
     public function addMessage($str)
     {
-        if (!empty($log)) {
-            $this->output[0]['info'][] = $str;
+        if (!empty($str)) {
+            $this->output['info'][] = $str;
         }
     }
 
@@ -93,23 +115,23 @@ class Message extends AbstractLogger
         if (\is_array($log)) {
             foreach ($log as $entry) {
                 if (!empty($entry)) {
-                    $this->output[$this->index][$facility][] = $this->replaceAbsPath($entry);
+                    $this->output[$facility][] = $this->replaceAbsPath($entry);
                 }
             }
         } else {
             if (!empty($log)) {
-                $this->output[$this->index][$facility][] = $this->replaceAbsPath($log);
+                $this->output[$facility][] = $this->replaceAbsPath($log);
             }
         }
-        if ($increment) {
-            $this->index++;
-        }
+       
     }
 
     public function mergeMessages(Object $Message)
     {
         $messages = $Message->getMessages();
-        $this->output = array_merge($this->output, $messages);
+        foreach($messages as $facility => $message){
+            $this->output[$facility] = array_merge($this->output[$facility] , $messages[$facility]);
+        }
     }
 
     private function replaceAbsPath($entry)

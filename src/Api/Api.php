@@ -102,7 +102,7 @@ class Api
         $data = $this->filterRequest($request['data']);
 
         if (empty($data)) {
-            $this->response['errors'][] = "Wrong input 1007, nothing found to update";
+            $this->response['error'] = "Wrong input 1007, nothing found to update";
             return $this->response;
         }
 
@@ -117,27 +117,27 @@ class Api
         }
 
         if (!$acl) {
-            $this->response['errors'][] = "Permission denied";
+            $this->response['error'] = "Permission denied";
             return $this->response;
         }
 
         if ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])) || $request["action"] == 'update') {
             if ($request['data']['query']['select']) {
-                $this->response['errors'][] = "Do not use 'select' when updating";
+                $this->response['error'] = "Do not use 'select' when updating";
                 return $this->response;
             }
             // Use Query Builder
             $ModelQuery = $this->setAclFilter($this->queryObjName::create());
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $request);
             $DataObj = $QueryBuilder->getDataObj();
-            $this->response['messages'] = $QueryBuilder->getMessages();
+            $this->response['messages'][] = $QueryBuilder->getMessages();
             if ($QueryBuilder->debug) {
                 $this->response['debug'] = $QueryBuilder->getDebug();
             }
         }
 
         if (!empty($this->response['messages'])) {
-            $this->response['errors'][] = "Query builder warning are blocking the create/update";
+            $this->response['messages'][] = "Query builder warning are blocking the create/update";
             return $this->response;
         }
 
@@ -151,19 +151,19 @@ class Api
                             $data["Id{$this->tableName}"] = $Obj->getPrimaryKey();
                             $this->setEntry($data, $Obj);
                         } else {
-                            $this->response['errors'][] = "Wrong input 1004, nothing found to update";
+                            $this->response['error'] = "Wrong input 1004, nothing found to update";
                         }
                     }
                 }else{
-                    $this->response['errors'][] = "Found no result for this query";
+                    $this->response['messages'][] = "Found no result for this query";
                 }
                 
             } else {
                 if (!empty($data)) {
                     $this->setEntry($data);
                 } else {
-                    $this->response['errors'][] = "Wrong input 1003, nothing found to update";
-                    $this->response['errors'][] = $data;
+                    $this->response['error'] = "Wrong input 1003, nothing found to update";
+                    $this->response['messages'][] = $data;
                 }
             }
         } else {
@@ -186,7 +186,7 @@ class Api
             $acls = $this->authorize($this->tableName, 'r');
             if (!$acls) {
                 $this->response['status'] = "failure";
-                $this->response['errors'][] = "Permission denied";
+                $this->response['error'] = "Permission denied";
                 return $this->response;
             }
         }
@@ -200,7 +200,7 @@ class Api
             // Add a global settings permit whole object
             /* if (!$QueryBuilder->selectIsSet()) {
                 $ret['status'] = 'failure';
-                $ret['errors'][] = "Invalid parameter: Select * are not allowed. Use 'select' key in your query parameter to select some columns. ";
+                $ret['error'] = "Invalid parameter: Select * are not allowed. Use 'select' key in your query parameter to select some columns. ";
                 return $ret;
             }*/
             if ($QueryBuilder->getDataObj()) {
@@ -210,7 +210,7 @@ class Api
             $ret['messages'][] = $QueryBuilder->getMessages();
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
-            $ret['errors'][] = "Invalid parameter 4: " . $x->getMessage();
+            $ret['error'] = "Invalid parameter 4: " . $x->getMessage();
             return $ret;
         }
 
@@ -226,11 +226,11 @@ class Api
                 $ret['count'] = count($Data);
             } else {
                 $ret['status'] = 'failure';
-                $ret['errors'][] = $QueryBuilder->getMessages();
+                $ret['error'] = $QueryBuilder->getMessages();
             }
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
-            $ret['errors'][] = "Invalid parameter 1: " . $x->getMessage();
+            $ret['error'] = "Invalid parameter 1: " . $x->getMessage();
         }
 
         if ($QueryBuilder->debug) {
@@ -263,7 +263,7 @@ class Api
             return $ret;
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
-            $ret['errors'][] = "Invalid parameter 2: " . $x->getMessage();
+            $ret['error'] = "Invalid parameter 2: " . $x->getMessage();
         }
         return $ret;
     }
@@ -285,7 +285,7 @@ class Api
         }
 
         if (!$acls) {
-            $this->response['errors'][] = "Permission denied";
+            $this->response['error'] = "Permission denied";
             return $this->response;
         }
 
@@ -296,13 +296,13 @@ class Api
             }
             $obj = $QueryBuilder->getDataObj();
             if ($QueryBuilder->getMessages()) {
-                $ret['errors'][] = $QueryBuilder->getMessages();
+                $ret['error'] = $QueryBuilder->getMessages();
             }
 
 
             if (!$obj) {
                 $ret['status'] = 'failure';
-                $ret['errors'][] = 'Entry not found';
+                $ret['error'] = 'Entry not found';
             } else {
                 $ret['count'] = 0;
                 foreach ($obj as $item) {
@@ -329,10 +329,10 @@ class Api
             $ret['status'] = 'failure';
             if (is_array($ret['data']['ids'])) {
                 $ret['status'] = 'failure';
-                $ret['errors'][] = "Some not deleted";
+                $ret['error'] = "Some not deleted";
             } else {
                 $ret['status'] = 'failure';
-                $ret['errors'][] = "Invalid parameter 3: " . $x->getMessage();
+                $ret['error'] = "Invalid parameter 3: " . $x->getMessage();
             }
         }
         if ($QueryBuilder->debug) {
@@ -387,7 +387,8 @@ class Api
                 $PropelErrorHandler->setExtendedValidationFailures($extValidationError);
                 $validationErrors = $PropelErrorHandler->getValidationErrorsArray();
                 $this->response['messages'] = $validationErrors['messages'];
-                $this->response['errors'] = $validationErrors['columns'];
+                $this->response['error'] = "Validation error";
+                $this->response['data'] = $validationErrors['columns'];
                 $this->response['status'] = 'failure';
                 return false;
             }
@@ -400,7 +401,7 @@ class Api
                 $this->ServiceWrapper->afterSave($obj, $dataAr, $isNew, $error, $data, $this->response['messages']);
             }
         } else {
-            $this->response['errors'][] = "Entry not found";
+            $this->response['error'] = "Entry not found";
             return false;
         }
         return $obj;
@@ -421,7 +422,7 @@ class Api
         if (!is_array($columns)) {
             $setStr = "set" . $columns;
             if (!method_exists($obj, $setStr))
-                $this->response['errors'][] = 'Unknown column ' . $columns;
+                $this->response['messages'][] = 'Unknown column ' . $columns;
             else {
                 $obj->$setStr($value);
                 $ret['count']++;
@@ -431,13 +432,13 @@ class Api
                 if ($key) {
                     $setStr = "set" . $key;
                     if (!method_exists($obj, $setStr)) {
-                        $this->response['errors'][] = 'Unknown column ' . $key;
+                        $this->response['messages'][] = 'Unknown column ' . $key;
                     } else {
                         $obj->$setStr($val);
                         $this->response['status'] = 'success';
                     }
                 } else {
-                    $this->response['errors'][] = 'Missing value for column';
+                    $this->response['messages'][] = 'Missing value for column';
                 }
             }
         }
@@ -463,7 +464,8 @@ class Api
             $PropelErrorHandler = new PropelErrorHandler($obj);
             $validationErrors = $PropelErrorHandler->getValidationErrorsArray();
             $this->response['messages'] = $validationErrors['messages'];
-            $this->response['errors'] = $validationErrors['columns'];
+            $this->response['data'] = $validationErrors['columns'];
+            $this->response['error'] = "Validation error";
             $this->response['status'] = 'failure';
             return false;
         }
