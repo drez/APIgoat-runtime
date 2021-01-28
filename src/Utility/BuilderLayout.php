@@ -163,14 +163,15 @@ class BuilderLayout
         $settings = $this->settings['top_nav'];
         foreach ($menus as $menu) {
             if (isset([$menu]['url'])) {
-                $items .= li(href(span(_($settings[$menu]['caption'])), $settings[$menu]['url'], 'title="' . $settings[$menu]['title'] . '" class="icon ' . $menu . '"'));
+                $items .= li(href(span(_($settings[$menu]['caption'])), $settings[$menu]['url'], 'title="' . $settings[$menu]['title'] . '" class="icon ' . $menu . '"'), "class='right'");
             }
         }
 
         return ul(
-            li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'))
+            li(href(img(vendor_logo), vendor_url, 'class="logo-wrapper"'))
+            .li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
                 . $items
-                . li(href(span(_("Menu")), "#", 'title="Menu" class="icon menu trigger-menu"')),
+                . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
             'class="nav"'
         );
     }

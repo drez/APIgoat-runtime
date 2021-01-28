@@ -84,7 +84,7 @@ class tabs
                 }
 
                 $li .= li(
-                    htmlLink($label, "javascript:", $params . " " . $data['param'] . " p='" . $this->entity . "' " . $this->conglet . " style='ui-tabs-anchor button-link-blue'"),
+                    htmlLink($label, "javascript:void(0);", $params . " " . $data['param'] . " p='" . $this->entity . "' " . $this->conglet . " style='ui-tabs-anchor button-link-blue'"),
                     "class='" . $cssLi . " ui-state-default ui-corner-top " . $selectedClass . "'"
                 );
 
@@ -99,18 +99,16 @@ class tabs
                 $this->parentContentDivId = 'axContentDiv';
             }
 
-            if (!empty($this->label)) {
-                $setHalf = "max-width: 50%;";
-            }
-
             $this->html = div(
-                div($this->label, '', "style='display:inline-block;margin-right: 20px;'")
-                    . ul(
+                div($this->label)
+                    . div(
+                        ul(
                         $li,
-                        "class='ui-tabs-nav ui-helper-reset ui-helper-clearfix ui-widget-header ui-corner-all'"
+                        "class='ui-tabs-nav'"
+                    )
                     ),
                 'cntOnglet' . $this->entity,
-                "class='" . $this->child_pannel . "pannel_child_onglet cntOnglet HtmlTabs'"
+                "class='" . $this->child_pannel . " pannel_child_onglet cntOnglet'"
             )
                 . $axContentDiv;
         } else {
@@ -118,12 +116,12 @@ class tabs
                 ul(
                     li(
                         htmlLink($label, "javascript:", " p='" . $this->entity . "' " . $this->conglet . "  class='ui-tabs-anchor button-link-blue'"),
-                        "class='ui-state-default ui-corner-top ui-tabs-active ui-state-active'"
+                        "class='ui-state-default ui-tabs-active ui-state-active'"
                     ),
-                    "class='" . $this->child_pannel . " ui-tabs-nav ui-helper-reset ui-helper-clearfix ui-widget-header ui-corner-all'"
+                    "class='" . $this->child_pannel . " ui-tabs-nav'"
                 ),
                 'cntOnglet' . $this->entity,
-                "class='pannel_child_onglet cntOnglet HtmlTabs'"
+                "class='pannel_child_onglet cntOnglet'"
             );
         }
         return $this->html;

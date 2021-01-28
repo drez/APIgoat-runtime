@@ -22,11 +22,11 @@ class Rights
                 . table(
                     thead(
                         tr(
-                            th(_('Module'), "style=''")
-                                . th(_('Read'), "style='width:70px;'")
-                                . th(_('Add'), "style='width:70px;'")
-                                . th(_('Update'), "style='width:70px;'")
-                                . th(_('Delete'), "style='width:70px;'")
+                            th(_('Module'), "class='no-sort'")
+                                . th(_('Read'), "style='width:70px;' class='no-sort'")
+                                . th(_('Add'), "style='width:70px;' class='no-sort'")
+                                . th(_('Update'), "style='width:70px;' class='no-sort'")
+                                . th(_('Delete'), "style='width:70px;' class='no-sort'")
                         )
                     )
                         . $trRights,
