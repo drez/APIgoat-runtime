@@ -134,9 +134,8 @@ class BuilderLayout
                             . div('', 'editDialog', 'style=""')
                             . div('', 'editPopupDialog', 'style="d" ')
                             . div(
-                                p('', "id='confirm_text'"),
-                                'confirmDialog'
-                            )
+                                    div(p('', "id='confirm_text'"), '', "class='mainForm'")
+                                ,'confirmDialog')
                             . div(
                                 p('', 'id="alert_text" style="display:none;"'),
                                 'alertDialog',
