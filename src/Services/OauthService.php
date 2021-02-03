@@ -90,7 +90,7 @@ class OauthService extends Service
         if ($this->args['action'] == 'callback') {
             if ($this->args['error']) {
                 $result['error'] = "callback error";
-                $result['messages'][] = $this->args['error_description'];
+                $result['messages'] = $this->args['error_description'];
             } else {
                 if ($this->args['opauth']) {
                     $data = json_decode(base64_decode($this->args['opauth']), true);
@@ -99,10 +99,22 @@ class OauthService extends Service
 
             if (is_array($data)) {
                 $result = $this->process($data);
-                $result['status'] = 'success';
+                if($result['errors'] || $result['error']){
+                    $result['status'] = 'failure';
+                    if($result['error']['message']){
+                        //Github
+                        $result['error'] = $result['error']['message'][0];
+                    }else{
+                        $result['error'] = $result['errors'][0];
+                    }
+                   
+                }else{
+                    $result['status'] = 'success';
+                }
+                
             } else {
                 $result['error'] = "fatal error";
-                $result['messages'][] = "Something went wrong";
+                $result['messages'] = "Something went wrong";
             }
 
             $ApiResponse = new ApiResponse($this->args, $this->response, $result);
@@ -126,7 +138,7 @@ class OauthService extends Service
                     break;
             }
         } elseif ($response['error']) {
-            $return['erros'] = $response['error'];
+            $return['error'] = $response['error'];
             $return['messages'][] = $response['error_description'];
         } else {
             $return = $this->authenticate($response['auth']);
@@ -178,7 +190,7 @@ class OauthService extends Service
                     }
                     return false;
                 } else {
-                    return ['errors' => ["The email is already in use with a different provider."]];
+                    return ['errors' => ["This email is already in use with a different provider."]];
                 }
             } elseif ($Authy->isNew()) {
                 $Authy->setOaProvider(strtolower($auth['provider']));
