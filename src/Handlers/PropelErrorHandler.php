@@ -149,10 +149,7 @@ class PropelErrorHandler
         }
 
         $this->errorMessage['onReadyJs'] .=
-            "
-            $('#ui-dialog-title-alertDialog').html('" . addslashes($this->title) . "');\n"
-            . "$('#alert_text').show().html('" . addslashes($this->errorMessage['txt']) . "');\n"
-            . "$('#alertDialog').dialog('open');\n"
+            "alertb('" . addslashes($this->title) . "', '" . addslashes($this->errorMessage['txt']) . "');"
             . "alert_close = function(){
     $('{$this->parentContainer} .error_field').first().focus();
     $('{$this->parentContainer} .can-save, body').css('cursor', 'auto').removeAttr('disabled');

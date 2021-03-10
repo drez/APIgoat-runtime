@@ -37,10 +37,7 @@ class BuilderLayout
         $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
 
         $this->js = "<script type='text/javascript'>
-    var _SITE_URL = '" . addslashes(_SITE_URL) . "';
-    var session_id = '" . addslashes(uniqid()) . "';
-    var _BASE_DIR = '" . addslashes(_BASE_DIR) . "';
-    var _SERVER_DATE = '" . time() . "';
+    let _SITE_URL = '" . addslashes(_SITE_URL) . "';
 </script>";
         return $this;
     }
@@ -52,8 +49,15 @@ class BuilderLayout
 
     public function renderXHR($content)
     {
-        return $content['html'] . $content['js']
-            . scriptReady(trim($content['onReadyJs']));
+        if(!empty($content['html']) || !empty($content['js']) || !empty($content['onReadyJs'])){
+            return $content['html'] . $content['js']
+                . scriptReady(trim($content['onReadyJs']));
+        }else{
+            if(!empty($content)){
+                return $content;
+            }
+        }
+        return "The response is empty.";
     }
 
     public function renderLogin($content)
@@ -137,10 +141,8 @@ class BuilderLayout
                                     div(p('', "id='confirm_text'"), '', "class='mainForm'")
                                 ,'confirmDialog')
                             . div(
-                                p('', 'id="alert_text" style="display:none;"'),
-                                'alertDialog',
-                                " class='' title='Message' "
-                            )
+                                    div(p('', "id='alert_text'"), '', "class='mainForm'"),
+                                'alertDialog')
 
                             . $this->js
                             . $output['EndBody'],

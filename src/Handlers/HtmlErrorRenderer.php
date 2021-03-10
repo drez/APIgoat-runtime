@@ -57,7 +57,7 @@ class HtmlErrorRenderer implements ErrorRendererInterface
                 $errorMessage = $displayErrorDetails;
             }
 
-            return scriptReady("$('#alertDialog').html('{$errorMessage}').dialog('open');");
+            return scriptReady("alertb('Error', '{$errorMessage}');");
         }
 
         if ($displayErrorDetails) {
