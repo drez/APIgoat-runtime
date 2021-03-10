@@ -114,7 +114,7 @@ class RouteParser implements MiddlewareInterface
                     $body = ($this->args['method'] == 'GET') ? $this->args['query'] : $this->args['data'];
                     $this->args['data'] = $body;
 
-                    if (($body['query'] && count($body) == 1) || ($body['query'] && count($body) == 2 && isset($body['debug']))) {
+                    if (($body['query'] && count($body) == 1) || ($body['query'] && count($body) == 2 && isset($body['debug'])) || isset($body['ms'])) {
                         $this->args['action'] = 'list';
                     } elseif ($this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
                         if (!empty($this->args['id']) || $this->args['method'] == 'PATCH' || $body['query']) {

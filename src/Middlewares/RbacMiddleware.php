@@ -139,6 +139,9 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_is_new = true;
             $this->rbac_id = $ApiRbac->getPrimaryKey();
             $this->logApi($this->rbac_id);
+            if(\defined('app_status') && \app_status == 'dev'){
+                return false;
+            }
             return true;
         } elseif ($ApiRbac->getScope() == 'Public' && $ApiRbac->getRule() != 'Deny') {
             // pass public route
@@ -152,6 +155,9 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_rule = $ApiRbac->getRule();
             $this->rbac_role = null;
             $this->rbac_id = $ApiRbac->getPrimaryKey();
+            if(\defined('app_status') && \app_status == 'dev'){
+                return false;
+            }
             return true;
         }
     }
@@ -245,7 +251,7 @@ class RbacMiddleware implements MiddlewareInterface
                 $i++;
             }
         } else {
-            $where = [1];
+            $where = ['1'];
         }
 
         if (is_array($fields)) {
@@ -254,12 +260,13 @@ class RbacMiddleware implements MiddlewareInterface
             $order = "ORDER BY bestMatch DESC";
         }
 
+        $clause = ($where)?implode(" AND ", $where):'1';
 
         $sql = "SELECT `id_api_rbac` {$selects} FROM `api_rbac` WHERE 
             `model` = '" . $this->args['model'] . "' AND
             `action` = '" . $this->args['action'] . "' AND
             `method` = '" . \App\ApiRbacPeer::getSqlValueForEnum('api_rbac.method', $this->args['method']) . "' AND
-            " . implode(" AND ", $where) . "
+            " . $clause . "
             {$order}
             LIMIT 1
             ";

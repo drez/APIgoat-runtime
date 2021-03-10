@@ -812,7 +812,7 @@ function camelize($string, $pascalCase = false)
         $string = strtolower($string);
     }
     $string = str_replace(array('-', '_'), ' ', $string);
-    $string = ucwords($string);
+    $string = ucwords($string, " \t\r\n\f\v.");
     $string = str_replace(' ', '', $string);
 
     return $string;

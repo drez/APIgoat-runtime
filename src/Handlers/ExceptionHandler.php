@@ -199,7 +199,11 @@ class ExceptionHandler implements ErrorHandlerInterface
             return $this->exception->getCode();
         }
 
-        return 500;
+        if (get_class($this->exception) == 'HJSON\HJSONException') {
+            return 400;
+        }
+
+        return 400;
     }
 
     /**
@@ -358,6 +362,7 @@ class ExceptionHandler implements ErrorHandlerInterface
         
         $renderer = $this->determineRenderer();
         $body = call_user_func($renderer, $this->exception, $this->displayErrorDetails);
+        
         $response->getBody()->write($body);
 
         $config = $this->container->get(Configuration::class);
