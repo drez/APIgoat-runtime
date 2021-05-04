@@ -91,7 +91,7 @@ class Api
      * @param QueryBuilder $QueryBuilder
      * @return void
      */
-    public function setJson($request, $QueryBuilder = null)
+    public function setJson($request)
     {
 
         $this->response = [];
@@ -130,7 +130,10 @@ class Api
             $ModelQuery = $this->setAclFilter($this->queryObjName::create());
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $request);
             $DataObj = $QueryBuilder->getDataObj();
-            $this->response['messages'][] = $QueryBuilder->getMessages();
+            if($QueryBuilder->getMessages()){
+                $this->response['messages'][] = $QueryBuilder->getMessages();
+            }
+            
             if ($QueryBuilder->debug) {
                 $this->response['debug'] = $QueryBuilder->getDebug();
             }
@@ -160,7 +163,7 @@ class Api
                 
             } else {
                 if (!empty($data)) {
-                    $this->setEntry($data);
+                    $this->setEntry($data, $DataObj);
                 } else {
                     $this->response['error'] = "Wrong input 1003, nothing found to update";
                     $this->response['messages'][] = $data;
@@ -367,6 +370,7 @@ class Api
             $this->response['debug'][] = "Update {$this->tableName}";
             $obj = $DataObj;
         }
+        
         if ($obj) {
 
             /**
@@ -425,6 +429,7 @@ class Api
                 $this->response['messages'][] = 'Unknown column ' . $columns;
             else {
                 $obj->$setStr($value);
+                $this->colsToValidate[] = $columns;
                 $ret['count']++;
             }
         } else {
@@ -435,6 +440,7 @@ class Api
                         $this->response['messages'][] = 'Unknown column ' . $key;
                     } else {
                         $obj->$setStr($val);
+                        $this->colsToValidate[] = $key;
                         $this->response['status'] = 'success';
                     }
                 } else {
@@ -454,7 +460,7 @@ class Api
      */
     private function validateSave($obj)
     {
-        if ($obj->validate()) {
+        if ($obj->validate($this->colsToValidate)) {
             $obj->save();
             $this->response['ids'][] = $obj->getPrimaryKey();
             $this->response['status'] = 'success';

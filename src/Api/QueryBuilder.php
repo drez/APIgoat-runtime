@@ -102,7 +102,7 @@ class QueryBuilder
 
     public function getDataObj()
     {
-        return ($this->DataObj || $this->isInfo());
+        return ($this->DataObj) ? $this->DataObj : $this->isInfo();
     }
 
     public function setQueryObject($query)
@@ -295,21 +295,21 @@ class QueryBuilder
 
     private function setFilters(array $filtersRequest)
     {
-        $singleFilter = false;
-
         foreach ($filtersRequest as $table => $filters) {
 
             $Table = \camelize($table, true);
             $Class = "App\\" . $Table;
             
-            $useQueryDefault = $this->getUseClause($Class, $Table, $table);
+            //$useQueryDefault = $this->getUseClause($Class, $Table, $table);
 
             if (empty($useQuery) || method_exists($this->Query, $useQuery)) {
+                
                 if(!is_array($filters[0])){
                     $filters = [$filters];
                 }
+
                 foreach ($filters as $filter) {
-                    $useQuery = $useQueryDefault;
+                    
                     $addOr = false;
                     $filter[1] = ($filter[1] == 'null') ? null : $filter[1];
                     if (strpos($filter[0], '.') === false) {
@@ -323,10 +323,9 @@ class QueryBuilder
                         $fClass = "App\\" . $fTable;
                         $useQuery = $this->getUseClause($fClass, $fTable, $table);
                     }
-                    
 
                     $criteria = \Criteria::EQUAL;
-                    if (\strstr($filter[1], "%")) {
+                    if (\is_string($filter[1]) && \strstr($filter[1], "%")) {
                         $criteria = \Criteria::LIKE;
                     }
 
@@ -354,20 +353,30 @@ class QueryBuilder
 
                         $filter[1] = $this->setVariablesValue($filter[1]);
 
-                        if ($useQuery) {
-                            $this->Query->$useQuery()
-                                ->$filterStr($filter[1], $criteria)
-                                ->endUse();
-                            $useQuery = $useQueryDefault;
-                        } else {
+                        if($lastUseQuery && $lastUseQuery != $useQuery){
+                            $this->Query->endUse();
+                            $lastUseQuery = null;
+                        }
+
+                        if ($useQuery && !$lastUseQuery) {
+                            $this->Query = $this->Query->$useQuery();
                             $this->Query->$filterStr($filter[1], $criteria);
-                            if ($addOr) {
-                                $this->Query->_or();
-                            }
+                            $lastUseQuery = $useQuery;
+                        } else {
+                            $this->Query
+                                ->$filterStr($filter[1], $criteria);
+                        }
+
+                        if ($addOr) {
+                            $this->Query->_or();
                         }
                     } else {
                         $this->messages[] = "Filter: Field ({$filter[0]}) not found";
                     }
+                }
+
+                if($lastUseQuery){
+                    $this->Query = $this->Query->endUse();
                 }
             } else {
                 $this->messages[] = "Filter: Table ({$table}) not found";
@@ -377,7 +386,8 @@ class QueryBuilder
 
     private function setVariablesValue($filter)
     {
-        if (\preg_match('/^(\$[a-zA-Z]*).([a-zA-Z]*)/', $filter, $matches)) {
+        if(is_string($filter)){
+            if (\preg_match('/^(\$[a-zA-Z]*).([a-zA-Z]*)/', $filter, $matches)) {
             switch ($matches[1]) {
                 case '$session':
                     $filter = $_SESSION[_AUTH_VAR]->sessVar[$matches[2]];
@@ -389,6 +399,7 @@ class QueryBuilder
                     $filter = $_SESSION[_AUTH_VAR]->getIdAuthy();
                     break;
             }
+        }
         }
         return $filter;
     }
