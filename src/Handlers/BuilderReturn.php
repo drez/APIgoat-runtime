@@ -137,9 +137,7 @@ class BuilderReturn
 
             if (!empty($messages)) {
                 $this->return['onReadyJs'] =
-                    "$('#ui-dialog-title-alertDialog').html('Alert');
-$('#alert_text').show().html('" . addslashes($this->removeNl($messages)) . "');
-$('#alertDialog').dialog('open');
+                "alertb('Alert', '" . addslashes($this->removeNl($messages)) . "');
 alert_close = function (){
     {$alert_close}
 }";

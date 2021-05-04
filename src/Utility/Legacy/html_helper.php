@@ -742,16 +742,12 @@ function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Mess
     } else {
         if ($print) {
             $error['onReadyJs'] = "
-            <script>$('#ui-dialog-title-alertDialog').html('" . str_replace("'", " ", $text_title) . "');
-            $('#alert_text').show().html('" . str_replace("'", " ", $msg) . "');
-            $('#alertDialog').dialog('open');</script>
+            alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');
 
         ";
         } else {
             $error['onReadyJs'] = "
-            $('#ui-dialog-title-alertDialog').html('" . str_replace("'", " ", $text_title) . "');
-            $('#alert_text').show().html('" . str_replace("'", " ", $msg) . "');
-            $('#alertDialog').dialog('open');";
+            alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');";
             $error['error'] = 'yes';
         }
 
@@ -795,11 +791,8 @@ function handleValidationError($objValidationFails, $ui = '', $text_title = 'Mes
         }
     }
     $error['onReadyJs'] .= "
-
-        $('#ui-dialog-title-alertDialog').html('" . addslashes($text_title) . "');
-        $('#alert_text').show().html('" . addslashes($error['txt']) . "');
-        $('#alertDialog').dialog('open');
-        alert_close = '$(\'" . $ui . " .error_field\').first().focus();';
+    alertb('" . addslashes($text_title) . "', '" . addslashes($error['txt']) . "');
+    alert_close = '$(\'" . $ui . " .error_field\').first().focus();';
     ";
 
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {
