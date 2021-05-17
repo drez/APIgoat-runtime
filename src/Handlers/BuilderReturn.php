@@ -61,7 +61,7 @@ class BuilderReturn
             $this->message('Item deleted')
             . "
     $('body').css('cursor', 'auto');
-    $('#" . $this->request['p'] . "Table tr td[i=" . $this->request['i'] . "]').parent().hide('slow').remove();
+    $('#" . $this->request['p'] . "Table tr[rid=" . $this->request['i'] . "]').hide('slow').remove();
     var count = $('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span').html();
     $('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span').html(count-1);
     if((count-1) == 0){
@@ -137,13 +137,13 @@ class BuilderReturn
 
             if (!empty($messages)) {
                 $this->return['onReadyJs'] =
-                "alertb('Alert', '" . addslashes($this->removeNl($messages)) . "');
+                    "alertb('Alert', '" . addslashes($this->removeNl($messages)) . "');
 alert_close = function (){
     {$alert_close}
 }";
             } else {
-            $this->return['onReadyJs'] = $action_success;
-        }
+                $this->return['onReadyJs'] = $action_success;
+            }
         } else {
             $this->return['onReadyJs'] = $action_success;
         }
