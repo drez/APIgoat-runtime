@@ -18,6 +18,15 @@ class Menu
         $this->requested = $requested;
     }
 
+    public function addCustomItem($Model, $data = [])
+    {
+        if (!isset($this->tabs[$Model])) {
+            $this->tabs[$Model] = $data;
+            return false;
+        }
+        return true;
+    }
+
     public function addItem($Name, $Model = '')
     {
         if (empty($Model)) {
@@ -67,7 +76,10 @@ class Menu
         if ($_SESSION[_AUTH_VAR]->get('connected') == 'YES') {
             foreach ($this->tabs as $Model => $Name) {
 
-                if ($_SESSION[_AUTH_VAR]->get('group') === 'Admin' || $_SESSION[_AUTH_VAR]->hasMenu($Model)) {
+                if (is_array($Name)) {
+                    $this->menu .= $Name['html'];
+                    $this->indexMenu++;
+                } elseif ($_SESSION[_AUTH_VAR]->get('group') === 'Admin' || $_SESSION[_AUTH_VAR]->hasMenu($Model)) {
                     $link = _SITE_URL . $Model . '';
                     $tabsSub = "";
 

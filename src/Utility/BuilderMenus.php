@@ -35,6 +35,20 @@ class BuilderMenus
             $Menu->addItem($name, $name);
         }
 
+        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
+            $Menu->addCustomItem('AuthSwitch', [
+                'html' => div(
+                    form(
+                        input('text', 'IarcAutoc', $_SESSION[_AUTH_VAR]->get('username'), "  otherTabs=1 v='IARC'  rid='IARC' placeholder='" . _('USER') . "' j='autocomplete' class='ui-autocomplete-input'")
+                            . input('hidden', 'Iarc', $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'], "s='d'"),
+                        ' id="select-box-Authy" class="select-box-authy" data-authy="' . addslashes($_SESSION[_AUTH_VAR]->sessVar['IdAuthy']) . '"'
+                    ),
+                    '',
+                    "class='box-Authy'"
+                )
+            ]);
+        }
+
         $this->Menu = $Menu;
     }
 
