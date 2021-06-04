@@ -95,25 +95,34 @@ class AuthySession
         return $this->csrf;
     }
 
-    public function getUsername(){
+    public function getUsername()
+    {
         return $this->username;
     }
 
-    public function getEmail(){
+    public function getEmail()
+    {
         return $this->email;
     }
-    
-    public function getFirstname(){
+
+    public function getFirstname()
+    {
         return $this->firstname;
     }
 
-    public function getFullname(){
-        return $this->firstname." ".$this->lastname;
+    public function getFullname()
+    {
+        return $this->firstname . " " . $this->lastname;
+    }
+
+    public function isRoot()
+    {
+        return ($this->isRoot === true) ? true : false;
     }
 
     /**
-    * Legacy get/set
-    */
+     * Legacy get/set
+     */
     public function get($val)
     {
         switch ($val) {
@@ -228,12 +237,12 @@ class AuthySession
 
     public function setRights(array $rights)
     {
-        include_once _BASE_DIR."config/permissions.php";
+        include_once _BASE_DIR . "config/permissions.php";
         foreach ($rights as $group => $acls) {
             if (is_array($acls)) {
                 foreach ($acls as $model => $acl) {
                     $parentMenu = $this->hasParentMenu($omMap, $model);
-                    if($parentMenu){
+                    if ($parentMenu) {
                         $this->menuAccess[] = $parentMenu;
                     }
                     $this->menuAccess[] = $model;
@@ -247,9 +256,10 @@ class AuthySession
         }
     }
 
-    private function hasParentMenu(array $map, string $model){
-        foreach($map as $modelMap){
-            if($modelMap['name'] == $model){
+    private function hasParentMenu(array $map, string $model)
+    {
+        foreach ($map as $modelMap) {
+            if ($modelMap['name'] == $model) {
                 return $modelMap['parent_menu'];
             }
         }
