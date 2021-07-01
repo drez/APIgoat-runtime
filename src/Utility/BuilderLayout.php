@@ -34,11 +34,13 @@ class BuilderLayout
         if (defined('_TITLE_PREFIX')) {
             $this->title = _TITLE_PREFIX . " / " . $siteTitle;
         }
-        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
-
-        $this->js = "<script type='text/javascript'>
+        $headjs = "<script type='text/javascript'>
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
 </script>";
+
+        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
+
+
         return $this;
     }
 

@@ -25,7 +25,7 @@ class Api
      * 
      * @var string
      */
-    private $queryObjName;
+    public $queryObjName;
     /**
      * Response array
      *
@@ -130,10 +130,10 @@ class Api
             $ModelQuery = $this->setAclFilter($this->queryObjName::create());
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $request);
             $DataObj = $QueryBuilder->getDataObj();
-            if($QueryBuilder->getMessages()){
+            if ($QueryBuilder->getMessages()) {
                 $this->response['messages'][] = $QueryBuilder->getMessages();
             }
-            
+
             if ($QueryBuilder->debug) {
                 $this->response['debug'] = $QueryBuilder->getDebug();
             }
@@ -148,7 +148,7 @@ class Api
 
             if ($DataObj instanceof PropelCollection) {
                 $count = $DataObj->count();
-                if($count > 0){
+                if ($count > 0) {
                     foreach ($DataObj as $Obj) {
                         if (!empty($data)) {
                             $data["Id{$this->tableName}"] = $Obj->getPrimaryKey();
@@ -157,10 +157,9 @@ class Api
                             $this->response['error'] = "Wrong input 1004, nothing found to update";
                         }
                     }
-                }else{
+                } else {
                     $this->response['messages'][] = "Found no result for this query";
                 }
-                
             } else {
                 if (!empty($data)) {
                     $this->setEntry($data, $DataObj);
@@ -370,7 +369,7 @@ class Api
             $this->response['debug'][] = "Update {$this->tableName}";
             $obj = $DataObj;
         }
-        
+
         if ($obj) {
 
             /**
