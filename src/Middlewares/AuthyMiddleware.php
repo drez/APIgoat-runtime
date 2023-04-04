@@ -64,6 +64,8 @@ class AuthyMiddleware implements MiddlewareInterface
             return $ApiResponse->getResponse();
         }
 
+        $this->checkUserSwitch($request);
+
         $access = $this->checkPrivileges($request);
         if (false !==  $access) {
             // access denied
@@ -91,8 +93,29 @@ class AuthyMiddleware implements MiddlewareInterface
         return $response;
     }
 
+    private function checkUserSwitch($request)
+    {
+        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
+            if (isset($this->args['data']['iarc']) and $this->args['data']['iarc']) {
+                $q = \App\AuthyQuery::create();
+                $authyObj = $q->findPk($this->args['data']['iarc']);
+
+                if ($authyObj->getIdAuthy()) {
+                    $AuthyForm = new \App\AuthyService($request, null, $this->args['data']);
+                    $AuthyForm->setSession($authyObj, $authyObj->getUsername());
+                    $_SESSION[_AUTH_VAR]->set('isRoot', true);
+                    $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'] = $this->args['data']['iarc'];
+                }
+            }
+        }
+    }
+
     private function checkPrivileges($request)
     {
+
+        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
+            return false;
+        }
 
         if ($this->checkExclude($this->args['route'])) {
             return false;

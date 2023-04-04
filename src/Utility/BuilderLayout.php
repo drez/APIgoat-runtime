@@ -34,14 +34,13 @@ class BuilderLayout
         if (defined('_TITLE_PREFIX')) {
             $this->title = _TITLE_PREFIX . " / " . $siteTitle;
         }
-        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
-
-        $this->js = "<script type='text/javascript'>
-    var _SITE_URL = '" . addslashes(_SITE_URL) . "';
-    var session_id = '" . addslashes(uniqid()) . "';
-    var _BASE_DIR = '" . addslashes(_BASE_DIR) . "';
-    var _SERVER_DATE = '" . time() . "';
+        $headjs = "<script type='text/javascript'>
+    let _SITE_URL = '" . addslashes(_SITE_URL) . "';
 </script>";
+
+        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
+
+
         return $this;
     }
 
@@ -52,8 +51,15 @@ class BuilderLayout
 
     public function renderXHR($content)
     {
-        return $content['html'] . $content['js']
-            . scriptReady(trim($content['onReadyJs']));
+        if (!empty($content['html']) || !empty($content['js']) || !empty($content['onReadyJs'])) {
+            return $content['html'] . $content['js']
+                . scriptReady(trim($content['onReadyJs']));
+        } else {
+            if (!empty($content)) {
+                return $content;
+            }
+        }
+        return "The response is empty.";
     }
 
     public function renderLogin($content)
@@ -92,6 +98,10 @@ class BuilderLayout
 
     public function render($content)
     {
+        if (empty($content['html'])) {
+            return "Response is empty, does the service exists?";
+        }
+
         $output = [];
         $body = [];
         $authy = '';
@@ -134,12 +144,12 @@ class BuilderLayout
                             . div('', 'editDialog', 'style=""')
                             . div('', 'editPopupDialog', 'style="d" ')
                             . div(
-                                    div(p('', "id='confirm_text'"), '', "class='mainForm'")
-                                ,'confirmDialog')
+                                div(p('', "id='confirm_text'"), '', "class='mainForm'"),
+                                'confirmDialog'
+                            )
                             . div(
-                                p('', 'id="alert_text" style="display:none;"'),
-                                'alertDialog',
-                                " class='' title='Message' "
+                                div(p('', "id='alert_text'"), '', "class='mainForm'"),
+                                'alertDialog'
                             )
 
                             . $this->js
@@ -168,7 +178,7 @@ class BuilderLayout
 
         return ul(
             li(href(img(vendor_logo), vendor_url, 'class="logo-wrapper"'))
-            .li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
+                . li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
                 . $items
                 . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
             'class="nav"'

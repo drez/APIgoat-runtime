@@ -23,7 +23,7 @@ class QueryBuilder
     const _DEFAULT_LIMIT = 30;
     public $debug = false;
     private $info = [];
-    private $Query;
+    public $Query;
     private $data;
     private $objectName;
     private $Data;
@@ -52,10 +52,10 @@ class QueryBuilder
         $this->primaryKey = $request['i'];
         $this->setRequest($request);
 
-        if(isset($request['data']['debug'])){
+        if (isset($request['data']['debug'])) {
             $this->setDebug($request['data']['debug']);
         }
-        
+
         $this->setQueryObject($query);
 
         if ($this->buildQuery() === false) {
@@ -102,7 +102,7 @@ class QueryBuilder
 
     public function getDataObj()
     {
-        return ($this->DataObj || $this->isInfo());
+        return ($this->DataObj) ? $this->DataObj : $this->isInfo();
     }
 
     public function setQueryObject($query)
@@ -115,18 +115,19 @@ class QueryBuilder
         }
     }
 
-    private function setGroupby($groupbys){
-        foreach($groupbys as $groupby){
-            if (strpos($groupby, '.') !== false){
-            $part = explode('.', $groupby);
-            if(array_key_exists($part[0], $this->tableAliases)){
-                $groupby = $part[0].".".$groupby = camelize($part[1], true);
-            }else{
-                $groupby = camelize($groupby, true);
+    private function setGroupby($groupbys)
+    {
+        foreach ($groupbys as $groupby) {
+            if (strpos($groupby, '.') !== false) {
+                $part = explode('.', $groupby);
+                if (array_key_exists($part[0], $this->tableAliases)) {
+                    $groupby = $part[0] . "." . $groupby = camelize($part[1], true);
+                } else {
+                    $groupby = camelize($groupby, true);
+                }
+
+                $this->Query->groupBy($groupby);
             }
-            
-            $this->Query->groupBy($groupby);
-        }
         }
     }
 
@@ -174,11 +175,11 @@ class QueryBuilder
                 return true;
             }
         }
-        
+
         if ($this->request['order']) {
             foreach ($this->request['order'] as $order) {
                 if ($order[1]) {
-                    if (strpos($order[0], '.') !== false){
+                    if (strpos($order[0], '.') !== false) {
                         $order[0] = camelize($order[0], true);
                     }
                     $this->Query->orderBy($order[0], $order[1]);
@@ -193,6 +194,10 @@ class QueryBuilder
         $this->request['limit'] = $this->validateLimit($this->request['limit']);
         $this->Query->limit($this->request['limit']);
 
+        if ($this->request['dontrun']) {
+            return true;
+        }
+
         return false;
     }
 
@@ -203,7 +208,7 @@ class QueryBuilder
      */
     private function runQuery()
     {
-        if(!$this->isInfo()){
+        if (!$this->isInfo()) {
             if ($this->request['page']) {
                 $this->request['max_page'] = ($this->request['max_page']) ? $this->request['max_page'] : 50;
                 $pmpo = $this->Query->paginate($this->request['page'], $this->request['max_page']);
@@ -217,23 +222,25 @@ class QueryBuilder
 
             $this->correctData();
         }
-        
+
 
         return $this->Data;
     }
 
-    private function isInfo(){
+    private function isInfo()
+    {
         return $this->isInfo;
     }
 
-    private function setInfo(){
+    private function setInfo()
+    {
         $this->isInfo = true;
-        $peerName = $this->modelName."Peer";
+        $peerName = $this->modelName . "Peer";
         $TableMap = $peerName::getTableMap();
         $relations = $TableMap->getRelations();
-        
+
         $this->Data = [$this->modelName => [
-           "relations" => $relations
+            "relations" => $relations
         ]];
         return true;
     }
@@ -248,7 +255,7 @@ class QueryBuilder
                     return true;
                 }
 
-                if (strpos($select[0], '.') !== false){
+                if (strpos($select[0], '.') !== false) {
                     $select[0] = camelize($select[0], true);
                 }
 
@@ -256,16 +263,16 @@ class QueryBuilder
                 $selectVal[] = $select[1];
                 $this->selectKey[] = $select[1];
             } else {
-                
+
                 $orig = $select;
-                if (strpos($select, '.') !== false){
+                if (strpos($select, '.') !== false) {
                     $part = explode('.', $select);
-                    if(array_key_exists($part[0], $this->tableAliases)){
-                        $select = $part[0].".".$select = camelize($part[1], true);
-                    }else{
+                    if (array_key_exists($part[0], $this->tableAliases)) {
+                        $select = $part[0] . "." . $select = camelize($part[1], true);
+                    } else {
                         $select = camelize($select, true);
                     }
-                    
+
                     $this->selectKeyMap[$select] = $orig;
                 }
                 $selectVal[] = $select;
@@ -280,14 +287,15 @@ class QueryBuilder
         return false;
     }
 
-    private function getUseClause($Class, $Table, $table){
+    private function getUseClause($Class, $Table, $table)
+    {
         $useQuery = '';
         if ($Class != $this->modelName) {
-            if(array_key_exists ($table, $this->tableAliases)){
+            if (array_key_exists($table, $this->tableAliases)) {
                 $useQuery = "use" .  $this->tableAliases[$table] . "Query";
-            }else{
+            } else {
                 $useQuery = "use" . $Table . "Query";
-            }  
+            }
         }
 
         return $useQuery;
@@ -295,21 +303,21 @@ class QueryBuilder
 
     private function setFilters(array $filtersRequest)
     {
-        $singleFilter = false;
-
         foreach ($filtersRequest as $table => $filters) {
 
             $Table = \camelize($table, true);
             $Class = "App\\" . $Table;
-            
-            $useQueryDefault = $this->getUseClause($Class, $Table, $table);
+
+            //$useQueryDefault = $this->getUseClause($Class, $Table, $table);
 
             if (empty($useQuery) || method_exists($this->Query, $useQuery)) {
-                if(!is_array($filters[0])){
+
+                if (!is_array($filters[0])) {
                     $filters = [$filters];
                 }
+
                 foreach ($filters as $filter) {
-                    $useQuery = $useQueryDefault;
+
                     $addOr = false;
                     $filter[1] = ($filter[1] == 'null') ? null : $filter[1];
                     if (strpos($filter[0], '.') === false) {
@@ -323,10 +331,9 @@ class QueryBuilder
                         $fClass = "App\\" . $fTable;
                         $useQuery = $this->getUseClause($fClass, $fTable, $table);
                     }
-                    
 
                     $criteria = \Criteria::EQUAL;
-                    if (\strstr($filter[1], "%")) {
+                    if (\is_string($filter[1]) && \strstr($filter[1], "%")) {
                         $criteria = \Criteria::LIKE;
                     }
 
@@ -354,20 +361,30 @@ class QueryBuilder
 
                         $filter[1] = $this->setVariablesValue($filter[1]);
 
-                        if ($useQuery) {
-                            $this->Query->$useQuery()
-                                ->$filterStr($filter[1], $criteria)
-                                ->endUse();
-                            $useQuery = $useQueryDefault;
-                        } else {
+                        if ($lastUseQuery && $lastUseQuery != $useQuery) {
+                            $this->Query->endUse();
+                            $lastUseQuery = null;
+                        }
+
+                        if ($useQuery && !$lastUseQuery) {
+                            $this->Query = $this->Query->$useQuery();
                             $this->Query->$filterStr($filter[1], $criteria);
-                            if ($addOr) {
-                                $this->Query->_or();
-                            }
+                            $lastUseQuery = $useQuery;
+                        } else {
+                            $this->Query
+                                ->$filterStr($filter[1], $criteria);
+                        }
+
+                        if ($addOr) {
+                            $this->Query->_or();
                         }
                     } else {
                         $this->messages[] = "Filter: Field ({$filter[0]}) not found";
                     }
+                }
+
+                if ($lastUseQuery) {
+                    $this->Query = $this->Query->endUse();
                 }
             } else {
                 $this->messages[] = "Filter: Table ({$table}) not found";
@@ -377,17 +394,19 @@ class QueryBuilder
 
     private function setVariablesValue($filter)
     {
-        if (\preg_match('/^(\$[a-zA-Z]*).([a-zA-Z]*)/', $filter, $matches)) {
-            switch ($matches[1]) {
-                case '$session':
-                    $filter = $_SESSION[_AUTH_VAR]->sessVar[$matches[2]];
-                    break;
-                case '$now':
-                    $filter = time();
-                    break;
-                case '$id':
-                    $filter = $_SESSION[_AUTH_VAR]->getIdAuthy();
-                    break;
+        if (is_string($filter)) {
+            if (\preg_match('/^(\$[a-zA-Z]*).([a-zA-Z]*)/', $filter, $matches)) {
+                switch ($matches[1]) {
+                    case '$session':
+                        $filter = $_SESSION[_AUTH_VAR]->sessVar[$matches[2]];
+                        break;
+                    case '$now':
+                        $filter = time();
+                        break;
+                    case '$id':
+                        $filter = $_SESSION[_AUTH_VAR]->getIdAuthy();
+                        break;
+                }
             }
         }
         return $filter;
@@ -406,21 +425,21 @@ class QueryBuilder
                 $alias = null;
                 $joinType = \Criteria::LEFT_JOIN;
 
-                if(is_array($join)){
-                    if($join[2] == 'right'){
+                if (is_array($join)) {
+                    if ($join[2] == 'right') {
                         $joinType = \Criteria::RIGHT_JOIN;
                     }
-                    
-                    if($join[1]){
+
+                    if ($join[1]) {
                         $alias = $join[1];
                         $this->tableAliases[$alias] = $join[0];
                     }
 
-                    $joinName = "join".\camelize($join[0], true);
+                    $joinName = "join" . \camelize($join[0], true);
                     $this->Query->$joinName($alias, $criteria);
-                }else{
+                } else {
                     $this->Query->leftJoin(\camelize($join, true));
-                }  
+                }
             }
         }
         return false;
@@ -455,7 +474,8 @@ class QueryBuilder
 
         $tableMap = $this->Query->getTableMap()->getColumns();
         $enumVal = [];
-        $i=0;$data = [];
+        $i = 0;
+        $data = [];
         if ($this->selectIsSet() && is_array($this->Data)) {
 
             // for each Selected column
@@ -478,7 +498,7 @@ class QueryBuilder
                             $value = $enumVal[$key][$value];
                         }
 
-                        if($this->selectKeyMap[$key]){
+                        if ($this->selectKeyMap[$key]) {
                             $row[$this->selectKeyMap[$key]] = $row[$key];
                             unset($row[$key]);
                             $this->selectKey[] = $this->selectKeyMap[$key];
@@ -495,18 +515,18 @@ class QueryBuilder
                         $value = $enumVal[$key][$value];
                     }
 
-                    if($this->selectKeyMap[$key]){
+                    if ($this->selectKeyMap[$key]) {
                         $this->Data[$this->selectKeyMap[$key]] = $this->Data[$key];
                         unset($this->Data[$key]);
                         $this->selectKey[] = $this->selectKeyMap[$key];
                     }
                 }
             }
-        } else{
+        } else {
             if ($collection) {
-                
+
                 foreach ($this->Data as $record) {
-                    
+
                     foreach ($tableMap as $Column) {
                         if ($Column->getType() == 'ENUM') {
                             if (!is_array($enumVal[$Column->getName()])) {
@@ -525,7 +545,7 @@ class QueryBuilder
                 }
             }
             $this->Data = $data;
-        }  
+        }
     }
 
     private function validateLimit($value)

@@ -145,14 +145,14 @@ trait FormHelper
                             "id='{$this->TableName}Pager'"
                         ),
                     '',
-                    "class='pagination-wrapper' "
+                    "class='pagination-wrapper' data-total-item='{$resultsCount}'"
                 );
             } else {
                 $pager = div(
                     p('', "class='selectedCount'")
                         . p(span($resultsCount) . ' ' . $this->TableName, "class='count'"),
                     '',
-                    "class='pagination-wrapper'"
+                    "class='pagination-wrapper' data-total-item='{$resultsCount}'"
                 );
             }
         }
