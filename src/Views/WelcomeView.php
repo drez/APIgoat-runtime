@@ -2,14 +2,12 @@
 
 namespace ApiGoat\Views;
 
+use App\ConfigQuery;
 use Psr\Http\Message\ServerRequestInterface as Request;
 //use ApiGoat\Views\View;
 
 class WelcomeView
 {
-
-
-
     public $hookFormTop;
     public $hookFormInnerTop;
     public $hookFormBottom;
@@ -61,7 +59,7 @@ class WelcomeView
     public function dashboard()
     {
 
-        $Configs = \App\ConfigQuery::create()
+        $Configs = ConfigQuery::create()
             ->orderBy('Category', 'ASC')
             ->find();
 
