@@ -48,7 +48,7 @@ class AuthyMiddleware implements MiddlewareInterface
             if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES') {
 
                 if (
-                    $this->args['route'] != 'Authy/login' && $this->args['route'] != 'Authy/auth' && $this->args['route'] != 'Authy/reset'
+                    $this->args['route'] != 'Authy/login' && $this->args['route'] != 'Authy/auth' && $this->args['route'] != 'Authy/reset' && $this->args['route'] != 'graphql'
                     && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth"
                 ) {
                     $response = new Response();
