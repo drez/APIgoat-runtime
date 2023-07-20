@@ -21,6 +21,13 @@ class AuthySession
     public $config = [];
     public $config_time;
     public $csrf = null;
+    public $configdb = null;
+    public $email = null;
+    public $isRoot = null;
+    public $passHash = null;
+    public $authyId = null;
+    public $config_changed = null;
+    public $lastMsg = null;
 
 
     function __construct()
