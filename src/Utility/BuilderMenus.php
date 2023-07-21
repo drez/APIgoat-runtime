@@ -17,13 +17,14 @@ class BuilderMenus
 {
     private $Menu;
 
+
     public function __construct($args)
     {
         $parents = [];
         require _BASE_DIR . "config/menus.php";
         $Menu = new Menu($args['p']);
 
-        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
+        if ($_SESSION[_AUTH_VAR]->get('isRoot') && isset($_SESSION[_AUTH_VAR]->sessVar['IdAuthy'])) {
             $Menu->addCustomItem('AuthSwitch', [
                 'html' => div(
                     form(
