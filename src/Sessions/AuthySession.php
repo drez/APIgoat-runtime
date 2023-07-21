@@ -32,6 +32,7 @@ class AuthySession
     public $lastMsg = null;
     public $username = null;
     public $IdPrimaryGroup = null;
+    public $menuAccess = null;
 
 
     function __construct()

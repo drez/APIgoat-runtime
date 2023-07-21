@@ -15,9 +15,11 @@ namespace ApiGoat\Utility;
  */
 class BuilderMenus
 {
+    private $Menu;
 
     public function __construct($args)
     {
+        $parents = [];
         require _BASE_DIR . "config/menus.php";
         $Menu = new Menu($args['p']);
 
@@ -26,7 +28,7 @@ class BuilderMenus
                 'html' => div(
                     form(
                         input('text', 'IarcAutoc', $_SESSION[_AUTH_VAR]->get('username'), "  otherTabs=1 v='IARC'  rid='IARC' placeholder='" . _('USER') . "' j='autocomplete' class='ui-autocomplete-input'")
-                            . input('hidden', 'Iarc', $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'], "s='d'"),
+                        . input('hidden', 'Iarc', $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'], "s='d'"),
                         ' id="select-box-Authy" class="select-box-authy" data-authy="' . addslashes($_SESSION[_AUTH_VAR]->sessVar['IdAuthy']) . '"'
                     ),
                     '',

@@ -4,6 +4,7 @@ namespace ApiGoat\Routes;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Routing\RouteContext;
+
 /*
  * To change this license header, choose License Headers in Project Properties.
  * To change this template file, choose Tools | Templates
@@ -48,6 +49,7 @@ class RouteHelper
      * @var Request 
      */
     private $request;
+    private $baseRouteName;
 
 
     public function __construct(Request $request, $args)
@@ -63,7 +65,7 @@ class RouteHelper
         //legacy
         $this->args['a'] = $args['a'];
         $this->setLegacyVarFromBody();
-        $this->args['i'] = ($this->args['id']) ? $this->args['id'] : $this->args['i'];
+        $this->args['i'] = (isset($this->args['id'])) ? $this->args['id'] : $this->args['i'];
         if (empty($this->args['i']) && isset($this->args['data']['i'])) {
             $this->args['i'] = $this->args['data']['i'];
         }
@@ -125,7 +127,7 @@ class RouteHelper
 
         # if not route name, get the name from the uri
         if (empty($this->routeName)) {
-            $path =  preg_replace('/' . _SUB_DIR_URL . '/', '', $this->request->getUri()->getPath(), 1);
+            $path = preg_replace('/' . _SUB_DIR_URL . '/', '', $this->request->getUri()->getPath(), 1);
             throw new \Exception('Route name empty: ' . $path);
         }
 
@@ -150,7 +152,7 @@ class RouteHelper
         $this->args['p'] = $this->getRouteName();
 
         $get = $this->request->getQueryParams();
-        $this->args['queryArgs'] =  count($get);
+        $this->args['queryArgs'] = count($get);
         $this->args = array_merge($this->args, $get);
 
         return $this->args;
@@ -165,7 +167,7 @@ class RouteHelper
         $this->args['p'] = $this->getRouteName();
 
         $post = ($this->request->getParsedBody()) ? $this->request->getParsedBody() : [];
-        $this->args['bodyArgs'] =  count($post);
+        $this->args['bodyArgs'] = count($post);
         $this->args = array_merge($this->args, $post);
 
         return $this->args;
@@ -188,7 +190,7 @@ class RouteHelper
         $this->args['p'] = $this->getRouteName();
 
         $post = ($this->request->getParsedBody()) ? $this->request->getParsedBody() : [];
-        $this->args['bodyArgs'] =  count($post);
+        $this->args['bodyArgs'] = count($post);
         $this->args = array_merge($this->args, $post);
 
         return $this->args;

@@ -48,6 +48,7 @@ class RouteParser implements MiddlewareInterface
      * @var Request 
      */
     private $request;
+    private $headers;
 
 
     public function __construct()
@@ -56,7 +57,7 @@ class RouteParser implements MiddlewareInterface
 
     public function process(Request $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        if($this->method != 'OPTIONS'){
+        if ($this->method != 'OPTIONS') {
             $this->request = $request;
             $this->method = $request->getMethod();
             $this->args['method'] = $this->method;
@@ -95,7 +96,7 @@ class RouteParser implements MiddlewareInterface
     private function setAction()
     {
 
-        if ($this->args['action'] != 'auth') {
+        if (isset($this->args['action']) && $this->args['action'] != 'auth') {
             if ($this->args['action'] == 'edit' && $this->args['method'] != 'GET') {
                 if (!empty($this->args['id']) || !empty($this->args['Id' . $this->args['model']])) {
                     $this->args['action'] = 'edit';
@@ -143,7 +144,7 @@ class RouteParser implements MiddlewareInterface
     private function decodePath()
     {
         $data = [];
-        $path =  preg_replace('*' . _SUB_DIR_URL . '*', '', $this->request->getUri()->getPath(), 1);
+        $path = preg_replace('*' . _SUB_DIR_URL . '*', '', $this->request->getUri()->getPath(), 1);
 
         # API call
         $data['is_api'] = false;
@@ -157,7 +158,7 @@ class RouteParser implements MiddlewareInterface
 
         $data['id'] = (isset($pathPart[2])) ? $pathPart[2] : '';
         if (!empty($pathPart[0])) {
-            $data['model'] =  $pathPart[0];
+            $data['model'] = $pathPart[0];
             if (!empty($pathPart[1])) {
                 if (\is_numeric($pathPart[1])) {
                     $data['action'] = '';
@@ -231,12 +232,12 @@ class RouteParser implements MiddlewareInterface
         $raw = file_get_contents('php://input');
         $this->args['raw'] = $raw;
 
-        if(is_array($this->request->getParsedBody())){
+        if (is_array($this->request->getParsedBody())) {
             $this->args['data'] = $this->request->getParsedBody();
-        }else{
+        } else {
             $this->args['data'] = $this->parseBody($raw);
         }
-        
+
     }
 
     private function parseBody($raw)

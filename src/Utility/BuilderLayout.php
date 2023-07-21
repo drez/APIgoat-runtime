@@ -64,34 +64,30 @@ class BuilderLayout
 
     public function renderLogin($content)
     {
-        $print .=
+        $print =
             docType()
             . htmlTag(
                 $this->htmlHeader
-                    . body(
-                        $cssBody
-                            . div(
-                                div('', "loader", " class='hide' ")
-                                    . div(
-                                        div(
-                                            $stdHeader['html']
-                                                . div($content['html'], 'mainContent', "class=''"),
-                                            "centered",
-                                            "style='width:100%;position:relative;text-align:center;margin:auto;'"
-                                        )
-                                            . div($stdFooter['html'], '', "class='wCtFooter' style=''"),
-                                        'fullWH2',
-                                        "style='width:100%;height:100%;'"
-                                    ),
-                                'fullWH',
-                                "style='width:100%;height:100%;'"
-                            ),
-                        " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "'"
+                . body(
+                    div(
+                        div('', "loader", " class='hide' ")
+                        . div(
+                            div(
+                                div($content['html'], 'mainContent', "class=''"),
+                                "centered",
+                                "style='width:100%;position:relative;text-align:center;margin:auto;'"
+                            )
+                            . div("", '', "class='wCtFooter' style=''"),
+                            'fullWH2',
+                            "style='width:100%;height:100%;'"
+                        ),
+                        'fullWH',
+                        "style='width:100%;height:100%;'"
                     ),
+                    " id='body' class=''"
+                ),
                 " id='html' "
-            )
-            . $content['js']
-            . scriptReady(trim($content['onReadyJs']));
+            );
 
         return $print;
     }
@@ -110,52 +106,52 @@ class BuilderLayout
             docType()
             . htmlTag(
                 $this->htmlHeader
-                    . body(
-                        $body['html']
-                            . script($body['js'])
-                            . div(
+                . body(
+                    $body['html']
+                    . script($body['js'])
+                    . div(
+                        div(
+                            div(
                                 div(
-                                    div(
-                                        div(
-                                            //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
-                                            $this->getTopNav()
-                                                . $authy,
-                                            '',
-                                            'class="top-nav"'
-                                        )
-                                            . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
-                                        '',
-                                        'class="left-panel-content" '
-                                    ),
+                                    //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
+                                    $this->getTopNav()
+                                    . $authy,
                                     '',
-                                    'class="left-panel-wrapper" '
-                                ),
+                                    'class="top-nav"'
+                                )
+                                . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
                                 '',
-                                'class="left-panel" '
-                            )
-                            . div(
-                                div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
-                                    . div('', 'editPane', 'class="edit-pane-hidden"')
-                                    . $output['pagerRow'],
-                                '',
-                                'class="center-panel"'
-                            )
+                                'class="left-panel-content" '
+                            ),
+                            '',
+                            'class="left-panel-wrapper" '
+                        ),
+                        '',
+                        'class="left-panel" '
+                    )
+                    . div(
+                        div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
+                        . div('', 'editPane', 'class="edit-pane-hidden"')
+                        . $output['pagerRow'],
+                        '',
+                        'class="center-panel"'
+                    )
 
-                            . div('', 'editDialog', 'style=""')
-                            . div('', 'editPopupDialog', 'style="d" ')
-                            . div(
-                                div(p('', "id='confirm_text'"), '', "class='mainForm'"),
-                                'confirmDialog'
-                            )
-                            . div(
-                                div(p('', "id='alert_text'"), '', "class='mainForm'"),
-                                'alertDialog'
-                            )
+                    . div('', 'editDialog', 'style=""')
+                    . div('', 'editPopupDialog', 'style="d" ')
+                    . div(
+                        div(p('', "id='confirm_text'"), '', "class='mainForm'"),
+                        'confirmDialog'
+                    )
+                    . div(
+                        div(p('', "id='alert_text'"), '', "class='mainForm'"),
+                        'alertDialog'
+                    )
 
-                            . $this->js
-                            . $output['EndBody'],
-                        " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "' style='height:100%;'"
-                    ),
+                    . $this->js
+                    . $output['EndBody'],
+                    " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "' style='height:100%;'"
+                ),
                 " id='html_build' "
             )
             . $content['js']
@@ -178,9 +174,9 @@ class BuilderLayout
 
         return ul(
             li(href(img(vendor_logo), vendor_url, 'class="logo-wrapper"'))
-                . li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
-                . $items
-                . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
+            . li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
+            . $items
+            . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
             'class="nav"'
         );
     }
@@ -223,22 +219,22 @@ class BuilderLayout
                 docType()
                 . htmlTag(
                     $this->htmlHeader
-                        . body(
-                            div(
-                                $options['top']
-                                    . $head
-                                    . div(
-                                        div($content, '', "style='" . $options['content-style'] . "'")
-                                            . $options['bottom-inner'],
-                                        '',
-                                        "class='centered75 box-body'"
-                                    )
-                                    . $options['bottom'],
+                    . body(
+                        div(
+                            $options['top']
+                            . $head
+                            . div(
+                                div($content, '', "style='" . $options['content-style'] . "'")
+                                . $options['bottom-inner'],
                                 '',
-                                "class='mainContent {$contentClass}'"
-                            ),
-                            "class='{$bodyClass}'"
-                        )
+                                "class='centered75 box-body'"
+                            )
+                            . $options['bottom'],
+                            '',
+                            "class='mainContent {$contentClass}'"
+                        ),
+                        "class='{$bodyClass}'"
+                    )
                 );
         }
         return $content;
