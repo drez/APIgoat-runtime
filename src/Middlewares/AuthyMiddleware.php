@@ -21,6 +21,8 @@ use Apigoat\Sessions\AuthySession;
 class AuthyMiddleware implements MiddlewareInterface
 {
     use \ApiGoat\ACL\AuthyACL;
+    private $privilegeMap;
+    private $args;
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
     {
@@ -67,7 +69,7 @@ class AuthyMiddleware implements MiddlewareInterface
         $this->checkUserSwitch($request);
 
         $access = $this->checkPrivileges($request);
-        if (false !==  $access) {
+        if (false !== $access) {
             // access denied
             if ($access instanceof InvalidSessionRenderer) {
                 if ($this->args['is_api']) {
@@ -154,7 +156,7 @@ class AuthyMiddleware implements MiddlewareInterface
      * @param String $action
      * @return String|false
      */
-    private function getRequiredPrivilege(String $action, String $model = '')
+    private function getRequiredPrivilege(string $action, string $model = '')
     {
         if (!empty($this->privilegeMap['action'][$action])) {
             return $this->privilegeMap['action'][$action];

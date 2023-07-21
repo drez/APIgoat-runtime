@@ -22,6 +22,9 @@ class RbacMiddleware implements MiddlewareInterface
     private $args;
     public $rbac_is_new = false;
     private $rbac_id;
+    private $config;
+    private $rbac_rule;
+
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
     {
@@ -139,7 +142,7 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_is_new = true;
             $this->rbac_id = $ApiRbac->getPrimaryKey();
             $this->logApi($this->rbac_id);
-            if(\defined('app_status') && \app_status == 'dev'){
+            if (\defined('app_status') && \app_status == 'dev') {
                 return false;
             }
             return true;
@@ -155,7 +158,7 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_rule = $ApiRbac->getRule();
             $this->rbac_role = null;
             $this->rbac_id = $ApiRbac->getPrimaryKey();
-            if(\defined('app_status') && \app_status == 'dev'){
+            if (\defined('app_status') && \app_status == 'dev') {
                 return false;
             }
             return true;
@@ -175,7 +178,8 @@ class RbacMiddleware implements MiddlewareInterface
     {
         if (is_array($this->config['excludes'])) {
             foreach ($this->config['excludes'] as $body => $exclude) {
-                if (($exclude['method'] == '*' || $exclude['method'] == $this->args['method'])
+                if (
+                    ($exclude['method'] == '*' || $exclude['method'] == $this->args['method'])
                     && ($exclude['model'] == '*' || $exclude['model'] == $this->args['model'])
                     && ($exclude['action'] == '*' || $exclude['action'] == $this->args['action'])
                 ) {
@@ -260,7 +264,7 @@ class RbacMiddleware implements MiddlewareInterface
             $order = "ORDER BY bestMatch DESC";
         }
 
-        $clause = ($where)?implode(" AND ", $where):'1';
+        $clause = ($where) ? implode(" AND ", $where) : '1';
 
         $sql = "SELECT `id_api_rbac` {$selects} FROM `api_rbac` WHERE 
             `model` = '" . $this->args['model'] . "' AND
