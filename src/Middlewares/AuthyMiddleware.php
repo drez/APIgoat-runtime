@@ -23,6 +23,7 @@ class AuthyMiddleware implements MiddlewareInterface
     use \ApiGoat\ACL\AuthyACL;
     private $privilegeMap;
     private $args;
+    private $response;
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
     {
@@ -54,7 +55,7 @@ class AuthyMiddleware implements MiddlewareInterface
                     && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth"
                 ) {
                     $response = new Response();
-                    return $response->withHeader('Location', _SUB_DIR_URL . 'Authy/login')->withStatus(401);
+                    return $response->withHeader('Location', _SUB_DIR_URL . 'Authy/login')->withStatus(301);
                 } else {
                     $response = $handler->handle($request);
                     return $response;
