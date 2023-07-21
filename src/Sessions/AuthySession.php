@@ -15,6 +15,7 @@ class AuthySession
     public $isConnected;
     public $lang;
     private $group;
+    private $Groups;
     private $userRights;
     public $sessVar = [];
     # config cache
@@ -28,6 +29,8 @@ class AuthySession
     public $authyId = null;
     public $config_changed = null;
     public $lastMsg = null;
+    public $username = null;
+    public $IdPrimaryGroup = null;
 
 
     function __construct()
