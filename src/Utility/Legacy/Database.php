@@ -10,8 +10,8 @@ define('MYSQL_AFFECTED', '6');
 define('MYSQL_NUM_ARRAY', '7');
 define('MYSQL_OBJ_ARRAY', '8');
 /*
-* Fonction de connection a la base de donnee
-*/
+ * Fonction de connection a la base de donnee
+ */
 global $cn;
 
 function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$errors = [])
@@ -42,7 +42,8 @@ function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$e
 				//return mysql_fetch_array($rs);
 				break;
 			case '2':
-				while ($res[] = $con->fetch(PDO::FETCH_BOTH));
+				while ($res[] = $con->fetch(PDO::FETCH_BOTH))
+					;
 				return $res;
 				break;
 			case '3':
@@ -52,18 +53,21 @@ function execSQL($sql, $return = '1', $debug = false, $base_dir = _BASE_DIR, &$e
 				return $con->rowCount();
 				break;
 			case '5':
-				while ($res[] = $con->fetch(PDO::FETCH_NUM));
+				while ($res[] = $con->fetch(PDO::FETCH_NUM))
+					;
 				return $res;
 				break;
 			case '6':
 				return $con->rowCount();
 				break;
 			case '7':
-				while ($res[] = $con->fetch(PDO::FETCH_NUM));
+				while ($res[] = $con->fetch(PDO::FETCH_NUM))
+					;
 				return $res;
 				break;
 			case '8':
-				while ($res[] = $con->fetch(PDO::FETCH_OBJ));
+				while ($res[] = $con->fetch(PDO::FETCH_OBJ))
+					;
 				return $res;
 				break;
 		}

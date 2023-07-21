@@ -15,6 +15,7 @@ class AuthySession
     public $isConnected;
     public $lang;
     private $group;
+    private $Group;
     private $Groups;
     private $userRights;
     public $sessVar = [];
