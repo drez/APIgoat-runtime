@@ -32,7 +32,8 @@ function href($name, $link, $options = "", $title = "")
 
 function div($content, $id = "", $options = "")
 {
-    if ($id) $id = "id=\"$id\"";
+    if ($id)
+        $id = "id=\"$id\"";
     $optionsContent = generateData($options);
 
     return "<div $id $optionsContent>$content</div>";
@@ -65,7 +66,7 @@ function img($path, $height = "", $width = "", $options = "", $alt = "", $title 
         if ($height === true) {
             $path = _SITE_URL . 'img/' . $path;
         } else {
-            $height =  ' height="' . $height . '" ';
+            $height = ' height="' . $height . '" ';
         }
     }
 
@@ -345,8 +346,8 @@ function selectboxCustomArray($name, $options, $defaultLabel = '', $attr = '', $
     }
     $list = ul(
         $defaultLabel
-            . $emptyLabel
-            . $optionsList,
+        . $emptyLabel
+        . $optionsList,
         'class="scrollable select-element ' . $name . '" data-default-selected=\'' . json_encode($valuesList) . '\''
     )
         . input('hidden', $name, $inputValue, 'class="selextbox-input NC' . str_replace('[]', '', $name) . '"  ' . $SearchTabs . ' s="d"');
@@ -428,11 +429,11 @@ function customCheckInput($input, $label)
 {
     return span(
         $input
-            . span('', 'class="placeholder-input"')
-            . span(
-                $label,
-                'class="checkbox-label"'
-            ),
+        . span('', 'class="placeholder-input"')
+        . span(
+            $label,
+            'class="checkbox-label"'
+        ),
         'class="custom-input"'
     );
 }
@@ -584,13 +585,13 @@ function style($data, $option = "")
 function createRandomKey($amount, $options = [])
 {
     $keyset = "abcdefghijklmnopqrstuvwxyz";
-    if ($options['capital'] != false) {
+    if (isset($options['capital']) && $options['capital'] != false) {
         $keyset .= "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     }
-    if ($options['number'] != false) {
+    if (isset($options['number']) && $options['number'] != false) {
         $keyset .= "0123456789";
     }
-    if ($options['special'] == true) {
+    if (isset($options['special']) && $options['special'] == true) {
         $keyset .= "!@#$%^&*()_+=-<>";
     }
 
@@ -641,7 +642,7 @@ function assocToNumDef($array, $addDefault = false, $valeur = _MESS_SELECTION)
         $num[] = array(1=> NULL, 0=> $valeur);
     }*/
     for ($i = 0; $i < $len; $i++) {
-        $val =  array_values($arrValues[$i]);
+        $val = array_values($arrValues[$i]);
         $num[] = $val;
     }
     return $num;
@@ -660,7 +661,7 @@ function assocToNum($array, $addDefault = false)
         $num[] = array(1=> NULL, 0=> _MESS_SELECTION, 2=>'_MESS_SELECTION');
     }*/
     for ($i = 0; $i < $len; $i++) {
-        $val =  array_values($arrValues[$i]);
+        $val = array_values($arrValues[$i]);
         $num[] = $val;
     }
     return $num;
@@ -673,7 +674,7 @@ function assocToNumV($array, $addDefault = false)
         $num[] = array(1=> NULL, 0=> _MESS_SELECTION, 2=>'_MESS_SELECTION');
     }*/
     for ($i = 0; $i < $len; $i++) {
-        $val =  array_values($arrValues[$i]);
+        $val = array_values($arrValues[$i]);
         $num[] = $val;
     }
     return $num;
@@ -973,8 +974,8 @@ function swheader($name = '', $hasControls = '')
 {
     return div(
         htmlLink(span(_('Open/close menu')), 'javascript:', 'class="toggle-menu button-link-blue trigger-menu"')
-            . div($controlsContent, $name . 'ControlsList', "class='custom-controls " . $hasControls . "'")
-            . $_SESSION['ccSwCustom'],
+        . div($controlsContent, $name . 'ControlsList', "class='custom-controls " . $hasControls . "'")
+        . $_SESSION['ccSwCustom'],
         '',
         'class="sw-header"'
     );
