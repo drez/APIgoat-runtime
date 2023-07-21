@@ -87,7 +87,10 @@ class BuilderLayout
                     " id='body' class=''"
                 ),
                 " id='html' "
-            );
+            )
+            . $content['js']
+            . scriptReady(trim($content['onReadyJs']));
+
 
         return $print;
     }
