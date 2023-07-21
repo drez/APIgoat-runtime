@@ -519,7 +519,7 @@ function htmlSpace($nbr)
 
 function req($val)
 {
-    return str_replace('\\', '\\\\', strip_tags(trim(htmlspecialchars((get_magic_quotes_gpc() ? stripslashes($_REQUEST[$val]) : $_REQUEST[$val]), ENT_QUOTES))));
+    return str_replace('\\', '\\\\', strip_tags(trim(htmlspecialchars(stripslashes($_REQUEST[$val]), ENT_QUOTES))));
 }
 
 function cleanString($str)
