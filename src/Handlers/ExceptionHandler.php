@@ -123,6 +123,8 @@ class ExceptionHandler implements ErrorHandlerInterface
      */
     protected $logger;
 
+    protected $container;
+
     /**
      * @param CallableResolverInterface $callableResolver
      * @param ResponseFactoryInterface  $responseFactory

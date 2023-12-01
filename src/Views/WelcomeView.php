@@ -7,24 +7,17 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 class WelcomeView
 {
-
-
-
     public $hookFormTop;
     public $hookFormInnerTop;
     public $hookFormBottom;
     public $hookFormInnerBottom;
-
     public $hookFormReadyJsFirst;
     public $hookFormReadyJs;
     public $hookFormIncludeJs;
-
     public $hookFormRoTop;
     public $hookFormRoBottom;
-
     public $hookChildListRoTop;
     public $hookChildListRoBottom;
-
     public $hookListTop;
     public $hookListBottom;
     public $hookListColumns;
@@ -36,6 +29,11 @@ class WelcomeView
 
     // service
     public $hookUploadComplete;
+    public $request;
+    public $args;
+    public $model_name;
+    public $virtualClassName;
+    public $hookFormScriptInclude;
 
 
 

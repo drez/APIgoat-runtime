@@ -8,6 +8,10 @@ use ApiGoat\Views\WelcomeView;
 class WelcomeService extends Service
 {
 
+    private $args;
+    private $View;
+    private $body;
+
     public function __construct($request, $response, $args)
     {
         parent::__construct($request, $response, $args);
@@ -22,11 +26,14 @@ class WelcomeService extends Service
     public function getResponse()
     {
         $this->body = ['html' => "Unknown method"];
-        switch ($this->args['a']) {
+        if($this->args['a']){
+            switch ($this->args['a']) {
             case '':
                 $this->body = $this->View->dashboard();
                 break;
         }
+        }
+        
         if ($this->args['ui']) {
             return $this->BuilderLayout->renderXHR($this->body);
         } else {

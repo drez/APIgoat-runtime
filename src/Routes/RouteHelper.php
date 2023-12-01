@@ -63,7 +63,7 @@ class RouteHelper
         //$this->args['action'] = $this->args['action'];
 
         //legacy
-        $this->args['a'] = $args['a'];
+        $this->args['a'] = isset($args['a'])?$args['a']:null;
         $this->setLegacyVarFromBody();
         $this->args['i'] = (isset($this->args['id'])) ? $this->args['id'] : $this->args['i'];
         if (empty($this->args['i']) && isset($this->args['data']['i'])) {
