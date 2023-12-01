@@ -10,7 +10,7 @@
         "tuupola/base62": "^2.0",
         "tuupola/cors-middleware": "^1.0",
         "tuupola/slim-basic-auth": "^3.2",
-        "selective/config": "^0.1.1",
+        "selective/config": "^1",
         "symfony/filesystem": "^5.0",
         "phpmailer/phpmailer": "~6.1"
     }
