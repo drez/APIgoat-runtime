@@ -26,7 +26,7 @@ class WelcomeService extends Service
     public function getResponse()
     {
         $this->body = ['html' => "Unknown method"];
-        if($this->args['a']){
+        if(isset($this->args['a'])){
             switch ($this->args['a']) {
             case '':
                 $this->body = $this->View->dashboard();
@@ -34,7 +34,7 @@ class WelcomeService extends Service
         }
         }
         
-        if ($this->args['ui']) {
+        if (isset($this->args['ui'])) {
             return $this->BuilderLayout->renderXHR($this->body);
         } else {
             return $this->BuilderLayout->render($this->body);
