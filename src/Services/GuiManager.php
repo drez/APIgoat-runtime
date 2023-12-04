@@ -12,6 +12,7 @@ use ApiGoat\Api\ApiResponse;
 class GuiManager extends Service
 {
 
+    
     public function __construct(Request $request, Response $response, array $args)
     {
         parent::__construct($request, $response, $args);
@@ -38,9 +39,8 @@ class GuiManager extends Service
         $ogf = $this->args['ogf'];
         $v = $this->args['v'];
         $nomem = $this->args['nomem'];
-        $Autoc = $this->args['Autoc'];
-        $who = req('who');
-        $h = req('h');
+        $Autoc = $this->args['who'];
+        $h = $this->args['h'];
 
         if ($a == 'ixsamem') {
             \AuthyQuery::create()

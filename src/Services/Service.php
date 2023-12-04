@@ -41,7 +41,7 @@ class Service
      */
     public $response;
 
-    private $args = [];
+    public $args = [];
     private $body;
 
     /**

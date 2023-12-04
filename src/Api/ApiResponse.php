@@ -49,6 +49,9 @@ class ApiResponse
         ]
     ];
 
+    private $args = [];
+    private $response = [];
+
     /**
      * Set the status and write the body on the Response
      * WATCH OUT: Builder API uses $this-request as $args when calling the class
@@ -57,7 +60,7 @@ class ApiResponse
      * @param Response $response
      * @param array $body
      */
-    public function __construct(array $args, $response, array $body)
+    public function __construct(array|null $args, $response, array $body)
     {
         $this->args = $args;
         $this->response = ($response instanceof ResponseInterface) ? $response : new Response();
