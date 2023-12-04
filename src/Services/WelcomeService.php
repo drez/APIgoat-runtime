@@ -26,12 +26,8 @@ class WelcomeService extends Service
     public function getResponse()
     {
         $this->body = ['html' => "Unknown method"];
-        if(isset($this->args['a'])){
-            switch ($this->args['a']) {
-            case '':
-                $this->body = $this->View->dashboard();
-                break;
-        }
+        if(!isset($this->args['a'])){
+           $this->body = $this->View->dashboard();
         }
         
         if (isset($this->args['ui'])) {
