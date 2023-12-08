@@ -11,10 +11,6 @@ class WelcomeService extends Service
     private $View;
     private $body;
 
-    private $args;
-    private $View;
-    private $body;
-
     public function __construct($request, $response, $args)
     {
         parent::__construct($request, $response, $args);
@@ -29,11 +25,12 @@ class WelcomeService extends Service
     public function getResponse()
     {
         $this->body = ['html' => "Unknown method"];
-        if(!isset($this->args['a'])){
-           $this->body = $this->View->dashboard();
+        switch ($this->args['a']) {
+            case '':
+                $this->body = $this->View->dashboard();
+                break;
         }
-        
-        if (isset($this->args['ui'])) {
+        if ($this->args['ui']) {
             return $this->BuilderLayout->renderXHR($this->body);
         } else {
             return $this->BuilderLayout->render($this->body);
