@@ -41,6 +41,9 @@ class Service
      */
     public $response;
 
+    public $args = [];
+    private $body;
+
     /**
      *
      * @param Request $request
@@ -57,7 +60,7 @@ class Service
         $this->args['i'] = $args['i'];
         $this->args['a'] = $args['a'];
         $this->args['p'] = $args['p'];
-        $this->args['ip'] = $args['ip'];
+        $this->args['ip'] = (isset($args['ip'])?$args['ip']:null);
     }
     /**
      * Get the proper response

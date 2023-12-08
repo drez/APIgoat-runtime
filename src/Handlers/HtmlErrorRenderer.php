@@ -17,7 +17,9 @@ class HtmlErrorRenderer implements ErrorRendererInterface
     /**
      * @var LoggerInterface
      */
-    private $logger;
+
+    protected $request;
+    protected $displayErrorDetails;
 
     /**
      * The constructor.

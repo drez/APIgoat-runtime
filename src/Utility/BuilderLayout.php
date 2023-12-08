@@ -17,6 +17,7 @@ class BuilderLayout
     private $builderMenus;
     private $htmlHeader;
     private $settings;
+    private $js;
 
 
     function __construct(BuilderMenus $BuilderMenus)
@@ -40,8 +41,6 @@ class BuilderLayout
 
         $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
 
-
-        return $this;
     }
 
     public function setTitle($title)
@@ -101,8 +100,8 @@ class BuilderLayout
             return "Response is empty, does the service exists?";
         }
 
-        $output = [];
-        $body = [];
+        $output = ['pagerRow' => ''];
+        $body = ['html'=>'', 'js' =>'', 'pagerRow' => ''];
         $authy = '';
 
         $print =
@@ -151,14 +150,13 @@ class BuilderLayout
                         'alertDialog'
                     )
 
-                    . $this->js
-                    . $output['EndBody'],
+                    . $this->js,
                     " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "' style='height:100%;'"
                 ),
                 " id='html_build' "
             )
-            . $content['js']
-            . scriptReady(trim($content['onReadyJs']));
+            . (isset($content['js'])?$content['js']:'')
+            . scriptReady((isset($content['onReadyJs'])?trim($content['onReadyJs']):''));
 
         return $print;
     }
@@ -176,7 +174,7 @@ class BuilderLayout
         }
 
         return ul(
-            li(href(img(vendor_logo), vendor_url, 'class="logo-wrapper"'))
+            li(href(img(_SITE_URL.vendor_logo), vendor_url, 'class="logo-wrapper"'))
             . li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
             . $items
             . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
