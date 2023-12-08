@@ -7,6 +7,9 @@ use ApiGoat\Views\WelcomeView;
 
 class WelcomeService extends Service
 {
+    public $args;
+    private $View;
+    private $body;
 
     public function __construct($request, $response, $args)
     {
