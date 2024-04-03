@@ -44,9 +44,7 @@ trait FormHelper
 
     public function setSearchVar($values, $model)
     {
-
-
-
+        $search = null;
         $return = [];
 
         if ($values) {
@@ -89,6 +87,8 @@ trait FormHelper
 
     public function setOrderVar($values, $model)
     {
+        $search['order'] = null;
+
         if (!empty($_SESSION['mem']['order'][$model])) {
             $search['order'] = $_SESSION['mem']['order'][$model];
         }

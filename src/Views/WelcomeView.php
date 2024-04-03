@@ -7,33 +7,11 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 class WelcomeView
 {
-    public $hookFormTop;
-    public $hookFormInnerTop;
-    public $hookFormBottom;
-    public $hookFormInnerBottom;
-    public $hookFormReadyJsFirst;
-    public $hookFormReadyJs;
-    public $hookFormIncludeJs;
-    public $hookFormRoTop;
-    public $hookFormRoBottom;
-    public $hookChildListRoTop;
-    public $hookChildListRoBottom;
-    public $hookListTop;
-    public $hookListBottom;
-    public $hookListColumns;
-    public $hookListSearchTop;
-    public $hookListSearchButton;
-    public $hookListReadyJs;
-    public $listActionRow = '';
-    public $setListRemoveDelete;
-
-    // service
-    public $hookUploadComplete;
+    
     public $request;
     public $args;
     public $model_name;
-    public $virtualClassName;
-    public $hookFormScriptInclude;
+   
 
 
 
@@ -47,13 +25,9 @@ class WelcomeView
     {
         $this->request = $request;
         $this->args = $args;
-        $this->model_name = 'ApiLog';
-        $this->virtualClassName = 'ApiLog';
-        $this->hookFormBottom = '';
-        $this->hookFormTop = '';
-        $this->hookFormReadyJs = '';
-        $this->hookFormReadyJsFirst = '';
-        $this->hookFormScriptInclude = '';
+        $this->model_name = 'WelcomeView';
+        $this->virtualClassName = 'WelcomeView';
+       
     }
 
     public function dashboard()

@@ -51,7 +51,7 @@ class BuilderLayout
     public function renderXHR($content)
     {
         if (!empty($content['html']) || !empty($content['js']) || !empty($content['onReadyJs'])) {
-            return $content['html'] . $content['js']
+            return $content['html'] . ($content['js'] ?? '')
                 . scriptReady(trim($content['onReadyJs']));
         } else {
             if (!empty($content)) {

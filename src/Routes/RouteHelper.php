@@ -42,7 +42,17 @@ class RouteHelper
     private $args = [
         // original route action from the routeProvider, 'action will be overwritten by RouteParser'
         'a' => '',
-        'i' => ''
+        'i' => '',
+        'act' => '',
+        'ms' => '',
+        'd' => '',
+        'v' => '',
+        'nomem' => '',
+        'who' => '',
+        'h' => '',
+        'data' => [],
+        'method' => [],
+        'rbac_public' => [],
     ];
     /**
      * Request object
@@ -183,10 +193,13 @@ class RouteHelper
      */
     private function getPOSTArgs()
     {
-        $params = explode('/', $this->args['params']);
-        if (!empty($params[0])) {
-            $this->args['i'] = $params[0];
+        if (isset ($this->args['params'])) {
+            $params = explode('/', $this->args['params']);
+            if (!empty($params[0])) {
+                $this->args['i'] = $params[0];
+            }
         }
+        
         $this->args['p'] = $this->getRouteName();
 
         $post = ($this->request->getParsedBody()) ? $this->request->getParsedBody() : [];

@@ -26,7 +26,7 @@ function slugify($string)
     return str_replace(array('----', '---', '--'), '-', $string);
 }
 
-function security_redirect($redirect = true)
+function security_redirect($redirect = true, $request = [])
 {
     if (function_exists('beforeSecurityRedirect')) {
         beforeSecurityRedirect();

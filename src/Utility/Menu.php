@@ -97,7 +97,7 @@ class Menu
                         );
                         $link = 'javascript:void(0);';
                     } else {
-                        if ($alertsCount[$Model]) {
+                        if (isset($alertsCount[$Model])) {
                             $count = span($alertsCount[$Model], 'data-entity="' . $Model . '" class="ac-alert-count"');
                         }
                     }

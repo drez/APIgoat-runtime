@@ -306,7 +306,7 @@ function selectboxCustomArray($name, $options, $defaultLabel = '', $attr = '', $
     }
     $inputValue = $selectedValue;
     if (!is_array($selectedValue)) {
-        $selectedValue = explode(',', $selectedValue);
+        $selectedValue = explode(',', $selectedValue ?? '');
     }
     if ($selectedValue) {
         foreach ($selectedValue as $value) {
@@ -358,27 +358,28 @@ function selectboxCustomArray($name, $options, $defaultLabel = '', $attr = '', $
     );
 }
 
-function arrayToOptions($options, $idSelected = '')
+function arrayToOptions(array $array, string $idSelected = '')
 {
-    if (is_array($options)) {
-        for ($i = 0, $c = count($options); $i < $c; $i++) {
-            if (!empty($options[$i][0])) {
+    $options = '';
+    if (is_array($array)) {
+        for ($i = 0, $c = count($array); $i < $c; $i++) {
+            $option = '';
+            if (!empty($array[$i][0])) {
                 // handle multiple selected id
                 if (is_array($idSelected)) {
-                    if (array_search($options[$i][1], $idSelected)) {
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "' selected=\"yes\"");
+                    if (array_search($array[$i][1], $idSelected)) {
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "' selected=\"yes\"");
                     } else
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "'");
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "'");
                 } else {
                     // handle standard selected id
-                    if ($idSelected == $options[$i][1]) {
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "' selected=\"yes\"");
+                    if ($idSelected == $array[$i][1]) {
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "' selected=\"yes\"");
                     } else
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "'");
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "'");
                 }
             }
         }
-        $options = $option;
     }
     return $options;
 }

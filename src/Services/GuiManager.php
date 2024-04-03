@@ -12,6 +12,7 @@ use ApiGoat\Api\ApiResponse;
 class GuiManager extends Service
 {
 
+    public $body;
     
     public function __construct(Request $request, Response $response, array $args)
     {
