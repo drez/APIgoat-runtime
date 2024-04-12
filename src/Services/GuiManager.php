@@ -43,10 +43,14 @@ class GuiManager extends Service
         $Autoc = $this->args['who'];
         $h = $this->args['h'];
 
+        if ($a == 'alive') {
+            $this->body['status'] = 'success';
+        }
+
         if ($a == 'ixsamem') {
             \AuthyQuery::create()
                 ->filterByIdAuthy($_SESSION[_AUTH_VAR]->get('id'))
-                ->update(array('Onglet' => serialize($_SESSION['memoire'])));
+                ->update(array('Onglet' => serialize($_SESSION['mem'])));
             $this->body['status'] = 'success';
         }
         if ($a == 'ixiconel') {
@@ -101,9 +105,19 @@ class GuiManager extends Service
                 }
                 unset($_SESSION['mem']['search']);
             }
+
             \AuthyQuery::create()
-                ->filterByIdAuthy($_SESSION[_AUTH_VAR]->get('id'))->update(array('Onglet' => serialize($_SESSION['memoire'])));
+                ->filterByIdAuthy($_SESSION[_AUTH_VAR]->get('id'))->update(array('Onglet' => serialize($_SESSION['mem'])));
             $this->body['status'] = 'success';
+        }
+
+        if ($a == 'login') {
+            $timezone = \App\Domains\Timezone\Timezone::detect_timezone_id($this->args['t']['offset'], $this->args['t']['dst']);
+            if($timezone){
+                date_default_timezone_set($timezone);
+            }
+            $this->body['status'] = 'success';
+            $this->body['body'] = ['timezone' => $timezone];
         }
     }
 }

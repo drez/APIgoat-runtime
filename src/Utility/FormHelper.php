@@ -42,14 +42,18 @@ trait FormHelper
         }
     }
 
-    public function setSearchVar($values, $model)
+    public function setSearchVar(string $values, string $model)
     {
         $search = null;
         $return = [];
 
-        if ($values) {
+        if (!empty($values)) {
             parse_str($values, $search);
-        } elseif (!empty($_SESSION['mem']['search'][$model])) {
+        }
+
+        $_SESSION['mem']['search'][$model] = array_filter($_SESSION['mem']['search'][$model] ?? []);
+
+        if (empty($search) && !empty($_SESSION['mem']['search'][$model])) {
             return $_SESSION['mem']['search'][$model];
         }
 

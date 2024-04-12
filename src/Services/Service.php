@@ -21,7 +21,7 @@ class Service
 {
     /**
      * return abstract
-     * @var Array
+     * @var array|Response
      */
     public $content = ['html' => '', 'onReadyJs' => '', 'js' => '', 'json' => ''];
     /**
@@ -31,7 +31,7 @@ class Service
     public $BuilderLayout;
     /**
      *
-     * @var Array
+     * @var array
      */
     public $request;
     /**
