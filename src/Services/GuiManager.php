@@ -115,6 +115,7 @@ class GuiManager extends Service
             $timezone = \App\Domains\Timezone\Timezone::detect_timezone_id($this->args['t']['offset'], $this->args['t']['dst']);
             if($timezone){
                 date_default_timezone_set($timezone);
+                $_SESSION[_AUTH_VAR]->sessVar['Timezone'] = $timezone;
             }
             $this->body['status'] = 'success';
             $this->body['body'] = ['timezone' => $timezone];
