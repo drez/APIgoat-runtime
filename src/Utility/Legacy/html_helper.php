@@ -262,6 +262,7 @@ function optionListeSelect($options, $selectedValue, $defaultLabel = true)
         $selectedLabel = "";
         foreach ($options as $option) {
             $class = "";
+            $option[1] = (empty($option[1]) ? $option[0] : $option[1]);
             if (is_array($selectedValue)) {
                 if (array_search($option[1], $selectedValue) !== false) {
                     $class = ' class="selected"';
