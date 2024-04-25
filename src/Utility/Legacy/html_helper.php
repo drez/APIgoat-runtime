@@ -976,9 +976,8 @@ function swheader($name = '', $hasControls = '')
 {
     return div(
         htmlLink(span(_('Open/close menu')), 'javascript:', 'class="toggle-menu button-link-blue trigger-menu"')
-        . div($controlsContent, $name . 'ControlsList', "class='custom-controls " . $hasControls . "'")
-        . $_SESSION['ccSwCustom'],
-        '',
+        . div("", $name . 'ControlsList', "class='custom-controls " . $hasControls . "'")
+        ,'',
         'class="sw-header"'
     );
 }
