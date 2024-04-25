@@ -37,9 +37,9 @@ class Api
      * Set the basic variables
      *
      * @param string $tablename
-     * @param string $ServiceWrapper
+     * @param string|object $ServiceWrapper
      */
-    public function __construct($tablename, $ServiceWrapper = null)
+    public function __construct(string $tablename, string|object $ServiceWrapper = null)
     {
         $this->tableName = \camelize($tablename, true);
         $this->queryObjName = "\App\\" . $this->tableName . "Query";
