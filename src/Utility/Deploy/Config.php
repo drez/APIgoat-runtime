@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Deploy;
+namespace ApiGoat\Deploy;
 
 use Ahc\Env\Loader;
 
