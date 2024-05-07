@@ -40,8 +40,10 @@ class AuthyMiddleware implements MiddlewareInterface
             return $response;
         }
 
+        $access = $this->checkPrivileges($request);
+
         // validate authentication if not an API call
-        if (!$this->args['is_api']) {
+        if (!$this->args['is_api'] && $access) {
             if (!is_object($_SESSION[_AUTH_VAR]) or (get_class($_SESSION[_AUTH_VAR]) != 'ApiGoat\Sessions\AuthySession')) {
                 unset($_SESSION[_AUTH_VAR]);
                 $_SESSION[_AUTH_VAR] = new AuthySession();
@@ -61,7 +63,7 @@ class AuthyMiddleware implements MiddlewareInterface
                     return $response;
                 }
             }
-        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $this->args['route'] != 'Authy/auth' && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
+        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && !$this->checkExclude($this->args['route']) && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
             $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
             $ApiResponse->setStatus(401);
             return $ApiResponse->getResponse();
