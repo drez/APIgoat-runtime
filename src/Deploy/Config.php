@@ -9,18 +9,41 @@ class Config
 
     private $build_path;
     private $db;
+    private $drop_table = false;
 
-    public function __construct()
-    { 
-
+    public function __construct($params)
+    {
+        
         $this->build_path =  $_SERVER["PWD"]."/.admin/";
-        (new Loader)->load($_SERVER["PWD"] . '/.env');
-        $this->db = new \MysqliDb (env('MY_DB_HOST'), env('MY_DB_USER'), env('MY_DB_PASSWORD'), env('MY_DB_NAME'));
+        try{
+            (new Loader)->load($_SERVER["PWD"] . '/.env');
+        }catch(\Exception $e){
+            echo "\033[31mCant find the .env file, is it there?\r\n";
+            exit(1);
+        }
+        
+         $dsn = "mysql:host=".env('MY_DB_HOST').";dbname=".env('MY_DB_NAME').";charset=utf8mb4";
+        $options = [
+            \PDO::ATTR_EMULATE_PREPARES   => false, // turn off emulation mode for "real" prepared statements
+            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION, //turn on errors in the form of exceptions
+            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC, //make the default fetch be an associative array
+        ];
+        try {
+            $this->db = new \PDO($dsn, env('MY_DB_USER'), env('MY_DB_PASSWORD'), $options);
+        } catch (\Exception $e) {
+            error_log($e->getMessage());
+        }
 
         if ($this->db) {
             echo "\033[32mDatabase found: ".env('MY_DB_NAME')."\r\n\033[31m";
         } else {
             echo "\033[31mDatabase error, please check your .env file (MY_DB_...)\r\n";
+            exit(false);
+        }
+
+        if ($params[1] == 'clean') {
+            echo "\033[32mCleaning\r\n\033[31m";
+            $this->drop_table = true;
         }
 
         if (!$this->checkBaseData()) {
@@ -28,11 +51,13 @@ class Config
             $this->runCustomSql();
             $this->setAdminUser();
         } else {
-            echo "\033[32mAlready deployed, overwriting config...\r\n\033[31m";
-            $this->writeConfig();
-            chmod($this->build_path."public/css/", 0777);
-            chmod($this->build_path."public/js/", 0777);
+            echo "\033[32mAlready deployed\r\n\033[31m";
+            
         }
+        echo "\033[32mOverwriting config...\r\n\033[31m";
+        $this->writeConfig();
+        chmod($this->build_path."public/css/", 0777);
+        chmod($this->build_path."public/js/", 0777);
     }
 
     private function runSql()
@@ -58,43 +83,40 @@ class Config
     {
         if (file_exists($this->build_path . 'config/Built/basedata.sql') && !$this->checkBaseData()) {
             $restore = "/usr/bin/mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "config/Built/basedata.sql 2>&1";
-            return $this->run($restore, "Additionnal SQL (base)");
+            $this->run($restore, "Additionnal SQL (base)");
         }
 
-        if (file_exists($this->build_path . '/tmp/')) {
-            if ($handle = opendir($this->build_path . '/tmp/')) {
+        echo "\033[32mChecking '" . $this->build_path . "tmp/' for additionnal SQL :\r\n";
+        if (file_exists($this->build_path . 'tmp/')) {
+            if ($handle = opendir($this->build_path . 'tmp/')) {
                 while (false !== ($filename = readdir($handle))) {
                     if (strstr($filename, 'custom') && substr($filename, strrpos($filename, '.')) == '.sql') {
 
                         echo "\033[32mFound custom SQL : " . $filename."\r\n";
                         $restore = "/usr/bin/mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "tmp/" . $filename . " 2>&1";
-                        return $this->run($restore, "Additionnal SQL");
+                        $this->run($restore, "Additionnal SQL");
                     }
                 }
             }
         }
+
+        return false;
     }
 
     public function setAdminUser($password=null){
-        $this->db->where ("is_system", '1');
-        $admin = $this->db->getOne('authy');
+        $stmt = $this->db->prepare ("SELECT id_authy FROM authy WHERE is_system = ?");
+        $stmt->execute(['1']);
+        $users = $stmt->rowCount();
 
-        if (empty($admin)) {
-            if ($this->db->insert ('authy', [
-                'username' => 'apigoat',
-                'passwd_hash' => md5($password),
-                'email' => 'info@apigoat.com',
-                'is_root' => '0',
-                'deactivate' => '1',
-                'id_authy_group' => '2',
-                'is_system' => '1',
-                'id_creation' => null,
-                'id_modification' => null,
-                'date_creation' => date('Y-m-d H:i:s'),
-            ]))
+        if ($users > 0) {
+            $stmt = $this->db->prepare ("INSERT INTO `authy` ( `username`, `fullname`, `email`, `passwd_hash`, `expire`, `deactivate`, `is_root`, `id_authy_group`, `is_system`, `date_creation`, `date_modification`, `id_group_creation`, `id_creation`, `id_modification`) VALUES (
+                ?,?, ?,?, ?,?, ?,?, ?,?, ?,?, ?,? )", [ 
+            ]);
+            $stmt->execute(['apigoat', 'System user', 'info@apigoat.com', md5($password), null, '1', '2', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), null, null, null]);
+            if ($stmt->lastInsertId())
                 echo "\033[32mCreate Admin user: OK\r\n";
             else
-                echo "\033[31mCreate Admin user: NOT OK (" . $this->db->getLastError().")\r\n";
+                echo "\033[31mCreate Admin user: NOT OK (" . $stmt->getLastError().")\r\n";
         } else {
             echo "\033[32mCreate Admin user: OK\r\n";
         }
@@ -102,13 +124,21 @@ class Config
 
     private function checkBaseData()
     {
-        $this->db->where ("config", 'app_name');
-        $app_name = $this->db->getOne('config');
-        if (!empty($app_name)) {
-            return true;
+        if ($this->drop_table) {
+            return false;
         }
-        return false;
-
+        try {
+            $stmt = $this->db->prepare ("SELECT config FROM config WHERE config = ?");
+            $stmt->execute(['app_name']);
+            $app_name = $stmt->rowCount();
+            
+            if ($app_name > 0) {
+                return true;
+            }
+            return false;
+        }catch(\Exception $e){
+            return false;
+        }
     }
 
     private function writeConfig()

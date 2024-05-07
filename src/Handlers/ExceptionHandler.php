@@ -349,8 +349,22 @@ class ExceptionHandler implements ErrorHandlerInterface
      */
     protected function respond(): ResponseInterface
     {
-        $response = $this->responseFactory->createResponse($this->statusCode);
         
+        $renderer = $this->determineRenderer();
+        $body = call_user_func($renderer, $this->exception, $this->displayErrorDetails);
+
+        # handle xhr request
+        $parsedBody = $this->request->getParsedBody();
+        if( isset($parsedBody['dialog']) ){
+            $body = scriptReady("
+                $('#alertDialog p').html(\"".str_replace(array("\r\n", "\n", "\r"), ' ', nl2br(addslashes($body)))."\").show();
+                $('#alertDialog').dialog('open');
+            ");
+            $response = $this->responseFactory->createResponse(200);
+        } else {
+            $response = $this->responseFactory->createResponse($this->statusCode);
+        }
+
         if ($this->contentType !== null && array_key_exists($this->contentType, $this->errorRenderers)) {
             $response = $response->withHeader('Content-type', $this->contentType);
         } else {
@@ -362,8 +376,6 @@ class ExceptionHandler implements ErrorHandlerInterface
             $response = $response->withHeader('Allow', $allowedMethods);
         }
         
-        $renderer = $this->determineRenderer();
-        $body = call_user_func($renderer, $this->exception, $this->displayErrorDetails);
         
         $response->getBody()->write($body);
 
