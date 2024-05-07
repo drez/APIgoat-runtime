@@ -41,7 +41,7 @@ class Config
             exit(false);
         }
 
-        if ($params[1] == 'clean') {
+        if (isset($params[1]) && $params[1] == 'clean') {
             echo "\033[32mCleaning\r\n\033[31m";
             $this->drop_table = true;
         }
@@ -49,7 +49,7 @@ class Config
         if (!$this->checkBaseData()) {
             $this->runSql();
             $this->runCustomSql();
-            $this->setAdminUser();
+            //$this->setAdminUser();
         } else {
             echo "\033[32mAlready deployed\r\n\033[31m";
             
@@ -112,11 +112,11 @@ class Config
             $stmt = $this->db->prepare ("INSERT INTO `authy` ( `username`, `fullname`, `email`, `passwd_hash`, `expire`, `deactivate`, `is_root`, `id_authy_group`, `is_system`, `date_creation`, `date_modification`, `id_group_creation`, `id_creation`, `id_modification`) VALUES (
                 ?,?, ?,?, ?,?, ?,?, ?,?, ?,?, ?,? )", [ 
             ]);
-            $stmt->execute(['apigoat', 'System user', 'info@apigoat.com', md5($password), null, '1', '2', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), null, null, null]);
-            if ($stmt->lastInsertId())
+            $stmt->execute(['apigoat', 'System user', 'info@apigoat.com', md5($password), null, '1', '1', '2', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), null, null, null]);
+            if ($this->db->lastInsertId())
                 echo "\033[32mCreate Admin user: OK\r\n";
             else
-                echo "\033[31mCreate Admin user: NOT OK (" . $stmt->getLastError().")\r\n";
+                echo "\033[31mCreate Admin user: NOT OK (" . $this->db->errorInfo().")\r\n";
         } else {
             echo "\033[32mCreate Admin user: OK\r\n";
         }
@@ -143,7 +143,11 @@ class Config
 
     private function writeConfig()
     {
-        $project_url = env("MY_PROJECT_URL").".admin".DIRECTORY_SEPARATOR;
+        if (substr(env("MY_PROJECT_URL"), -1) != '/') {
+            $project_url = env("MY_PROJECT_URL").DIRECTORY_SEPARATOR.".admin".DIRECTORY_SEPARATOR;
+        } else {
+            $project_url = env("MY_PROJECT_URL").".admin".DIRECTORY_SEPARATOR;
+        }
         $project_name = 'myproject1';
 
         $authvar = substr(md5(env("MY_PROJECT_URL") . $project_name . random_int(1, 9999)), 5, 10);
