@@ -93,16 +93,19 @@ class BuilderLayout
 
         return $print;
     }
-
+    
+    /**
+     * render
+     *
+     * @param  array|null $content
+     * @return string
+     * ['html'=>'', 'js' =>'', 'pagerRow' => '', 'onReadyJs' => '']
+     */
     public function render($content)
     {
         if (empty($content['html'])) {
             return "Response is empty, does the service exists?";
         }
-
-        $output = ['pagerRow' => ''];
-        $body = ['html'=>'', 'js' =>'', 'pagerRow' => ''];
-        $authy = '';
 
         $print =
             docType()
@@ -116,8 +119,7 @@ class BuilderLayout
                             div(
                                 div(
                                     //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
-                                    $this->getTopNav()
-                                    . $authy,
+                                    $this->getTopNav(),
                                     '',
                                     'class="top-nav"'
                                 )
@@ -133,8 +135,7 @@ class BuilderLayout
                     )
                     . div(
                         div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
-                        . div('', 'editPane', 'class="edit-pane-hidden"')
-                        . $output['pagerRow'],
+                        . div('', 'editPane', 'class="edit-pane-hidden"'),
                         '',
                         'class="center-panel"'
                     )

@@ -26,6 +26,7 @@ class BuilderReturn
     private $containerId = "";
     private $error = [];
     private $returnType = "";
+    private $messages;
     private $return = ['html' => '', 'onReadyJs' => '', 'js' => '', 'json' => ''];
 
     public function __construct($request = [], $error = [], $messages = null)
