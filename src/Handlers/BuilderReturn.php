@@ -38,10 +38,10 @@ class BuilderReturn
         }
     }
 
-    public function message($message)
+    public function message($message, $error=false)
     {
         //complete-save
-        return "sw_message('" . _($message) . "', true, 'search-progress');";
+        return "sw_message('" . _($message) . "', ".$error.", 'search-progress');";
     }
 
     public function return()
@@ -163,6 +163,7 @@ alert_close = function (){
     private function inError()
     {
         if (empty($this->error)) {
+            $this->message('Error:'.$this->error, true);
             return false;
         }
         return true;
