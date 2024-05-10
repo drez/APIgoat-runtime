@@ -32,6 +32,7 @@ class Api
      * @var array
      */
     private $response;
+    private $ServiceWrapper;
 
     /**
      * Set the basic variables
@@ -41,8 +42,8 @@ class Api
      */
     public function __construct(string $tablename, string|object $ServiceWrapper = null)
     {
-        $this->tableName = \camelize($tablename, true);
-        $this->queryObjName = "\App\\" . $this->tableName . "Query";
+        $this->tablename = \camelize($tablename, true);
+        $this->queryObjName = "\App\\" . $this->tablename . "Query";
         if ($ServiceWrapper) {
             $this->ServiceWrapper = $ServiceWrapper;
         }
@@ -53,11 +54,11 @@ class Api
      *
      * @param string $request
      * @param boolean $isMultiple
-     * @return void
+     * @return array
      */
     private function filterRequest(iterable $request, $isMultiple = false)
     {
-        $peerClass = "\App\\" . $this->tableName . "Peer";
+        $peerClass = "\App\\" . $this->tablename . "Peer";
         $fieldsName = $peerClass::getFieldNames();
 
         if ($isMultiple) {
@@ -78,7 +79,7 @@ class Api
         }
 
         /*if ($request['i']) {
-            $return['Id' . $this->tableName] = $request['i'];
+            $return['Id' . $this->tablename] = $request['i'];
         }*/
 
         return $return;
@@ -89,9 +90,9 @@ class Api
      *
      * @param array $request
      * @param QueryBuilder $QueryBuilder
-     * @return void
+     * @return array
      */
-    public function setJson($request)
+    public function setJson($request, $QueryBuilder = null)
     {
 
         $this->response = [];
@@ -108,9 +109,9 @@ class Api
 
         if ($request['rbac_public'] != 'passed') {
             if ($request["action"] == 'update' || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])))) {
-                $acl = $this->authorize($this->tableName, 'w');
+                $acl = $this->authorize($this->tablename, 'w');
             } else {
-                $acl = $this->authorize($this->tableName, 'a');
+                $acl = $this->authorize($this->tablename, 'a');
             }
         } else {
             $acl = true;
@@ -151,7 +152,7 @@ class Api
                 if ($count > 0) {
                     foreach ($DataObj as $Obj) {
                         if (!empty($data)) {
-                            $data["Id{$this->tableName}"] = $Obj->getPrimaryKey();
+                            $data["Id{$this->tablename}"] = $Obj->getPrimaryKey();
                             $this->setEntry($data, $Obj);
                         } else {
                             $this->response['error'] = "Wrong input 1004, nothing found to update";
@@ -185,7 +186,7 @@ class Api
     {
 
         if ($data['rbac_public'] != 'passed') {
-            $acls = $this->authorize($this->tableName, 'r');
+            $acls = $this->authorize($this->tablename, 'r');
             if (!$acls) {
                 $this->response['status'] = "failure";
                 $this->response['error'] = "Permission denied";
@@ -281,7 +282,7 @@ class Api
     {
 
         if ($data['rbac_public'] != 'passed') {
-            $acls = $this->authorize($this->tableName, 'd');
+            $acls = $this->authorize($this->tablename, 'd');
         } else {
             $acls = true;
         }
@@ -347,7 +348,7 @@ class Api
      * Prepare for setColumn and Handles ApiGoat\ExtendedValidation errors
      *
      * @param array $data
-     * @param String or Object $DataObj
+     * @param string or Object $DataObj
      * @return void
      */
     private function setEntry($data, $DataObj = null)
@@ -356,17 +357,17 @@ class Api
         $extValidationError = [];
         $error = [];
 
-        if (!isset($data["Id{$this->tableName}"])) {
-            $this->response['debug'][] = "Create {$this->tableName}";
-            $className = "App\\" . $this->tableName;
+        if (!isset($data["Id{$this->tablename}"])) {
+            $this->response['debug'][] = "Create {$this->tablename}";
+            $className = "App\\" . $this->tablename;
             $obj = new $className;
             $obj->setNew(true);
             $isNew = true;
         } elseif (!($DataObj instanceof PropelCollection)) {
-            $this->response['debug'][] = "Update {$this->tableName}";
-            $obj =  $this->queryObjName::create()->findPk($data["Id{$this->tableName}"]);
+            $this->response['debug'][] = "Update {$this->tablename}";
+            $obj =  $this->queryObjName::create()->findPk($data["Id{$this->tablename}"]);
         } else {
-            $this->response['debug'][] = "Update {$this->tableName}";
+            $this->response['debug'][] = "Update {$this->tablename}";
             $obj = $DataObj;
         }
 
