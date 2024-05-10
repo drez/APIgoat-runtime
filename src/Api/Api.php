@@ -33,6 +33,7 @@ class Api
      */
     private $response;
     private $ServiceWrapper;
+    private $colsToValidate;
 
     /**
      * Set the basic variables
@@ -52,7 +53,7 @@ class Api
     /**
      * Convert query pameters into array with only the existing column name
      *
-     * @param string $request
+     * @param iterable $request
      * @param boolean $isMultiple
      * @return array
      */
@@ -180,7 +181,7 @@ class Api
      *
      * @param array $data
      * @param QueryBuilder $QueryBuilder
-     * @return void
+     * @return array
      */
     public function getJson($data, $QueryBuilder = null)
     {
@@ -246,7 +247,7 @@ class Api
      * Get one entry
      *
      * @param array $data
-     * @return void
+     * @return array
      */
     public function getOneJson($data)
     {
@@ -255,7 +256,7 @@ class Api
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($this->queryObjName::create(), $data);
 
 
-            $obj = $QueryBuilder->findOne();
+            $obj = $QueryBuilder->Query->findOne();
             if (!$obj) {
                 $ret['status'] = 'success';
                 $ret['data'] = [];
@@ -414,7 +415,7 @@ class Api
     /**
      * Set the value of a column
      *
-     * @param Propel object classe $obj
+     * @param PropelCollection object classe $obj
      * @param array $columns
      * @param string $value
      * @return void

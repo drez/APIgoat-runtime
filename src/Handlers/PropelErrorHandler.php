@@ -18,12 +18,13 @@ class PropelErrorHandler
 
     /**
      *
-     * @var Array of ValidationFailed
+     * @var array of ValidationFailed
      */
     private $failureMap = [];
     private $errorMessage = [];
     private $parentContainer = "";
     private $title = "";
+    private $errorArray = [];
 
     /**
      * 
@@ -113,7 +114,7 @@ class PropelErrorHandler
     /**
      * Return error array for API
      *
-     * @return void
+     * @return array
      */
     public function getValidationErrorsArray()
     {
@@ -123,7 +124,7 @@ class PropelErrorHandler
     /**
      * Return error array for Control panel
      *
-     * @return void
+     * @return array
      */
     public function getValidationErrors()
     {

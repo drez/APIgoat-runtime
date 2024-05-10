@@ -26,22 +26,28 @@ class QueryBuilder
     public $Query;
     private $data;
     private $objectName;
+    private $modelName;
     private $Data;
     private $message;
     private $isInfo = false;
     private $tableAliases = [];
+    private $request;
+    private $primaryKey;
+    private $messages;
+    private $DataObj;
+    private $selectKeyMap;
 
     /**
      * Request Select key
      *
-     * @var Array
+     * @var array
      */
     private $selectKey;
 
     /**
      * fields selection is required for get
      *
-     * @var Boolean
+     * @var bool
      */
     private $selectSet = false;
 
@@ -111,7 +117,7 @@ class QueryBuilder
             $this->objectName = get_class($query);
             $this->Query = $query;
         } else {
-            throw \Exception("Bad object");
+            throw new Exception("Bad object");
         }
     }
 
@@ -134,7 +140,7 @@ class QueryBuilder
     /**
      * Use passed request parameters Query to build a SQL query
      *
-     * @return void
+     * @return bool
      */
     public function buildQuery()
     {
@@ -204,7 +210,7 @@ class QueryBuilder
     /**
      * Run the preset query, find or paginate
      *
-     * @return Array
+     * @return array
      */
     private function runQuery()
     {
@@ -332,27 +338,27 @@ class QueryBuilder
                         $useQuery = $this->getUseClause($fClass, $fTable, $table);
                     }
 
-                    $criteria = \Criteria::EQUAL;
+                    $criteria = Criteria::EQUAL;
                     if (\is_string($filter[1]) && \strstr($filter[1], "%")) {
-                        $criteria = \Criteria::LIKE;
+                        $criteria = Criteria::LIKE;
                     }
 
                     if (method_exists($this->Query, $filterStr) || !empty($useQuery)) {
                         switch ($filter[2]) {
                             case 'ne':
-                                $criteria = \Criteria::NOT_EQUAL;
+                                $criteria = Criteria::NOT_EQUAL;
                                 if (is_array($filter[1])) {
-                                    $criteria = \Criteria::NOT_IN;
+                                    $criteria = Criteria::NOT_IN;
                                 }
                                 if (\strstr($filter[1], "%")) {
-                                    $criteria = \Criteria::NOT_LIKE;
+                                    $criteria = Criteria::NOT_LIKE;
                                 }
                                 break;
                             case 'lt':
-                                $criteria = \Criteria::LESS_THAN;
+                                $criteria = Criteria::LESS_THAN;
                                 break;
                             case 'gt':
-                                $criteria = \Criteria::GREATER_THAN;
+                                $criteria = Criteria::GREATER_THAN;
                                 break;
                             case 'or':
                                 $addOr = true;
@@ -416,18 +422,18 @@ class QueryBuilder
      * Create joins request
      * @param array $joinsRequest
      *  [join, [join, alias, type]]
-     * @return void
+     * @return bool
      */
     private function setJoins(array $joinsRequest)
     {
         if ($joinsRequest) {
             foreach ($joinsRequest as $join) {
                 $alias = null;
-                $joinType = \Criteria::LEFT_JOIN;
+                $joinType = Criteria::LEFT_JOIN;
 
                 if (is_array($join)) {
                     if ($join[2] == 'right') {
-                        $joinType = \Criteria::RIGHT_JOIN;
+                        $joinType = Criteria::RIGHT_JOIN;
                     }
 
                     if ($join[1]) {
@@ -436,7 +442,7 @@ class QueryBuilder
                     }
 
                     $joinName = "join" . \camelize($join[0], true);
-                    $this->Query->$joinName($alias, $criteria);
+                    $this->Query->$joinName($alias);
                 } else {
                     $this->Query->leftJoin(\camelize($join, true));
                 }
@@ -567,13 +573,13 @@ class QueryBuilder
      * Respects table aliases previously registered in a join() or addAlias()
      * 
      * @param \ModelCriteria $q
-     * @param String $phpName
+     * @param string $phpName
      * @param boolean $failSilently
-     * @return \Column
+     * @return \ColumnMap|[]
      * 
      * @throws PropelException
      */
-    private function getColumnFromName(\ModelCriteria $q, String $phpName, $failSilently = true)
+    private function getColumnFromName(\ModelCriteria $q, string $phpName, $failSilently = true)
     {
         if (strpos($phpName, '.') === false) {
             $prefix = $q->getModelAliasOrName();
