@@ -47,15 +47,25 @@ class BuilderLayout
     {
         $this->title = $title;
     }
-
+    
+    /**
+     * renderXHR
+     *
+     * @param  array|string $content
+     * @return string
+     * 
+     * ['html' => '', 'js' => '', 'onReadyJs' => '']
+     */
     public function renderXHR($content)
     {
         if (!empty($content['html']) || !empty($content['js']) || !empty($content['onReadyJs'])) {
             return $content['html'] . ($content['js'] ?? '')
                 . scriptReady(trim($content['onReadyJs']));
         } else {
-            if (!empty($content)) {
+            if (!empty($content) && !is_array($content)) {
                 return $content;
+            } else {
+                throw new \Exception("\$content should be a string or an array");
             }
         }
         return "The response is empty.";
@@ -112,9 +122,7 @@ class BuilderLayout
             . htmlTag(
                 $this->htmlHeader
                 . body(
-                    $body['html']
-                    . script($body['js'])
-                    . div(
+                    div(
                         div(
                             div(
                                 div(
@@ -161,7 +169,12 @@ class BuilderLayout
 
         return $print;
     }
-
+    
+    /**
+     * getTopNav
+     *
+     * @return string
+     */
     public function getTopNav()
     {
 

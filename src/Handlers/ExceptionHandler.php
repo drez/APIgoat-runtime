@@ -355,7 +355,7 @@ class ExceptionHandler implements ErrorHandlerInterface
 
         # handle xhr request
         $parsedBody = $this->request->getParsedBody();
-        if( isset($parsedBody['dialog']) ){
+        if( isset($parsedBody['dialog']) || isset($parsedBody['ui'])){
             $body = scriptReady("
                 $('#alertDialog p').html(\"".str_replace(array("\r\n", "\n", "\r"), ' ', nl2br(addslashes($body)))."\").show();
                 $('#alertDialog').dialog('open');

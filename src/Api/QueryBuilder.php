@@ -550,7 +550,7 @@ class QueryBuilder
 
     private function validateLimit($value)
     {
-        if (v::alnum()->noWhitespace()->length(1, 100)->validate($value)) {
+        if (v::alnum()->noWhitespace()->lengthBetween(1, 100)->validate($value)) {
             return $value;
         } else {
             return self::_DEFAULT_LIMIT;
