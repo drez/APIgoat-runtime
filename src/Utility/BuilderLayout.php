@@ -285,7 +285,7 @@ class BuilderLayout
                                     dialog:'" . $options['dialog'] . "'
                                 });";
             } else {
-                $editEvent = " $(this).bind('click.save$name', (data)=>{".$options['onSave']."});";
+                $editEvent = "$('#form" . $name . " #save" . $name . "').bind('click.save$name', (data)=>{".$options['onSave']."});";
             }
         }
        
