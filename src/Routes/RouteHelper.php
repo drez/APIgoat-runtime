@@ -3,7 +3,9 @@
 namespace ApiGoat\Routes;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Interfaces\RouteInterface;
 use Slim\Routing\RouteContext;
+
 
 /*
  * To change this license header, choose License Headers in Project Properties.
@@ -32,7 +34,7 @@ class RouteHelper
     private $method;
     /**
      * Route object
-     * @var Route
+     * @var RouteInterface
      */
     private $route;
     /**
@@ -97,7 +99,7 @@ class RouteHelper
 
     /**
      * Set one named route parameters
-     * @return array
+     * @return void
      */
     public function setArgs($name, $value)
     {

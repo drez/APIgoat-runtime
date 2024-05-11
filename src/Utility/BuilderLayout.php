@@ -64,8 +64,6 @@ class BuilderLayout
         } else {
             if (!empty($content) && !is_array($content)) {
                 return $content;
-            } else {
-                throw new \Exception("\$content should be a string or an array");
             }
         }
         return "The response is empty.";
@@ -253,5 +251,51 @@ class BuilderLayout
                 );
         }
         return $content;
+    }
+    
+    /**
+     * decoratedForm
+     *
+     * @param  string $content
+     * @param  string $name
+     * @param  array $options ['addSave', 'idPk', 'idParent', 'destUi', 'onSave', 'button']
+     * @return string
+     */
+    static function decoratedForm($content, $name, $options = [])
+    {
+        if (!empty($options['addSave']) || !empty($options['onSave'])) {
+            $buttonName = (!empty($options['button'])) ? $options['button'] : 'Save';
+        $formSaveBar = div(	
+                    div( input('button', "save$name", _($buttonName),' class="button-link-blue can-save"')
+                        .input('hidden', "formChanged$name",'', 'j="formChanged"')
+                        .input('hidden', 'idPk', urlencode($options['idPk']), "s='d'")
+                        .input('hidden', 'idParent', $options['idParent'], " s='d' pk")
+                    ,"", " class='divtd' colspan='2' style='text-align:right;'")
+                ,""," class='divtr divbut' ");
+
+            if ($options['addSave'] == 'yes') {
+                $editEvent = "$('#form" . $name . " #save" . $name . "').bindSave({
+                                    modelName: '" . $name . "',
+                                    destUi: '" . $options['destUi'] . "',
+                                    pc:'" . $options['pc'] . "',
+                                    ip:'" . $options['idParent'] . "',
+                                    je:'" . $options['jsElement'] . "',
+                                    jet:'" . $options['jsElementType'] . "',
+                                    tp:'" . $options['tp'] . "',
+                                    dialog:'" . $options['dialog'] . "'
+                                });";
+            } else {
+                $editEvent = " $(this).bind('click.save$name', (data)=>{".$options['onSave']."});";
+            }
+        }
+       
+
+        return form(
+            div(
+                $content
+                .$formSaveBar
+            ,"divCnt$name", "class='divStdform'")
+        , "id='form$name' class='mainForm formContent' ")
+        .scriptReady($editEvent);
     }
 }
