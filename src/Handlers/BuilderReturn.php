@@ -41,7 +41,7 @@ class BuilderReturn
     public function message($message, $error=false)
     {
         //complete-save
-        return "sw_message('" . _($message) . "', ".$error.", 'search-progress');";
+        return "sw_message('" . _($message) . "', '".$error."', 'search-progress');";
     }
 
     public function return()
