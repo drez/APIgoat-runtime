@@ -21,12 +21,14 @@ class BuilderReturn
         'return' => '',
         'diag' => '',
         'a' => '',
-        'p' => ''
+        'p' => '',
+        'action' => '',
     ];
     private $containerId = "";
     private $error = [];
     private $returnType = "";
     private $messages;
+    private $returnFunction;
     private $return = ['html' => '', 'onReadyJs' => '', 'js' => '', 'json' => ''];
 
     public function __construct($request = [], $error = [], $messages = null)
@@ -36,17 +38,25 @@ class BuilderReturn
             $this->error = $error;
             $this->messages = $messages;
         }
+
+        $this->returnFunction = $this->request['a'] . "_return";
     }
 
-    public function message($message, $error=false)
+    public function setReturnFunction($returnFunction)
+    {
+        $this->returnFunction = $returnFunction;
+    }
+
+    public function message($message, $error = false)
     {
         //complete-save
-        return "sw_message('" . _($message) . "', '".$error."', 'search-progress');";
+        return "sw_message('" . _($message) . "', '" . $error . "', 'search-progress');";
     }
 
-    public function return()
+    public function return ()
     {
-        $returnfunc = $this->request['a'] . "_return";
+        $returnfunc = $this->returnFunction;
+
         if ($this->inError()) {
             $this->return_error();
         } else {
@@ -59,8 +69,8 @@ class BuilderReturn
     private function delete_return()
     {
         $this->return['onReadyJs'] =
-            $this->message('Item deleted')
-            . "
+        $this->message('Item deleted')
+        . "
     $('body').css('cursor', 'auto');
     $('#" . $this->request['p'] . "Table tr[rid=" . $this->request['i'] . "]').hide('slow').remove();
     var count = $('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span').html();
@@ -91,7 +101,9 @@ class BuilderReturn
 	$('body').css('cursor', 'auto');";
         }
 
-        if (!empty($this->request['jet'])) {
+        if ($this->request['action'] == 'list') {
+            $action_success = "document.location='" . _SITE_URL . $this->request['p'] . "'";
+        } elseif (!empty($this->request['jet'])) {
             switch ($this->request['jet']) {
                 case 'refreshChild':
                     $child = ($this->request['data']['tp']) ? $this->request['data']['tp'] : $this->request['p'];
@@ -138,7 +150,7 @@ class BuilderReturn
 
             if (!empty($messages)) {
                 $this->return['onReadyJs'] =
-                    "alertb('Alert', '" . addslashes($this->removeNl($messages)) . "');
+                "alertb('Alert', '" . addslashes($this->removeNl($messages)) . "');
 alert_close = function (){
     {$alert_close}
 }";
@@ -163,7 +175,7 @@ alert_close = function (){
     private function inError()
     {
         if (empty($this->error)) {
-            $this->message('Error:'.$this->error, true);
+            $this->message('Error:' . $this->error, true);
             return false;
         }
         return true;
