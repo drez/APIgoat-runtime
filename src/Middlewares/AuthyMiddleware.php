@@ -127,8 +127,8 @@ class AuthyMiddleware implements MiddlewareInterface
 
         $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
         if ($requiredPrivileges === false) {
-            // custom privileges
-            $model              = $this->args['model'] . '-' . $this->args['action'];
+                                                        // custom privileges
+            $model              = $this->args['model']; // . '-' . $this->args['action'];
             $requiredPrivileges = 'r';
         } else {
             $model = $this->args['model'];

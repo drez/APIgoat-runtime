@@ -1,5 +1,4 @@
 <?php
-
 namespace ApiGoat\ACL;
 
 trait AuthyACL
@@ -18,7 +17,7 @@ trait AuthyACL
      *
      * @param string $modelName
      * @param string $acls
-     * @return true|false|array 
+     * @return true|false|array
      */
     public function authorize(string $modelName, string $acls)
     {
@@ -40,7 +39,7 @@ trait AuthyACL
             $acls = \explode("&", $acls);
             foreach ($acls as $acl) {
                 $aclAcccess = $this->hasRights($modelName, $acl);
-                if (!$aclAcccess) {
+                if (! $aclAcccess) {
                     $this->aclGroup = false;
                     break;
                 }
@@ -59,6 +58,7 @@ trait AuthyACL
 
     public function hasRights($model = '', $needeRight = '')
     {
+
         // Admin bypass Rights
         if ($_SESSION[\_AUTH_VAR]->getGroup() === 'Admin') {
             return true;
@@ -87,7 +87,7 @@ trait AuthyACL
     }
 
     /**
-     * Applies filter to a PropelPDO to filter By ownership 
+     * Applies filter to a PropelPDO to filter By ownership
      *
      * @param PropelPDO $QueryObj
      * @return PropelPDO
@@ -95,7 +95,7 @@ trait AuthyACL
     public function setAclFilter(&$QueryObj)
     {
         if (isset($this->aclGroup) && $this->aclGroup !== false) {
-            if (!is_array($this->aclGroup)) {
+            if (! is_array($this->aclGroup)) {
                 $this->aclGroup = $_SESSION[\_AUTH_VAR]->aclGroup;
             } else {
                 if (in_array('Owner', $this->aclGroup)) {
