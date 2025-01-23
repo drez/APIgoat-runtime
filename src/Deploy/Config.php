@@ -1,5 +1,4 @@
 <?php
-
 namespace ApiGoat\Deploy;
 
 use Ahc\Env\Loader;
@@ -13,20 +12,29 @@ class Config
 
     public function __construct($params)
     {
-        
-        $this->build_path =  $_SERVER["PWD"]."/.admin/";
-        try{
-            (new Loader)->load($_SERVER["PWD"] . '/.env');
-        }catch(\Exception $e){
-            echo "\033[31mCant find the .env file, is it there?\r\n";
+        if (php_sapi_name() == 'cli') {
+            $this->redAccent   = "\033[31m";
+            $this->greenAccent = "\033[32m";
+            $this->cr          = PHP_EOL;
+        } else {
+            $this->cr = PHP_EOL . "<br/>";
+        }
+
+        echo "Setting things up" . $this->cr;
+
+        $this->build_path = realpath(getcwd() . "/../");
+        try {
+            (new Loader)->load(getcwd() . '/../../.env');
+        } catch (\Exception $e) {
+            echo $this->redAccent . "Cant find the .env file, is it there? (" . getcwd() . '/../../.env' . ")" . $this->cr;
             exit(1);
         }
-        
-         $dsn = "mysql:host=".env('MY_DB_HOST').";dbname=".env('MY_DB_NAME').";charset=utf8mb4";
+
+        $dsn     = "mysql:host=" . env('MY_DB_HOST') . ";dbname=" . env('MY_DB_NAME') . ";charset=utf8mb4";
         $options = [
-            \PDO::ATTR_EMULATE_PREPARES   => false, // turn off emulation mode for "real" prepared statements
+            \PDO::ATTR_EMULATE_PREPARES   => false,                   // turn off emulation mode for "real" prepared statements
             \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION, //turn on errors in the form of exceptions
-            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC, //make the default fetch be an associative array
+            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,       //make the default fetch be an associative array
         ];
         try {
             $this->db = new \PDO($dsn, env('MY_DB_USER'), env('MY_DB_PASSWORD'), $options);
@@ -35,36 +43,38 @@ class Config
         }
 
         if ($this->db) {
-            echo "\033[32mDatabase found: ".env('MY_DB_NAME')."\r\n\033[31m";
+            echo $this->greenAccent . "Database found: " . env('MY_DB_NAME') . "" . $this->cr;
         } else {
-            echo "\033[31mDatabase error, please check your .env file (MY_DB_...)\r\n";
+            echo $this->redAccent . "Database error, please check your .env file (MY_DB_...)" . $this->cr;
             exit(false);
         }
 
         if (isset($params[1]) && $params[1] == 'clean') {
-            echo "\033[32mCleaning\r\n\033[31m";
+            echo $this->greenAccent . "Cleaning" . $this->cr;
             $this->drop_table = true;
         }
 
-        if (!$this->checkBaseData()) {
+        if (! $this->checkBaseData()) {
             $this->runSql();
             $this->runCustomSql();
-            //$this->setAdminUser();
+            $this->setAdminUser();
         } else {
-            echo "\033[32mAlready deployed\r\n\033[31m";
-            
+            echo $this->redAccent . "Already deployed" . $this->cr;
+
         }
-        echo "\033[32mOverwriting config...\r\n\033[31m";
+        echo "Overwriting config..." . $this->cr;
         $this->writeConfig();
-        chmod($this->build_path."public/css/", 0777);
-        chmod($this->build_path."public/js/", 0777);
+        chmod($this->build_path . "public/css/", 0777);
+        chmod($this->build_path . "public/js/", 0777);
     }
 
     private function runSql()
     {
         if (file_exists($this->build_path . 'config/Built/schema.sql')) {
-            $restore = "/usr/bin/mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "config/Built/schema.sql 2>&1";
+            $restore = "mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "config/Built/schema.sql 2>&1";
             return $this->run($restore, "SQL");
+        } else {
+            echo $this->redAccent . "Base Sql not found: " . $this->build_path . "config/Built/schema.sql" . $this->cr;
         }
     }
 
@@ -72,28 +82,29 @@ class Config
     {
         exec($cmd . " 2>&1", $outputRs, $return_var);
 
+        echo "* " . $cmd . $this->cr;
         if ($return_var) {
-            echo "\033[31m$label: NOT OK\r\n";
+            echo $this->redAccent . $label . ": NOT OK" . $this->cr;
         } else {
-            echo "\033[32m$label: OK\r\n\033[31m";
+            echo $this->greenAccent . "$label: OK" . $this->cr;
         }
     }
 
     public function runCustomSql()
     {
-        if (file_exists($this->build_path . 'config/Built/basedata.sql') && !$this->checkBaseData()) {
-            $restore = "/usr/bin/mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "config/Built/basedata.sql 2>&1";
+        if (file_exists($this->build_path . 'config/Built/basedata.sql') && ! $this->checkBaseData()) {
+            $restore = "mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "config/Built/basedata.sql 2>&1";
             $this->run($restore, "Additionnal SQL (base)");
         }
 
-        echo "\033[32mChecking '" . $this->build_path . "tmp/' for additionnal SQL :\r\n";
+        echo "Checking '" . $this->build_path . "tmp/' for additionnal SQL :" . $this->cr;
         if (file_exists($this->build_path . 'tmp/')) {
             if ($handle = opendir($this->build_path . 'tmp/')) {
                 while (false !== ($filename = readdir($handle))) {
                     if (strstr($filename, 'custom') && substr($filename, strrpos($filename, '.')) == '.sql') {
 
-                        echo "\033[32mFound custom SQL : " . $filename."\r\n";
-                        $restore = "/usr/bin/mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "tmp/" . $filename . " 2>&1";
+                        echo $this->greenAccent . "Found custom SQL : " . $filename . $this->cr;
+                        $restore = "mysql -f -u " . env('MY_DB_USER') . " --password=" . env('MY_DB_PASSWORD') . " " . env('MY_DB_NAME') . " < " . $this->build_path . "tmp/" . $filename . " 2>&1";
                         $this->run($restore, "Additionnal SQL");
                     }
                 }
@@ -103,22 +114,25 @@ class Config
         return false;
     }
 
-    public function setAdminUser($password=null){
-        $stmt = $this->db->prepare ("SELECT id_authy FROM authy WHERE is_system = ?");
+    public function setAdminUser($password = null)
+    {
+        $stmt = $this->db->prepare("SELECT id_authy FROM authy WHERE is_system = ?");
         $stmt->execute(['1']);
         $users = $stmt->rowCount();
 
         if ($users > 0) {
-            $stmt = $this->db->prepare ("INSERT INTO `authy` ( `username`, `fullname`, `email`, `passwd_hash`, `expire`, `deactivate`, `is_root`, `id_authy_group`, `is_system`, `date_creation`, `date_modification`, `id_group_creation`, `id_creation`, `id_modification`) VALUES (
-                ?,?, ?,?, ?,?, ?,?, ?,?, ?,?, ?,? )", [ 
+            $stmt = $this->db->prepare("INSERT INTO `authy` ( `username`, `fullname`, `email`, `passwd_hash`, `expire`, `deactivate`, `is_root`, `id_authy_group`, `is_system`, `date_creation`, `date_modification`, `id_group_creation`, `id_creation`, `id_modification`) VALUES (
+                ?,?, ?,?, ?,?, ?,?, ?,?, ?,?, ?,? )", [
             ]);
-            $stmt->execute(['apigoat', 'System user', 'info@apigoat.com', md5($password), null, '1', '1', '2', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), null, null, null]);
-            if ($this->db->lastInsertId())
-                echo "\033[32mCreate Admin user: OK\r\n";
-            else
-                echo "\033[31mCreate Admin user: NOT OK (" . $this->db->errorInfo().")\r\n";
+            $stmt->execute([env('ROOT_USER'), 'System user', 'info@apigoat.com', md5(env('ROOT_PASSWORD')), null, '1', '1', '2', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), null, null, null]);
+            if ($this->db->lastInsertId()) {
+                echo $this->greenAccent . "Create Admin user: OK" . $this->cr;
+            } else {
+                echo $this->redAccent . "Create Admin user: NOT OK (" . $this->db->errorInfo() . ")" . $this->cr;
+            }
+
         } else {
-            echo "\033[32mCreate Admin user: OK\r\n";
+            echo $this->greenAccent . "Create Admin user: OK" . $this->cr;
         }
     }
 
@@ -128,15 +142,15 @@ class Config
             return false;
         }
         try {
-            $stmt = $this->db->prepare ("SELECT config FROM config WHERE config = ?");
+            $stmt = $this->db->prepare("SELECT config FROM config WHERE config = ?");
             $stmt->execute(['app_name']);
             $app_name = $stmt->rowCount();
-            
+
             if ($app_name > 0) {
                 return true;
             }
             return false;
-        }catch(\Exception $e){
+        } catch (\Exception $e) {
             return false;
         }
     }
@@ -144,21 +158,20 @@ class Config
     private function writeConfig()
     {
         if (substr(env("MY_PROJECT_URL"), -1) != '/') {
-            $project_url = env("MY_PROJECT_URL").DIRECTORY_SEPARATOR.".admin".DIRECTORY_SEPARATOR;
+            $project_url = env("MY_PROJECT_URL") . DIRECTORY_SEPARATOR . ".admin" . DIRECTORY_SEPARATOR;
         } else {
-            $project_url = env("MY_PROJECT_URL").".admin".DIRECTORY_SEPARATOR;
+            $project_url = env("MY_PROJECT_URL") . ".admin" . DIRECTORY_SEPARATOR;
         }
         $project_name = 'myproject1';
 
-        $authvar = substr(md5(env("MY_PROJECT_URL") . $project_name . random_int(1, 9999)), 5, 10);
-		$cryptkey = substr(md5($project_name), 0, 8) . substr(md5(env('MY_DB_USER')), 10, 8);
-		$cryptiv = substr(md5(env("MY_PROJECT_URL")), 5, 8) . substr(md5($project_name), 7, 8);
+        $authvar        = substr(md5(env("MY_PROJECT_URL") . $project_name . random_int(1, 9999)), 5, 10);
+        $this->cryptkey = substr(md5($project_name), 0, 8) . substr(md5(env('MY_DB_USER')), 10, 8);
+        $this->cryptiv  = substr(md5(env("MY_PROJECT_URL")), 5, 8) . substr(md5($project_name), 7, 8);
 
-        $db_host = env("MY_DB_HOST");
-        $db_name = env("MY_DB_NAME");
-        $db_user = env("MY_DB_USER");
+        $db_host     = env("MY_DB_HOST");
+        $db_name     = env("MY_DB_NAME");
+        $db_user     = env("MY_DB_USER");
         $db_paddword = env("MY_DB_PASSWORD");
-
 
         $script = <<<EOS
 <?php
@@ -182,10 +195,10 @@ if (php_sapi_name() != 'cli') {
     "_SITE_TITLE" => "",
 	"_SUB_DIR_URL" => \$subdir_url,	 # Routes prefix
     "_ASSET_RELATIVE_PATH" => "",
-    "_BASE_DIR" => realpath("{$this->build_path}").DIRECTORY_SEPARATOR, 
+    "_BASE_DIR" => realpath("{$this->build_path}").DIRECTORY_SEPARATOR,
     "_AUTH_VAR" => "$authvar",
-    "_CRYPT_KEY" => "$cryptkey",
-    "_CRYPT_IV" => "$cryptiv",
+    "_CRYPT_KEY" => "$this->cryptkey",
+    "_CRYPT_IV" => "$this->cryptiv",
 ];
 
 \$locales = [
@@ -204,7 +217,7 @@ if(!isset(\$skipConfig)){
 	} else {
         define("_SITE_URL", "");
     }
-    
+
 	define("_SRC_URL", _SITE_URL);
 
     define("_INSTALL_PATH", "{$this->build_path}");
@@ -221,19 +234,23 @@ if(!isset(\$skipConfig)){
 }
 EOS;
 
-    file_put_contents($this->build_path.'config/Built/config.php', $script);
+        $ret = file_put_contents($this->build_path . 'config/Built/config.php', $script);
+        echo "* " . $this->build_path . "config/Built/config.php" . $this->cr;
+        if ($ret) {
+            echo $this->redAccent . "Error writing file ($ret)" . $this->cr;
+        }
 
-     $script = <<<EOS
+        $script = <<<EOS
 <?php
 // This file generated by Propel 1.7.3-dev convert-conf target
 // from XML runtime conf file /var/www/gc/p/myproject1/.admin/runtime-conf.xml
 \$conf = array (
-  'datasources' => 
+  'datasources' =>
   array (
-    'myproject1' => 
+    'myproject1' =>
     array (
       'adapter' => 'mysql',
-      'connection' => 
+      'connection' =>
       array (
         'dsn' => 'mysql:host=$db_host;dbname=$db_name;charset=utf8;',
         'user' => '$db_user',
@@ -248,8 +265,8 @@ EOS;
 return \$conf;
 EOS;
 
-    file_put_contents($this->build_path.'config/Built/db.php', $script);
-
+        file_put_contents($this->build_path . 'config/Built/db.php', $script);
+        echo "* $this->build_path.'config/Built/db.php" . $this->cr;
     }
 
 }
