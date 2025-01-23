@@ -20,9 +20,9 @@ class Config
             $this->cr = PHP_EOL . "<br/>";
         }
 
-        echo "Setting things up" . $this->cr;
-
         $this->build_path = realpath(getcwd() . "/../");
+        echo "Setting things up @ $this->build_path" . $this->cr;
+
         try {
             (new Loader)->load(getcwd() . '/../../.env');
         } catch (\Exception $e) {
@@ -57,11 +57,13 @@ class Config
         if (! $this->checkBaseData()) {
             $this->runSql();
             $this->runCustomSql();
-            $this->setAdminUser();
         } else {
             echo $this->redAccent . "Already deployed" . $this->cr;
-
         }
+
+        echo "Setting user..." . $this->cr;
+        $this->setAdminUser();
+
         echo "Overwriting config..." . $this->cr;
         $this->writeConfig();
         chmod($this->build_path . "public/css/", 0777);
@@ -116,23 +118,28 @@ class Config
 
     public function setAdminUser($password = null)
     {
-        $stmt = $this->db->prepare("SELECT id_authy FROM authy WHERE is_system = ?");
-        $stmt->execute(['1']);
+        $stmt = $this->db->prepare("SELECT id_authy FROM authy WHERE is_system = ? AND username = ?");
+        $stmt->execute(['1', env('ROOT_USER')]);
         $users = $stmt->rowCount();
 
         if ($users > 0) {
+            $stmt = $this->db->prepare("UPDATE `authy` SET  `username` = ?, `passwd_hash` = ? ", []);
+            $stmt->execute([env('ROOT_USER'), md5(env('ROOT_PASSWORD'))]);
+            if ($stmt->rowCount()) {
+                echo $this->greenAccent . "Update Admin user: OK" . $this->cr;
+            } else {
+                echo $this->redAccent . "Update Admin user: NOT OK (" . $this->db->errorInfo() . ")" . $this->cr;
+            }
+        } else {
             $stmt = $this->db->prepare("INSERT INTO `authy` ( `username`, `fullname`, `email`, `passwd_hash`, `expire`, `deactivate`, `is_root`, `id_authy_group`, `is_system`, `date_creation`, `date_modification`, `id_group_creation`, `id_creation`, `id_modification`) VALUES (
                 ?,?, ?,?, ?,?, ?,?, ?,?, ?,?, ?,? )", [
             ]);
-            $stmt->execute([env('ROOT_USER'), 'System user', 'info@apigoat.com', md5(env('ROOT_PASSWORD')), null, '1', '1', '2', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), null, null, null]);
+            $stmt->execute([env('ROOT_USER'), 'Root user', 'info@apigoat.com', md5(env('ROOT_PASSWORD')), null, '1', '1', '2', '1', date('Y-m-d H:i:s'), date('Y-m-d H:i:s'), null, null, null]);
             if ($this->db->lastInsertId()) {
                 echo $this->greenAccent . "Create Admin user: OK" . $this->cr;
             } else {
                 echo $this->redAccent . "Create Admin user: NOT OK (" . $this->db->errorInfo() . ")" . $this->cr;
             }
-
-        } else {
-            echo $this->greenAccent . "Create Admin user: OK" . $this->cr;
         }
     }
 
@@ -234,11 +241,11 @@ if(!isset(\$skipConfig)){
 }
 EOS;
 
-        $ret = file_put_contents($this->build_path . 'config/Built/config.php', $script);
-        echo "* " . $this->build_path . "config/Built/config.php" . $this->cr;
-        if ($ret) {
+        $ret = file_put_contents($this->build_path . '/config/Built/config.php', $script);
+        echo "* " . $this->build_path . "/config/Built/config.php" . $this->cr;
+        /* if ($ret) {
             echo $this->redAccent . "Error writing file ($ret)" . $this->cr;
-        }
+        }*/
 
         $script = <<<EOS
 <?php
@@ -265,8 +272,8 @@ EOS;
 return \$conf;
 EOS;
 
-        file_put_contents($this->build_path . 'config/Built/db.php', $script);
-        echo "* $this->build_path.'config/Built/db.php" . $this->cr;
+        file_put_contents($this->build_path . '/config/Built/db.php', $script);
+        echo "* $this->build_path.'/config/Built/db.php" . $this->cr;
     }
 
 }
