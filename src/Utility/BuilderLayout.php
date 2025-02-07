@@ -1,5 +1,4 @@
 <?php
-
 namespace ApiGoat\Utility;
 
 use Selective\Config\Configuration;
@@ -19,16 +18,15 @@ class BuilderLayout
     private $settings;
     private $js;
 
-
     function __construct(BuilderMenus $BuilderMenus)
     {
         include _BASE_DIR . 'config/assets.php';
-        $Config = new Configuration(require _BASE_DIR . 'config/settings.php');
-        $this->settings = $Config->getArray('admin_panel');
-        $siteDescription = '';
-        $siteKeywords = '';
-        $favicon = '';
-        $headAuthor = '';
+        $Config             = new Configuration(require _BASE_DIR . 'config/settings.php');
+        $this->settings     = $Config->getArray('admin_panel');
+        $siteDescription    = '';
+        $siteKeywords       = '';
+        $favicon            = '';
+        $headAuthor         = '';
         $this->builderMenus = $BuilderMenus;
 
         $this->incCss = $Assets->css() . $AssetsAdmin->css();
@@ -47,61 +45,66 @@ class BuilderLayout
     {
         $this->title = $title;
     }
-    
+
     /**
      * renderXHR
      *
      * @param  array|string $content
      * @return string
-     * 
+     *
      * ['html' => '', 'js' => '', 'onReadyJs' => '']
      */
     public function renderXHR($content)
     {
-        if (!empty($content['html']) || !empty($content['js']) || !empty($content['onReadyJs'])) {
+        if (empty($content)) {
+            return "The response is empty.";
+        }
+
+        if (! empty($content['html']) || ! empty($content['js']) || ! empty($content['onReadyJs'])) {
             return $content['html'] . ($content['js'] ?? '')
-                . scriptReady(trim($content['onReadyJs']));
+            . scriptReady(trim($content['onReadyJs']));
         } else {
-            if (!empty($content) && !is_array($content)) {
+            if (! is_array($content)) {
                 return $content;
+            } else {
+                return json_encode($content);
             }
         }
-        return "The response is empty.";
+
     }
 
     public function renderLogin($content)
     {
         $print =
-            docType()
-            . htmlTag(
-                $this->htmlHeader
-                . body(
-                    div(
-                        div('', "loader", " class='hide' ")
-                        . div(
-                            div(
-                                div($content['html'], 'mainContent', "class=''"),
-                                "centered",
-                                "style='width:100%;position:relative;text-align:center;margin:auto;'"
-                            )
-                            . div("", '', "class='wCtFooter' style=''"),
-                            'fullWH2',
-                            "style='width:100%;height:100%;'"
-                        ),
-                        'fullWH',
+        docType()
+        . htmlTag(
+            $this->htmlHeader
+            . body(
+                div(
+                    div('', "loader", " class='hide' ")
+                    . div(
+                        div(
+                            div($content['html'], 'mainContent', "class=''"),
+                            "centered",
+                            "style='width:100%;position:relative;text-align:center;margin:auto;'"
+                        )
+                        . div("", '', "class='wCtFooter' style=''"),
+                        'fullWH2',
                         "style='width:100%;height:100%;'"
                     ),
-                    " id='body' class=''"
+                    'fullWH',
+                    "style='width:100%;height:100%;'"
                 ),
-                " id='html' "
-            )
-            . $content['js']
-            . scriptReady(trim($content['onReadyJs']));
-
+                " id='body' class=''"
+            ),
+            " id='html' "
+        )
+        . $content['js']
+        . scriptReady(trim($content['onReadyJs']));
 
         return $print;
     }
-    
+
     /**
      * render
      *
@@ -116,58 +119,58 @@ class BuilderLayout
         }
 
         $print =
-            docType()
-            . htmlTag(
-                $this->htmlHeader
-                . body(
+        docType()
+        . htmlTag(
+            $this->htmlHeader
+            . body(
+                div(
                     div(
                         div(
                             div(
-                                div(
-                                    //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
-                                    $this->getTopNav(),
-                                    '',
-                                    'class="top-nav"'
-                                )
-                                . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
+                                //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
+                                $this->getTopNav(),
                                 '',
-                                'class="left-panel-content" '
-                            ),
+                                'class="top-nav"'
+                            )
+                            . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
                             '',
-                            'class="left-panel-wrapper" '
+                            'class="left-panel-content" '
                         ),
                         '',
-                        'class="left-panel" '
-                    )
-                    . div(
-                        div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
-                        . div('', 'editPane', 'class="edit-pane-hidden"'),
-                        '',
-                        'class="center-panel"'
-                    )
+                        'class="left-panel-wrapper" '
+                    ),
+                    '',
+                    'class="left-panel" '
+                )
+                . div(
+                    div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
+                    . div('', 'editPane', 'class="edit-pane-hidden"'),
+                    '',
+                    'class="center-panel"'
+                )
 
-                    . div('', 'editDialog', 'style=""')
-                    . div('', 'editPopupDialog', 'style="d" ')
-                    . div(
-                        div(p('', "id='confirm_text'"), '', "class='mainForm'"),
-                        'confirmDialog'
-                    )
-                    . div(
-                        div(p('', "id='alert_text'"), '', "class='mainForm'"),
-                        'alertDialog'
-                    )
+                . div('', 'editDialog', 'style=""')
+                . div('', 'editPopupDialog', 'style="d" ')
+                . div(
+                    div(p('', "id='confirm_text'"), '', "class='mainForm'"),
+                    'confirmDialog'
+                )
+                . div(
+                    div(p('', "id='alert_text'"), '', "class='mainForm'"),
+                    'alertDialog'
+                )
 
-                    . $this->js,
-                    " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "' style='height:100%;'"
-                ),
-                " id='html_build' "
-            )
-            . (isset($content['js'])?$content['js']:'')
-            . scriptReady((isset($content['onReadyJs'])?trim($content['onReadyJs']):''));
+                . $this->js,
+                " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "' style='height:100%;'"
+            ),
+            " id='html_build' "
+        )
+        . (isset($content['js']) ? $content['js'] : '')
+        . scriptReady((isset($content['onReadyJs']) ? trim($content['onReadyJs']) : ''));
 
         return $print;
     }
-    
+
     /**
      * getTopNav
      *
@@ -176,8 +179,8 @@ class BuilderLayout
     public function getTopNav()
     {
 
-        $menus = ['profil', 'support', 'dashboard'];
-        $items = '';
+        $menus    = ['profil', 'support', 'dashboard'];
+        $items    = '';
         $settings = $this->settings['top_nav'];
         foreach ($menus as $menu) {
             if (isset([$menu]['url'])) {
@@ -186,7 +189,7 @@ class BuilderLayout
         }
 
         return ul(
-            li(href(img(_SITE_URL.vendor_logo), vendor_url, 'class="logo-wrapper"'))
+            li(href(img(_SITE_URL . vendor_logo), vendor_url, 'class="logo-wrapper"'))
             . li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
             . $items
             . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
@@ -217,9 +220,9 @@ class BuilderLayout
     {
         switch ($options['type']) {
             case 'warning':
-                $head = div(h3('Warning'), '', "class='box-header'");
+                $head         = div(h3('Warning'), '', "class='box-header'");
                 $contentClass = 'box';
-                $bodyClass = 'bodybg';
+                $bodyClass    = 'bodybg';
                 break;
         }
 
@@ -229,30 +232,30 @@ class BuilderLayout
 
         if ($content) {
             $content =
-                docType()
-                . htmlTag(
-                    $this->htmlHeader
-                    . body(
-                        div(
-                            $options['top']
-                            . $head
-                            . div(
-                                div($content, '', "style='" . $options['content-style'] . "'")
-                                . $options['bottom-inner'],
-                                '',
-                                "class='centered75 box-body'"
-                            )
-                            . $options['bottom'],
+            docType()
+            . htmlTag(
+                $this->htmlHeader
+                . body(
+                    div(
+                        $options['top']
+                        . $head
+                        . div(
+                            div($content, '', "style='" . $options['content-style'] . "'")
+                            . $options['bottom-inner'],
                             '',
-                            "class='mainContent {$contentClass}'"
-                        ),
-                        "class='{$bodyClass}'"
-                    )
-                );
+                            "class='centered75 box-body'"
+                        )
+                        . $options['bottom'],
+                        '',
+                        "class='mainContent {$contentClass}'"
+                    ),
+                    "class='{$bodyClass}'"
+                )
+            );
         }
         return $content;
     }
-    
+
     /**
      * decoratedForm
      *
@@ -261,17 +264,17 @@ class BuilderLayout
      * @param  array $options ['addSave', 'idPk', 'idParent', 'destUi', 'onSave', 'button']
      * @return string
      */
-    static function decoratedForm($content, $name, $options = [])
+    public static function decoratedForm($content, $name, $options = [])
     {
-        if (!empty($options['addSave']) || !empty($options['onSave'])) {
-            $buttonName = (!empty($options['button'])) ? $options['button'] : 'Save';
-        $formSaveBar = div(	
-                    div( input('button', "save$name", _($buttonName),' class="button-link-blue can-save"')
-                        .input('hidden', "formChanged$name",'', 'j="formChanged"')
-                        .input('hidden', 'idPk', urlencode($options['idPk']), "s='d'")
-                        .input('hidden', 'idParent', $options['idParent'], " s='d' pk")
-                    ,"", " class='divtd' colspan='2' style='text-align:right;'")
-                ,""," class='divtr divbut' ");
+        if (! empty($options['addSave']) || ! empty($options['onSave'])) {
+            $buttonName  = (! empty($options['button'])) ? $options['button'] : 'Save';
+            $formSaveBar = div(
+                div(input('button', "save$name", _($buttonName), ' class="button-link-blue can-save"')
+                    . input('hidden', "formChanged$name", '', 'j="formChanged"')
+                    . input('hidden', 'idPk', urlencode($options['idPk']), "s='d'")
+                    . input('hidden', 'idParent', $options['idParent'], " s='d' pk")
+                    , "", " class='divtd' colspan='2' style='text-align:right;'")
+                , "", " class='divtr divbut' ");
 
             if ($options['addSave'] == 'yes') {
                 $editEvent = "$('#form" . $name . " #save" . $name . "').bindSave({
@@ -285,17 +288,16 @@ class BuilderLayout
                                     dialog:'" . $options['dialog'] . "'
                                 });";
             } else {
-                $editEvent = "$('#form" . $name . " #save" . $name . "').bind('click.save$name', (data)=>{".$options['onSave']."});";
+                $editEvent = "$('#form" . $name . " #save" . $name . "').bind('click.save$name', (data)=>{" . $options['onSave'] . "});";
             }
         }
-       
 
         return form(
             div(
                 $content
-                .$formSaveBar
-            ,"divCnt$name", "class='divStdform'")
-        , "id='form$name' class='mainForm formContent' ")
-        .scriptReady($editEvent);
+                . $formSaveBar
+                , "divCnt$name", "class='divStdform'")
+            , "id='form$name' class='mainForm formContent' ")
+        . scriptReady($editEvent);
     }
 }
