@@ -33,6 +33,7 @@ class AuthySession
     public $username = null;
     public $IdPrimaryGroup = null;
     public $menuAccess = null;
+    public $aclGroup  = null;
 
 
     function __construct()

@@ -23,6 +23,9 @@ class WelcomeService extends Service
             $this->View = new WelcomeView($request, $args);
         } else {
             $this->View = new DashboardView($request, $args);
+            if(!$this->View->override){
+                $this->View = new WelcomeView($request, $args);
+            }
         }
         
     }
