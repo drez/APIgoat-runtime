@@ -57,7 +57,7 @@ class BuilderReturn
     {
         $returnfunc = $this->returnFunction;
 
-        if ($this->inError()) {
+        if (!empty($this->inError())) {
             $this->return_error();
         } else {
             $this->$returnfunc();
@@ -107,14 +107,16 @@ class BuilderReturn
             switch ($this->request['jet']) {
                 case 'refreshChild':
                     $child = ($this->request['data']['tp']) ? $this->request['data']['tp'] : $this->request['p'];
+                    $close_dialog = ($this->request['data']['no_close']) ?'': "$('#{$this->request['ui']}').dialog('close');";
                     $action_success =
                         "$.get('" . _SITE_URL . "{$this->request['data']['pc']}/{$child}/{$this->request['data']['ip']}', { ui: '{$this->request['data']['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['data']['pc']}'}, function(data){
                             $('#cnt{$this->request['pc']}Child').html(data);
                             $('[j=conglet_{$this->request['data']['pc']}]').parent().attr('class','ui-corner-top ui-state-default');
                             $('[j=conglet_{$this->request['data']['pc']}][p={$this->request['data']['tp']}]').parent().addClass('ui-state-active');
-                         });"
-                        . "$('body').css('cursor', 'auto');"
-                        . "$('#{$this->request['ui']}').dialog('close');";
+                        });
+                        $('body').css('cursor', 'auto');
+                        $close_dialog
+                        ";
 
                     break;
                 case 'createReload':
