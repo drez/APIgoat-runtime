@@ -17,6 +17,7 @@ class BuilderLayout
     private $htmlHeader;
     private $settings;
     private $js;
+    public $showLeftPannel = true;
 
     function __construct(BuilderMenus $BuilderMenus)
     {
@@ -118,35 +119,45 @@ class BuilderLayout
             return "Response is empty, does the service exists?";
         }
 
+        $leftPannel = '';
+        $pannelStylesOverride = '';
+
+        if($this->showLeftPannel){
+             $leftPannel = div(
+            div(
+                div(
+                    div(
+                        //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
+                        $this->getTopNav(),
+                        '',
+                        'class="top-nav"'
+                    )
+                    . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
+                    '',
+                    'class="left-panel-content" '
+                ),
+                '',
+                'class="left-panel-wrapper" '
+            ),
+            '',
+            'class="left-panel" '
+        );
+        }else{
+            $pannelStylesOverride = "style='width: 100%;transform: none;'";
+        }
+       
+
         $print =
         docType()
         . htmlTag(
             $this->htmlHeader
             . body(
-                div(
-                    div(
-                        div(
-                            div(
-                                //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
-                                $this->getTopNav(),
-                                '',
-                                'class="top-nav"'
-                            )
-                            . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
-                            '',
-                            'class="left-panel-content" '
-                        ),
-                        '',
-                        'class="left-panel-wrapper" '
-                    ),
-                    '',
-                    'class="left-panel" '
-                )
+                $leftPannel
                 . div(
                     div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
                     . div('', 'editPane', 'class="edit-pane-hidden"'),
                     '',
-                    'class="center-panel"'
+                    'class="center-panel" '.$pannelStylesOverride
                 )
 
                 . div('', 'editDialog', 'style=""')

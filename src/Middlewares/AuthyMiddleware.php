@@ -49,12 +49,9 @@ class AuthyMiddleware implements MiddlewareInterface
                 $_SESSION[_AUTH_VAR]->set('connected', 'NO');
             }
 
-            if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES') {
+            if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
 
-                if (
-                    $this->args['route'] != 'Authy/login' && $this->args['route'] != 'Authy/auth' && $this->args['route'] != 'Authy/reset'
-                    && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth"
-                ) {
+                if (strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
                     $response = new Response();
                     return $response->withHeader('Location', _SUB_DIR_URL . 'Authy/login')->withStatus(301);
                 } else {
@@ -70,7 +67,7 @@ class AuthyMiddleware implements MiddlewareInterface
 
         $this->checkUserSwitch($request);
 
-        $access = $this->checkPrivileges($request);
+       // $access = $this->checkPrivileges($request);
         if (false !== $access) {
             // access denied
             if ($access instanceof InvalidSessionRenderer) {
@@ -114,24 +111,39 @@ class AuthyMiddleware implements MiddlewareInterface
         }
     }
 
+    /**
+     * Summary of checkPrivileges
+     * @param mixed $request
+     * @return bool|InvalidSessionRenderer
+     * Return false if no privileges are required
+     */
     private function checkPrivileges($request)
     {
+
+        // public route
+        if ($this->checkExclude($this->args['route'])) {
+            return false;
+        }
+
+        if($_SESSION[_AUTH_VAR]->get('connected') != 'YES'){
+            return true;
+        }
 
         if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
             return false;
         }
 
-        if ($this->checkExclude($this->args['route'])) {
-            return false;
-        }
-
         $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
         if ($requiredPrivileges === false) {
-                                                        // custom privileges
+            // custom privileges
             $model              = $this->args['model']; // . '-' . $this->args['action'];
             $requiredPrivileges = 'r';
         } else {
             $model = $this->args['model'];
+        }
+
+        if(empty($model)){
+            return false;
         }
 
         if (! empty($requiredPrivileges)) {
