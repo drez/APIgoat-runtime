@@ -38,7 +38,25 @@ class BuilderLayout
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
 </script>";
 
-        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
+        // PWA meta tags and icons for iOS / Android / Windows
+        $pwaHeaders = '
+<style>html{background-color:#ffffff}</style>
+<link rel="manifest" href="' . _SITE_URL . 'manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="apple-touch-icon" sizes="152x152" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="apple-touch-icon" sizes="167x167" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="apple-touch-icon" sizes="120x120" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="icon" type="image/png" sizes="512x512" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="icon" type="image/png" sizes="192x192" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AExpert">
+<meta name="theme-color" content="#ffffff">
+<meta name="msapplication-TileImage" content="' . _SITE_URL . 'public/img/windows/Square150x150Logo.scale-200.png">
+<meta name="msapplication-TileColor" content="#ffffff">
+';
+
+        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $pwaHeaders . $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
 
     }
 
@@ -119,6 +137,16 @@ class BuilderLayout
             return "Response is empty, does the service exists?";
         }
 
+        $pageLoader = '<div id="pageLoader" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#667eea;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.3s ease;">
+<img src="' . _SITE_URL . 'public/img/ios/512.png" style="width:80px;height:80px;border-radius:18px;box-shadow:0 4px 20px rgba(0,0,0,0.25);margin-bottom:18px;" alt="">
+<div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:pl-spin 0.8s linear infinite;"></div>
+</div>
+<style>@keyframes pl-spin{to{transform:rotate(360deg)}}</style>
+<script>
+window.addEventListener("load",function(){var l=document.getElementById("pageLoader");if(l){l.style.opacity="0";setTimeout(function(){l.style.display="none";document.documentElement.style.backgroundColor="";},300);}});
+if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.serviceWorker.addEventListener("message",function(e){if(e.data&&e.data.type==="SW_AUTH_RELOAD")window.location.reload();});}
+</script>';
+
         $leftPannel = '';
         $pannelStylesOverride = '';
 
@@ -152,7 +180,8 @@ class BuilderLayout
         . htmlTag(
             $this->htmlHeader
             . body(
-                $leftPannel
+                $pageLoader
+                . $leftPannel
                 . div(
                     div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
                     . div('', 'editPane', 'class="edit-pane-hidden"'),

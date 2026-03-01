@@ -185,7 +185,7 @@ class Config
 ini_set('memory_limit', '128M');
 
 if (php_sapi_name() != 'cli') {
-	\$subdir_url = str_replace((isset(\$_SERVER['HTTPS']) && \$_SERVER['HTTPS'] != 'off' ? 'https' : 'http').'://' . \$_SERVER['SERVER_NAME'], '', "$project_url") ;
+	\$subdir_url = parse_url(env('MY_PROJECT_URL') . DIRECTORY_SEPARATOR, PHP_URL_PATH);
 } else {
 	\$subdir_url = "";
 }

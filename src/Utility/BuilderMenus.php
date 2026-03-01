@@ -40,16 +40,16 @@ class BuilderMenus
 
         foreach ($menus as $item) {
             if ($item['parent_menu']) {
-                $Menu->addUnder($item['parent_menu'], $item['desc'], $item['name'], $item['index']);
+                $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index']);
                 $parents[$item['parent_menu']] = true;
             } else {
-                $Menu->addItem($item['desc'], $item['name']);
+                $Menu->addItem(_($item['desc']), $item['name']);
                 unset($parents[$item['name']]);
             }
         }
 
         foreach ($parents as $name => $parent) {
-            $Menu->addItem($name, $name);
+            $Menu->addItem(_($name), $name);
         }
 
 

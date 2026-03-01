@@ -551,7 +551,7 @@ class Assets
     protected function pipeline(array $assets, $extension, $subdirectory, \Closure $minifier)
     {
         // Create destination dir if it doesn't exist.
-        $pipeline_dir = _BASE_DIR . $subdirectory . DIRECTORY_SEPARATOR . $this->pipeline_dir;
+        $pipeline_dir = _BASE_DIR . $subdirectory . (empty($this->pipeline_dir) ? '' : DIRECTORY_SEPARATOR . $this->pipeline_dir);
 
         if (! is_dir($pipeline_dir)) {
             mkdir($pipeline_dir, 0777, true);
@@ -560,7 +560,7 @@ class Assets
         // Generate paths
         $filename = $this->calculatePipelineHash($assets) . ".min" . $extension;
 
-        $relative_path = "$subdirectory/{$this->pipeline_dir}/$filename";
+        $relative_path = empty($this->pipeline_dir) ? "$subdirectory/$filename" : "$subdirectory/{$this->pipeline_dir}/$filename";
 
         $absolute_path = realpath($pipeline_dir) . DIRECTORY_SEPARATOR . $filename;
         // If pipeline already exists return it
