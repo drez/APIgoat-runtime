@@ -52,6 +52,11 @@ class AuthyMiddleware implements MiddlewareInterface
             if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
 
                 if (strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
+                    if ($request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
+                        $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
+                        $ApiResponse->setStatus(401);
+                        return $ApiResponse->getResponse();
+                    }
                     $response = new Response();
                     return $response->withHeader('Location', _SUB_DIR_URL . 'Authy/login')->withStatus(301);
                 } else {

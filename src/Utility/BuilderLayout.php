@@ -34,7 +34,11 @@ class BuilderLayout
         if (defined('_TITLE_PREFIX')) {
             $this->title = _TITLE_PREFIX . " / " . $siteTitle;
         }
-        $headjs = "<script type='text/javascript'>
+        $csrfMeta = '';
+        if (defined('_AUTH_VAR') && isset($_SESSION[_AUTH_VAR]) && is_object($_SESSION[_AUTH_VAR]) && method_exists($_SESSION[_AUTH_VAR], 'getCsrf')) {
+            $csrfMeta = "<meta name='csrf-token' content='" . htmlspecialchars($_SESSION[_AUTH_VAR]->getCsrf(), ENT_QUOTES) . "'>\n";
+        }
+        $headjs = $csrfMeta . "<script type='text/javascript'>
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
 </script>";
 
@@ -133,6 +137,8 @@ class BuilderLayout
      */
     public function render($content)
     {
+        header('Cache-Control: no-store');
+
         if (empty($content['html'])) {
             return "Response is empty, does the service exists?";
         }
@@ -198,6 +204,18 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                 . div(
                     div(p('', "id='alert_text'"), '', "class='mainForm'"),
                     'alertDialog'
+                )
+
+                . div(
+                    div(
+                        input('hidden', 'session_expired_user', '', "id='session_expired_user'  autocomplete='off' class='sw-input' style='width:100%;margin-bottom:8px;box-sizing:border-box;'")
+                        . input('hidden', 'session_expired_pass', '', "id='session_expired_pass'  autocomplete='off' class='sw-input' style='width:100%;box-sizing:border-box;'")
+                        . div('', 'session_expired_error', "class='hide' style='color:#c0392b;margin-top:8px;font-size:0.85em;'"),
+                        '',
+                        "class='mainForm'"
+                    ),
+                    'sessionExpiredDialog',
+                    "title='" . _('Session Expired') . "'"
                 )
 
                 . $this->js,

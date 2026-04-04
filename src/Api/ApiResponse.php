@@ -104,6 +104,11 @@ class ApiResponse
     public function getResponse()
     {
         $this->response->getBody()->write(json_encode($this->body, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-        return $this->response->withStatus($this->status)->withHeader('Content-Type', 'application/json');
+        return $this->response
+            ->withStatus($this->status)
+            ->withHeader('Content-Type', 'application/json')
+            ->withHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            ->withHeader('Pragma', 'no-cache')
+            ->withHeader('Expires', 'Thu, 19 Nov 1981 08:52:00 GMT');
     }
 }

@@ -40,7 +40,7 @@ class BuilderMenus
 
         foreach ($menus as $item) {
             if ($item['parent_menu']) {
-                $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index']);
+                $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index'], $item['subtitle'] ?? null);
                 $parents[$item['parent_menu']] = true;
             } else {
                 $Menu->addItem(_($item['desc']), $item['name']);

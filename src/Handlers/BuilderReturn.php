@@ -69,7 +69,7 @@ class BuilderReturn
     private function delete_return()
     {
         $this->return['onReadyJs'] =
-        $this->message('Item deleted')
+        $this->message(_('Item deleted'))
         . "
     $('body').css('cursor', 'auto');
     $('#" . $this->request['p'] . "Table tr[rid=" . $this->request['i'] . "]').hide('slow').remove();
