@@ -116,13 +116,25 @@ class RbacMiddleware implements MiddlewareInterface
             // check for some wildcard
             $this->normalizeFilter($this->args['data']);
             $this->excludeBody();
-            $bestMatch = $this->findBestMatch();
+            // rbac excludes can clear the body; fall back to model/action/method + empty body match
+            if ($this->args['data'] === null || $this->args['data'] === '' || (is_array($this->args['data']) && $this->args['data'] === [])) {
+                $q = \App\ApiRbacQuery::create()
+                    ->filterByModel($this->args['model'])
+                    ->filterByAction($this->args['action'])
+                    ->filterByMethod($this->args['method']);
+                $q->filterByBody('')->_or()->filterByBody(null)
+                    ->orderBy('DateCreation', 'ASC');
+                $ApiRbac = $q->findOne();
+                $wildBody[0] = null;
+            } else {
+                $bestMatch = $this->findBestMatch();
 
-            if ($bestMatch) {
-                $ApiRbac = \App\ApiRbacQuery::create()->findPk($bestMatch);
+                if ($bestMatch) {
+                    $ApiRbac = \App\ApiRbacQuery::create()->findPk($bestMatch);
+                }
+                //get the wildcard rule
+                $wildBody = $this->getBodyWildcarded($this->args['data']);
             }
-            //get the wildcard rule
-            $wildBody = $this->getBodyWildcarded($this->args['data']);
         }
 
         if (!$ApiRbac) {
