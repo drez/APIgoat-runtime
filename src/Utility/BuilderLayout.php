@@ -143,11 +143,10 @@ class BuilderLayout
             return "Response is empty, does the service exists?";
         }
 
-        $pageLoader = '<div id="pageLoader" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#667eea;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.3s ease;">
-<img src="' . _SITE_URL . 'public/img/ios/512.png" style="width:80px;height:80px;border-radius:18px;box-shadow:0 4px 20px rgba(0,0,0,0.25);margin-bottom:18px;" alt="">
-<div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:pl-spin 0.8s linear infinite;"></div>
+        $pageLoader = '<div id="pageLoader" class="page-loader">
+<img src="' . _SITE_URL . 'public/img/ios/512.png" class="page-loader-logo" alt="">
+<div class="page-loader-spinner"></div>
 </div>
-<style>@keyframes pl-spin{to{transform:rotate(360deg)}}</style>
 <script>
 window.addEventListener("load",function(){var l=document.getElementById("pageLoader");if(l){l.style.opacity="0";setTimeout(function(){l.style.display="none";document.documentElement.style.backgroundColor="";},300);}});
 if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.serviceWorker.addEventListener("message",function(e){if(e.data&&e.data.type==="SW_AUTH_RELOAD")window.location.reload();});}
