@@ -24,6 +24,7 @@ class RbacMiddleware implements MiddlewareInterface
     private $rbac_id;
     private $config;
     private $rbac_rule;
+    private $raw_parameters;
 
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
@@ -36,6 +37,17 @@ class RbacMiddleware implements MiddlewareInterface
     {
         $error = [];
         $this->args = $request->getAttribute('parsed_args');
+        $this->raw_parameters = $request->getUri()->getQuery();
+        if (empty($this->raw_parameters) && isset($this->args['data']['query'])) {
+            $this->raw_parameters = json_encode($this->args['data']['query']);
+        }
+        $rawBody = (string)$request->getBody();
+        $request->getBody()->rewind();
+        if ($rawBody) {
+            $this->raw_parameters = $this->raw_parameters
+                ? $this->raw_parameters . '&body=' . rawurlencode($rawBody)
+                : $rawBody;
+        }
         if (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
 
             if ($request->getAttribute('rbac_public') === 'failed') {
@@ -76,11 +88,15 @@ class RbacMiddleware implements MiddlewareInterface
 
     private function authorizePrivateRequest($rbac_id = null)
     {
+        $idAuthy = null;
         if ($_SESSION[_AUTH_VAR]->get('connected') == 'YES') {
+            $idAuthy = $_SESSION[_AUTH_VAR]->getIdAuthy();
             if ((!empty($this->rbac_role) && $this->rbac_role != $_SESSION[_AUTH_VAR]->SessVar['IdRole']) || $this->rbac_rule == 'Deny') {
+                $this->logApi($rbac_id, $idAuthy);
                 return ['Route denied. Check your API access control.'];
             }
         } else {
+            $this->logApi($rbac_id, null);
             return ['Route denied, private route require authentication.'];
         }
 
@@ -88,7 +104,7 @@ class RbacMiddleware implements MiddlewareInterface
         if ($ApiRbac) {
             $ApiRbac->setCount($ApiRbac->getCount() + 1);
             $ApiRbac->save();
-            $this->logApi($rbac_id, $_SESSION[_AUTH_VAR]->getIdAuthy());
+            $this->logApi($rbac_id, $idAuthy);
         }
 
 
@@ -133,7 +149,10 @@ class RbacMiddleware implements MiddlewareInterface
                     $ApiRbac = \App\ApiRbacQuery::create()->findPk($bestMatch);
                 }
                 //get the wildcard rule
-                $wildBody = $this->getBodyWildcarded($this->args['data']);
+                $bodyData = is_array($this->args['data'])
+                    ? $this->args['data']
+                    : (isset($this->args['raw']) ? json_decode($this->args['raw'], true) : null);
+                $wildBody = $this->getBodyWildcarded($bodyData);
             }
         }
 
@@ -171,7 +190,10 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_role = null;
             $this->rbac_id = $ApiRbac->getPrimaryKey();
             if (\defined('app_status') && \app_status == 'dev') {
-                return false;
+                $ApiRbac->setCount($ApiRbac->getCount() + 1);
+                $ApiRbac->save();
+                // Keep private routes on the private-auth pass in dev mode too.
+                return true;
             }
             return true;
         }
@@ -183,6 +205,7 @@ class RbacMiddleware implements MiddlewareInterface
         $ApiLog->setIdApiRbac($IdApiRbac);
         $ApiLog->setIdAuthy($IdAuthy);
         $ApiLog->setTime(time());
+        $ApiLog->setRawParameters($this->raw_parameters);
         $ApiLog->save();
     }
 
