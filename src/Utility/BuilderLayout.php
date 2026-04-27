@@ -38,8 +38,10 @@ class BuilderLayout
         if (defined('_AUTH_VAR') && isset($_SESSION[_AUTH_VAR]) && is_object($_SESSION[_AUTH_VAR]) && method_exists($_SESSION[_AUTH_VAR], 'getCsrf')) {
             $csrfMeta = "<meta name='csrf-token' content='" . htmlspecialchars($_SESSION[_AUTH_VAR]->getCsrf(), ENT_QUOTES) . "'>\n";
         }
+        $vapidPublicKey = function_exists('env') ? (env('VAPID_PUBLIC_KEY') ?: '') : '';
         $headjs = $csrfMeta . "<script type='text/javascript'>
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
+    let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
 </script>";
 
         // PWA meta tags and icons for iOS / Android / Windows
