@@ -91,9 +91,29 @@ class ApiResponse
 
     private function setBody($body)
     {
-        if (is_array($body)) {
-            $this->body = $body;
+        if (!is_array($body)) {
+            return;
         }
+
+        $reserved = ['status', 'data', 'messages', 'errors'];
+
+        // Envelope-shaped body: caller already supplied a `data` key, so trust it.
+        if (array_key_exists('data', $body)) {
+            $this->body = array_merge($this->body, $body);
+            return;
+        }
+
+        // Flat-shape body (e.g. AuthyService::getToken returning {status, token, expires}):
+        // lift reserved keys to the envelope, nest everything else under `data`.
+        $envelope = $this->body;
+        foreach ($body as $k => $v) {
+            if (in_array($k, $reserved, true)) {
+                $envelope[$k] = $v;
+            } else {
+                $envelope['data'][$k] = $v;
+            }
+        }
+        $this->body = $envelope;
     }
 
     public function getQueryParam()

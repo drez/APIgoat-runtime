@@ -7,6 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #2723 | 4:45 PM | 🔵 | API detection logic looser than documented - matches any path containing 'api/' | ~517 |
-| #2709 | 4:20 PM | 🔵 | AuthyMiddleware authentication gate and route exclusion logic mapped | ~513 |
+| #2706 | 4:16 PM | 🔵 | GoatCheese build pipeline architecture mapped across three zones | ~246 |
 </claude-mem-context>
