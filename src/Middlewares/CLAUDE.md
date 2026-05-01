@@ -7,6 +7,7 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #2749 | 5:05 PM | 🔵 | API RBAC middleware with database-driven access control and request logging | ~517 |
 | #2723 | 4:45 PM | 🔵 | API detection logic looser than documented - matches any path containing 'api/' | ~517 |
 | #2709 | 4:20 PM | 🔵 | AuthyMiddleware authentication gate and route exclusion logic mapped | ~513 |
 </claude-mem-context>
