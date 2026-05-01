@@ -121,7 +121,10 @@ class OauthService extends Service
 
             $ApiResponse = new ApiResponse($this->args, $this->response, $result);
             $params = $ApiResponse->getQueryParam();
-            return $this->response->withHeader('Location', $this->config['frontend_callback_url'] . "?" . $params)->withStatus(301);
+            return $this->response
+                ->withHeader('Location', $this->config['frontend_callback_url'] . "?" . $params)
+                ->withHeader('Cache-Control', 'no-store')
+                ->withStatus(303);
         } else {
             $this->config['path'] = 'api/v1/' . $this->config['path'];
             $this->config['Strategy'] = $this->config['StrategyApi'];

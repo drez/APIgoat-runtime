@@ -58,7 +58,10 @@ class AuthyMiddleware implements MiddlewareInterface
                         return $ApiResponse->getResponse();
                     }
                     $response = new Response();
-                    return $response->withHeader('Location', _SUB_DIR_URL . 'Authy/login')->withStatus(301);
+                    return $response
+                        ->withHeader('Location', _SUB_DIR_URL . 'Authy/login')
+                        ->withHeader('Cache-Control', 'no-store')
+                        ->withStatus(303);
                 } else {
                     $response = $handler->handle($request);
                     return $response;
