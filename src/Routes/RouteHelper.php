@@ -222,9 +222,13 @@ class RouteHelper
         $ServiceClass = '\\App\\' . $this->routeName . 'ServiceWrapper';
         if (class_exists($ServiceClass)) {
             return new $ServiceClass($this->request, $response, $this->args);
-        } else {
-            throw new \Exception('Service class (' . $ServiceClass . ') not found');
         }
+        // Fall back to the bare <X>Service when no wrapper class is emitted.
+        $BareServiceClass = '\\App\\' . $this->routeName . 'Service';
+        if (class_exists($BareServiceClass)) {
+            return new $BareServiceClass($this->request, $response, $this->args);
+        }
+        throw new \Exception('Service class (' . $ServiceClass . ' or ' . $BareServiceClass . ') not found');
     }
 
     /**

@@ -46,7 +46,7 @@ class AuthyMiddleware implements MiddlewareInterface
             if (! is_object($_SESSION[_AUTH_VAR]) or (get_class($_SESSION[_AUTH_VAR]) != 'ApiGoat\Sessions\AuthySession')) {
                 unset($_SESSION[_AUTH_VAR]);
                 $_SESSION[_AUTH_VAR] = new AuthySession();
-                $_SESSION[_AUTH_VAR]->set('connected', 'NO');
+                $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
             }
 
             if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
