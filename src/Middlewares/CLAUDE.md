@@ -8,4 +8,5 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #3115 | 6:56 AM | 🔴 | Undeclared properties added to RbacMiddleware class definition | ~370 |
+| #3105 | 6:32 AM | 🔴 | SQL injection vulnerability fixed with proper parameter binding in findBestMatch | ~498 |
 </claude-mem-context>

@@ -7,5 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #3060 | 5:53 AM | 🟣 | Comprehensive API documentation audit completed with critical security findings | ~945 |
+| #3124 | 7:15 AM | ✅ | Deployed AuthyACL security fixes to 11 production projects | ~431 |
+| #3123 | 7:14 AM | 🔴 | Fixed AuthyACL compound ACL authorization bypasses | ~503 |
 </claude-mem-context>

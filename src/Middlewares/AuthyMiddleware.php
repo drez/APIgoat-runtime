@@ -104,18 +104,52 @@ class AuthyMiddleware implements MiddlewareInterface
 
     private function checkUserSwitch($request)
     {
-        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
-            if (isset($this->args['data']['iarc']) and $this->args['data']['iarc']) {
-                $q        = \App\AuthyQuery::create();
-                $authyObj = $q->findPk($this->args['data']['iarc']);
+        if (! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+            return;
+        }
 
-                if ($authyObj->getIdAuthy()) {
-                    $AuthyForm = new \App\AuthyService($request, null, $this->args['data']);
-                    $AuthyForm->setSession($authyObj, $authyObj->getUsername());
-                    $_SESSION[_AUTH_VAR]->set('isRoot', true);
-                    $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'] = $this->args['data']['iarc'];
-                }
-            }
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] = bin2hex(random_bytes(16));
+        }
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'] = $_SESSION[_AUTH_VAR]->get('id');
+        }
+
+        if (! isset($this->args['data']['iarc']) || ! $this->args['data']['iarc']) {
+            return;
+        }
+
+        $submittedCsrf = $this->args['data']['iarc_csrf'] ?? '';
+        $sessionCsrf   = (string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? '');
+        if ($submittedCsrf === '' || $sessionCsrf === '' || ! hash_equals($sessionCsrf, (string) $submittedCsrf)) {
+            error_log('iarc switch rejected: csrf mismatch from ' . $_SERVER['REMOTE_ADDR'] . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
+            return;
+        }
+
+        $authyObj = \App\AuthyQuery::create()->findPk($this->args['data']['iarc']);
+        if (! $authyObj || ! $authyObj->getIdAuthy()) {
+            return;
+        }
+
+        $originalRootId     = $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'];
+        $targetUsername     = $authyObj->getUsername();
+
+        $AuthyForm = new \App\AuthyService($request, null, $this->args['data']);
+        $AuthyForm->setSession($authyObj, $targetUsername);
+        $_SESSION[_AUTH_VAR]->set('isRoot', true);
+        $_SESSION[_AUTH_VAR]->sessVar['IdAuthy']        = $this->args['data']['iarc'];
+        $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'] = $originalRootId;
+
+        try {
+            $al = new \App\AuthyLog();
+            $al->setIp($_SERVER['REMOTE_ADDR']);
+            $al->setTimestamp(time());
+            $al->setLogin($targetUsername);
+            $al->setIdAuthy($originalRootId);
+            $al->setResult('switch');
+            $al->save();
+        } catch (\Exception $e) {
+            error_log('iarc switch audit log failed: ' . $e->getMessage());
         }
     }
 

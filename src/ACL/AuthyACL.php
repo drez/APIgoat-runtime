@@ -30,8 +30,12 @@ trait AuthyACL
             $acls = \explode("|", $acls);
             foreach ($acls as $acl) {
                 $aclAcccess = $this->hasRights($modelName, $acl);
-                if ($aclAcccess) {
+                if ($aclAcccess === true) {
                     $this->aclGroup = true;
+                } elseif (is_array($aclAcccess) && $this->aclGroup !== true) {
+                    $this->aclGroup = is_array($this->aclGroup)
+                        ? array_values(array_unique(array_merge($this->aclGroup, $aclAcccess)))
+                        : $aclAcccess;
                 }
             }
         } elseif (strstr($acls, "&")) {
@@ -43,6 +47,7 @@ trait AuthyACL
                     $this->aclGroup = false;
                     break;
                 }
+                $this->aclGroup = $aclAcccess;
             }
         } else {
             $this->aclGroup = $this->hasRights($modelName, $acls);

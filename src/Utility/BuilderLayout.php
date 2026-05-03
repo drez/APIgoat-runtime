@@ -247,12 +247,47 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
             }
         }
 
-        return ul(
+        $nav = ul(
             li(href(img(_SITE_URL . vendor_logo), vendor_url, 'class="logo-wrapper"'))
             . li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
             . $items
             . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
             'class="nav"'
+        );
+
+        return $nav . $this->getImpersonationBox();
+    }
+
+    /**
+     * Render the user-impersonation drop box for isRoot users.
+     * Empty string when the current session is not isRoot.
+     */
+    private function getImpersonationBox()
+    {
+        if (empty($_SESSION[_AUTH_VAR]) || ! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+            return '';
+        }
+
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] = bin2hex(random_bytes(16));
+        }
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['IdAuthy'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'] = $_SESSION[_AUTH_VAR]->get('id');
+        }
+
+        $username = (string) $_SESSION[_AUTH_VAR]->get('username');
+        $idAuthy  = (string) $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'];
+        $csrf     = (string) $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'];
+
+        return div(
+            form(
+                input('text', 'IarcAutoc', $username, " otherTabs=1 v='IARC' rid='IARC' placeholder='" . _('USER') . "' j='autocomplete' class='ui-autocomplete-input'")
+                . input('hidden', 'Iarc', $idAuthy, "s='d'")
+                . input('hidden', 'IarcCsrf', $csrf, "s='d'"),
+                ' id="select-box-Authy" class="select-box-authy" data-authy="' . htmlspecialchars($idAuthy, ENT_QUOTES) . '" data-csrf="' . htmlspecialchars($csrf, ENT_QUOTES) . '"'
+            ),
+            '',
+            "class='box-Authy'"
         );
     }
 
