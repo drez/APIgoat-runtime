@@ -24,6 +24,9 @@ class RbacMiddleware implements MiddlewareInterface
     private $rbac_id;
     private $config;
     private $rbac_rule;
+    private $rbac_role;
+    private $response;
+    private $raw_parameters;
 
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
@@ -36,6 +39,17 @@ class RbacMiddleware implements MiddlewareInterface
     {
         $error = [];
         $this->args = $request->getAttribute('parsed_args');
+        $this->raw_parameters = $request->getUri()->getQuery();
+        if (empty($this->raw_parameters) && isset($this->args['data']['query'])) {
+            $this->raw_parameters = json_encode($this->args['data']['query']);
+        }
+        $rawBody = (string)$request->getBody();
+        $request->getBody()->rewind();
+        if ($rawBody) {
+            $this->raw_parameters = $this->raw_parameters
+                ? $this->raw_parameters . '&body=' . rawurlencode($rawBody)
+                : $rawBody;
+        }
         if (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
 
             if ($request->getAttribute('rbac_public') === 'failed') {
@@ -76,11 +90,15 @@ class RbacMiddleware implements MiddlewareInterface
 
     private function authorizePrivateRequest($rbac_id = null)
     {
+        $idAuthy = null;
         if ($_SESSION[_AUTH_VAR]->get('connected') == 'YES') {
+            $idAuthy = $_SESSION[_AUTH_VAR]->getIdAuthy();
             if ((!empty($this->rbac_role) && $this->rbac_role != $_SESSION[_AUTH_VAR]->SessVar['IdRole']) || $this->rbac_rule == 'Deny') {
+                $this->logApi($rbac_id, $idAuthy);
                 return ['Route denied. Check your API access control.'];
             }
         } else {
+            $this->logApi($rbac_id, null);
             return ['Route denied, private route require authentication.'];
         }
 
@@ -88,7 +106,7 @@ class RbacMiddleware implements MiddlewareInterface
         if ($ApiRbac) {
             $ApiRbac->setCount($ApiRbac->getCount() + 1);
             $ApiRbac->save();
-            $this->logApi($rbac_id, $_SESSION[_AUTH_VAR]->getIdAuthy());
+            $this->logApi($rbac_id, $idAuthy);
         }
 
 
@@ -116,13 +134,28 @@ class RbacMiddleware implements MiddlewareInterface
             // check for some wildcard
             $this->normalizeFilter($this->args['data']);
             $this->excludeBody();
-            $bestMatch = $this->findBestMatch();
+            // rbac excludes can clear the body; fall back to model/action/method + empty body match
+            if ($this->args['data'] === null || $this->args['data'] === '' || (is_array($this->args['data']) && $this->args['data'] === [])) {
+                $q = \App\ApiRbacQuery::create()
+                    ->filterByModel($this->args['model'])
+                    ->filterByAction($this->args['action'])
+                    ->filterByMethod($this->args['method']);
+                $q->filterByBody('')->_or()->filterByBody(null)
+                    ->orderBy('DateCreation', 'ASC');
+                $ApiRbac = $q->findOne();
+                $wildBody[0] = null;
+            } else {
+                $bestMatch = $this->findBestMatch();
 
-            if ($bestMatch) {
-                $ApiRbac = \App\ApiRbacQuery::create()->findPk($bestMatch);
+                if ($bestMatch) {
+                    $ApiRbac = \App\ApiRbacQuery::create()->findPk($bestMatch);
+                }
+                //get the wildcard rule
+                $bodyData = is_array($this->args['data'])
+                    ? $this->args['data']
+                    : (isset($this->args['raw']) ? json_decode($this->args['raw'], true) : null);
+                $wildBody = $this->getBodyWildcarded($bodyData);
             }
-            //get the wildcard rule
-            $wildBody = $this->getBodyWildcarded($this->args['data']);
         }
 
         if (!$ApiRbac) {
@@ -159,7 +192,10 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_role = null;
             $this->rbac_id = $ApiRbac->getPrimaryKey();
             if (\defined('app_status') && \app_status == 'dev') {
-                return false;
+                $ApiRbac->setCount($ApiRbac->getCount() + 1);
+                $ApiRbac->save();
+                // Keep private routes on the private-auth pass in dev mode too.
+                return true;
             }
             return true;
         }
@@ -171,6 +207,7 @@ class RbacMiddleware implements MiddlewareInterface
         $ApiLog->setIdApiRbac($IdApiRbac);
         $ApiLog->setIdAuthy($IdAuthy);
         $ApiLog->setTime(time());
+        $ApiLog->setRawParameters($this->raw_parameters);
         $ApiLog->save();
     }
 
@@ -214,15 +251,22 @@ class RbacMiddleware implements MiddlewareInterface
     {
 
         $i = 0;
+        $select = [];
+        $where = [];
+        $fields = [];
+        $params = [];
         if (is_array($this->args['data'])) {
             foreach ($this->args['data'] as $key => $val) {
                 if ($key == 'query') {
-                    if ($this->args['data']['query']['select']) {
+                    if (!empty($this->args['data']['query']['select'])) {
                         $path = 'query.select';
-                        $select[] = "IF(JSON_CONTAINS(`body`, '" . json_encode($this->args['data']['query']['select']) . "', '$.{$path}'), 1, 0) as 'm{$i}'";
-                        $where[] = "(JSON_CONTAINS(`body`,  '" . json_encode($this->args['data']['query']['select']) . "', '$.{$path}')
-                             OR JSON_CONTAINS(`body`,  '[[\"" . $val[0] . "\", \"*\"]]', '$.{$path}')
-                             OR JSON_VALUE(`body`, '$.{$path}') = '*')
+                        $pathPh = ":p{$i}";
+                        $jsonPh = ":j{$i}";
+                        $params[$pathPh] = '$.' . $path;
+                        $params[$jsonPh] = json_encode($this->args['data']['query']['select']);
+                        $select[] = "IF(JSON_CONTAINS(`body`, {$jsonPh}, {$pathPh}), 1, 0) as `m{$i}`";
+                        $where[] = "(JSON_CONTAINS(`body`,  {$jsonPh}, {$pathPh})
+                             OR JSON_VALUE(`body`, {$pathPh}) = '*')
             ";
                         $fields[] = "m{$i}";
                         $i++;
@@ -235,10 +279,16 @@ class RbacMiddleware implements MiddlewareInterface
                             if (is_array($filters)) {
                                 foreach ($filters as $val) {
                                     $path = "query.filter." . $model;
-                                    $select[] = "IF(JSON_CONTAINS(`body`, '[" . json_encode($val) . "]', '$.{$path}'), 1, 0) as 'm{$i}'";
-                                    $where[] = "(JSON_CONTAINS(`body`,  '[" . json_encode($val) . "]', '$.{$path}')
-                                            OR JSON_CONTAINS(`body`,  '[[\"" . $val[0] . "\", \"*\"]]', '$.{$path}')
-                                            OR JSON_VALUE(`body`, '$.{$path}') = '*')";
+                                    $pathPh = ":p{$i}";
+                                    $jsonPh = ":j{$i}";
+                                    $starPh = ":js{$i}";
+                                    $params[$pathPh] = '$.' . $path;
+                                    $params[$jsonPh] = '[' . json_encode($val) . ']';
+                                    $params[$starPh] = '[' . json_encode([($val[0] ?? null), '*']) . ']';
+                                    $select[] = "IF(JSON_CONTAINS(`body`, {$jsonPh}, {$pathPh}), 1, 0) as `m{$i}`";
+                                    $where[] = "(JSON_CONTAINS(`body`,  {$jsonPh}, {$pathPh})
+                                            OR JSON_CONTAINS(`body`,  {$starPh}, {$pathPh})
+                                            OR JSON_VALUE(`body`, {$pathPh}) = '*')";
                                     $fields[] = "m{$i}";
                                     $i++;
                                 }
@@ -246,9 +296,12 @@ class RbacMiddleware implements MiddlewareInterface
                         }
                     }
                 } else {
-                    $select[] = "JSON_VALUE(`body`, '$.{$key}')";
-                    $select[] = "IF(JSON_VALUE(`body`, '$.{$key}') = '{$val}', 1, 0) as 'm{$i}'";
-                    $where[] = "(JSON_VALUE(`body`, '$.{$key}') = '{$val}' OR JSON_VALUE(`body`, '$.{$key}') = '*')
+                    $pathPh = ":p{$i}";
+                    $valPh = ":v{$i}";
+                    $params[$pathPh] = '$.' . $key;
+                    $params[$valPh] = is_scalar($val) ? (string)$val : json_encode($val);
+                    $select[] = "IF(JSON_VALUE(`body`, {$pathPh}) = {$valPh}, 1, 0) as `m{$i}`";
+                    $where[] = "(JSON_VALUE(`body`, {$pathPh}) = {$valPh} OR JSON_VALUE(`body`, {$pathPh}) = '*')
             ";
                     $fields[] = "m{$i}";
                 }
@@ -258,25 +311,34 @@ class RbacMiddleware implements MiddlewareInterface
             $where = ['1'];
         }
 
-        if (is_array($fields)) {
-            $select[] = "(SELECT " . implode("+", $fields) . ") as 'bestMatch'";
+        $selects = '';
+        $order = '';
+        if ($fields) {
+            $select[] = "(SELECT " . implode("+", $fields) . ") as `bestMatch`";
             $selects = ", " . implode(', ', $select);
             $order = "ORDER BY bestMatch DESC";
         }
 
         $clause = ($where) ? implode(" AND ", $where) : '1';
 
-        $sql = "SELECT `id_api_rbac` {$selects} FROM `api_rbac` WHERE 
-            `model` = '" . $this->args['model'] . "' AND
-            `action` = '" . $this->args['action'] . "' AND
-            `method` = '" . \App\ApiRbacPeer::getSqlValueForEnum('api_rbac.method', $this->args['method']) . "' AND
+        $sql = "SELECT `id_api_rbac` {$selects} FROM `api_rbac` WHERE
+            `model` = :model AND
+            `action` = :action AND
+            `method` = :method AND
             " . $clause . "
             {$order}
             LIMIT 1
             ";
 
+        $params[':model'] = $this->args['model'];
+        $params[':action'] = $this->args['action'];
+        $params[':method'] = \App\ApiRbacPeer::getSqlValueForEnum('api_rbac.method', $this->args['method']);
+
         $con = \Propel::getConnection(_DATA_SRC);
         $stmt = $con->prepare($sql);
+        foreach ($params as $name => $value) {
+            $stmt->bindValue($name, $value);
+        }
         $stmt->execute();
         $result = $stmt->fetch();
 

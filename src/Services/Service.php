@@ -64,7 +64,7 @@ class Service
     }
     /**
      * Get the proper response
-     * @return html
+     * @return string
      */
     public function getResponse()
     {
@@ -84,19 +84,15 @@ class Service
             case 'insert':
                 //$this->body = $this->saveUpdate();
                 return $this->BuilderLayout->renderXHR($this->content);
-                break;
             case 'delete':
                 //$this->body = $this->deleteOne();
                 return $this->BuilderLayout->renderXHR($this->content);
-                break;
             case 'upload':
                 //$this->body = $this->file();
                 return $this->BuilderLayout->renderXHR($this->content);
-                break;
             case 'file':
             case 'open':
                 //return $this->getFileContent();
-                break;
         }
         if ($this->args['ui']) {
             return $this->BuilderLayout->renderXHR($this->body);

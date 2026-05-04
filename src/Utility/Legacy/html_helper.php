@@ -744,10 +744,7 @@ function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Mess
         die(json_encode($ret));
     } else {
         if ($print) {
-            $error['onReadyJs'] = "
-            alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');
-
-        ";
+            $error['onReadyJs'] = scriptReady("alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');");
         } else {
             $error['onReadyJs'] = "
             alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');";

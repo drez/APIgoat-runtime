@@ -37,7 +37,7 @@ class Menu
         }
     }
 
-    public function addUnder($Parent, $Name, $Model, $Position = 0)
+    public function addUnder($Parent, $Name, $Model, $Position = 0, $Subtitle = null)
     {
         if ($_SESSION[_AUTH_VAR]->get('group') === 'Admin' || $_SESSION[_AUTH_VAR]->hasMenu($Model)) {
             $class = '';
@@ -53,6 +53,7 @@ class Menu
                 );
 
             $this->subTabs[$Parent][$this->underIndex][1] = $Position;
+            $this->subTabs[$Parent][$this->underIndex][2] = $Subtitle;
         }
     }
 
@@ -64,7 +65,15 @@ class Menu
                 $pos_t[$key]  = $row[1];
             }
             array_multisort($pos_t, SORT_DESC, $subTabs);
+            $currentSubtitle = null;
             foreach ($subTabs as $key => $row) {
+                $subtitle = $row[2] ?? null;
+                if ($subtitle !== $currentSubtitle) {
+                    $currentSubtitle = $subtitle;
+                    if ($currentSubtitle) {
+                        $subTabsLi .= li(span(_($currentSubtitle)), 'class="menu-subtitle"');
+                    }
+                }
                 $subTabsLi .= $row[0];
             }
         }

@@ -1,5 +1,4 @@
 <?php
-
 namespace ApiGoat\Utility;
 
 use Selective\Config\Configuration;
@@ -18,28 +17,52 @@ class BuilderLayout
     private $htmlHeader;
     private $settings;
     private $js;
-
+    public $showLeftPannel = true;
 
     function __construct(BuilderMenus $BuilderMenus)
     {
         include _BASE_DIR . 'config/assets.php';
-        $Config = new Configuration(require _BASE_DIR . 'config/settings.php');
-        $this->settings = $Config->getArray('admin_panel');
-        $siteDescription = '';
-        $siteKeywords = '';
-        $favicon = '';
-        $headAuthor = '';
+        $Config             = new Configuration(require _BASE_DIR . 'config/settings.php');
+        $this->settings     = $Config->getArray('admin_panel');
+        $siteDescription    = '';
+        $siteKeywords       = '';
+        $favicon            = '';
+        $headAuthor         = '';
         $this->builderMenus = $BuilderMenus;
 
         $this->incCss = $Assets->css() . $AssetsAdmin->css();
         if (defined('_TITLE_PREFIX')) {
             $this->title = _TITLE_PREFIX . " / " . $siteTitle;
         }
-        $headjs = "<script type='text/javascript'>
+        $csrfMeta = '';
+        if (defined('_AUTH_VAR') && isset($_SESSION[_AUTH_VAR]) && is_object($_SESSION[_AUTH_VAR]) && method_exists($_SESSION[_AUTH_VAR], 'getCsrf')) {
+            $csrfMeta = "<meta name='csrf-token' content='" . htmlspecialchars($_SESSION[_AUTH_VAR]->getCsrf(), ENT_QUOTES) . "'>\n";
+        }
+        $vapidPublicKey = function_exists('env') ? (env('VAPID_PUBLIC_KEY') ?: '') : '';
+        $headjs = $csrfMeta . "<script type='text/javascript'>
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
+    let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
 </script>";
 
-        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
+        // PWA meta tags and icons for iOS / Android / Windows
+        $pwaHeaders = '
+<style>html{background-color:#ffffff}</style>
+<link rel="manifest" href="' . _SITE_URL . 'manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="apple-touch-icon" sizes="152x152" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="apple-touch-icon" sizes="167x167" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="apple-touch-icon" sizes="120x120" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="icon" type="image/png" sizes="512x512" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<link rel="icon" type="image/png" sizes="192x192" href="' . _SITE_URL . 'public/img/fav-2.1.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AExpert">
+<meta name="theme-color" content="#ffffff">
+<meta name="msapplication-TileImage" content="' . _SITE_URL . 'public/img/windows/Square150x150Logo.scale-200.png">
+<meta name="msapplication-TileColor" content="#ffffff">
+';
+
+        $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $pwaHeaders . $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
 
     }
 
@@ -48,124 +71,175 @@ class BuilderLayout
         $this->title = $title;
     }
 
+    /**
+     * renderXHR
+     *
+     * @param  array|string $content
+     * @return string
+     *
+     * ['html' => '', 'js' => '', 'onReadyJs' => '']
+     */
     public function renderXHR($content)
     {
-        if (!empty($content['html']) || !empty($content['js']) || !empty($content['onReadyJs'])) {
+        if (empty($content)) {
+            return "The response is empty.";
+        }
+
+        if (! empty($content['html']) || ! empty($content['js']) || ! empty($content['onReadyJs'])) {
             return $content['html'] . ($content['js'] ?? '')
-                . scriptReady(trim($content['onReadyJs']));
+            . scriptReady(trim($content['onReadyJs']));
         } else {
-            if (!empty($content)) {
+            if (! is_array($content)) {
                 return $content;
+            } else {
+                return json_encode($content);
             }
         }
-        return "The response is empty.";
+
     }
 
     public function renderLogin($content)
     {
         $print =
-            docType()
-            . htmlTag(
-                $this->htmlHeader
-                . body(
-                    div(
-                        div('', "loader", " class='hide' ")
-                        . div(
-                            div(
-                                div($content['html'], 'mainContent', "class=''"),
-                                "centered",
-                                "style='width:100%;position:relative;text-align:center;margin:auto;'"
-                            )
-                            . div("", '', "class='wCtFooter' style=''"),
-                            'fullWH2',
-                            "style='width:100%;height:100%;'"
-                        ),
-                        'fullWH',
+        docType()
+        . htmlTag(
+            $this->htmlHeader
+            . body(
+                div(
+                    div('', "loader", " class='hide' ")
+                    . div(
+                        div(
+                            div($content['html'], 'mainContent', "class=''"),
+                            "centered",
+                            "style='width:100%;position:relative;text-align:center;margin:auto;'"
+                        )
+                        . div("", '', "class='wCtFooter' style=''"),
+                        'fullWH2',
                         "style='width:100%;height:100%;'"
                     ),
-                    " id='body' class=''"
+                    'fullWH',
+                    "style='width:100%;height:100%;'"
                 ),
-                " id='html' "
-            )
-            . $content['js']
-            . scriptReady(trim($content['onReadyJs']));
-
+                " id='body' class=''"
+            ),
+            " id='html' "
+        )
+        . $content['js']
+        . scriptReady(trim($content['onReadyJs']));
 
         return $print;
     }
 
+    /**
+     * render
+     *
+     * @param  array|null $content
+     * @return string
+     * ['html'=>'', 'js' =>'', 'pagerRow' => '', 'onReadyJs' => '']
+     */
     public function render($content)
     {
+        header('Cache-Control: no-store');
+
         if (empty($content['html'])) {
             return "Response is empty, does the service exists?";
         }
 
-        $output = ['pagerRow' => ''];
-        $body = ['html'=>'', 'js' =>'', 'pagerRow' => ''];
-        $authy = '';
+        $pageLoader = '<div id="pageLoader" class="page-loader">
+<img src="' . _SITE_URL . 'public/img/ios/512.png" class="page-loader-logo" alt="">
+<div class="page-loader-spinner"></div>
+</div>
+<script>
+window.addEventListener("load",function(){var l=document.getElementById("pageLoader");if(l){l.style.opacity="0";setTimeout(function(){l.style.display="none";document.documentElement.style.backgroundColor="";},300);}});
+if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.serviceWorker.addEventListener("message",function(e){if(e.data&&e.data.type==="SW_AUTH_RELOAD")window.location.reload();});}
+</script>';
+
+        $leftPannel = '';
+        $pannelStylesOverride = '';
+
+        if($this->showLeftPannel){
+             $leftPannel = div(
+            div(
+                div(
+                    div(
+                        //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
+                        $this->getTopNav(),
+                        '',
+                        'class="top-nav"'
+                    )
+                    . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
+                    '',
+                    'class="left-panel-content" '
+                ),
+                '',
+                'class="left-panel-wrapper" '
+            ),
+            '',
+            'class="left-panel" '
+        );
+        }else{
+            $pannelStylesOverride = "style='width: 100%;transform: none;'";
+        }
+       
 
         $print =
-            docType()
-            . htmlTag(
-                $this->htmlHeader
-                . body(
-                    $body['html']
-                    . script($body['js'])
-                    . div(
-                        div(
-                            div(
-                                div(
-                                    //href(img($logoAdmin),_SITE_URL,'class="logo-wrapper"')
-                                    $this->getTopNav()
-                                    . $authy,
-                                    '',
-                                    'class="top-nav"'
-                                )
-                                . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
-                                '',
-                                'class="left-panel-content" '
-                            ),
-                            '',
-                            'class="left-panel-wrapper" '
-                        ),
-                        '',
-                        'class="left-panel" '
-                    )
-                    . div(
-                        div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
-                        . div('', 'editPane', 'class="edit-pane-hidden"')
-                        . $output['pagerRow'],
-                        '',
-                        'class="center-panel"'
-                    )
+        docType()
+        . htmlTag(
+            $this->htmlHeader
+            . body(
+                $pageLoader
+                . $leftPannel
+                . div(
+                    div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
+                    . div('', 'editPane', 'class="edit-pane-hidden"'),
+                    '',
+                    'class="center-panel" '.$pannelStylesOverride
+                )
 
-                    . div('', 'editDialog', 'style=""')
-                    . div('', 'editPopupDialog', 'style="d" ')
-                    . div(
-                        div(p('', "id='confirm_text'"), '', "class='mainForm'"),
-                        'confirmDialog'
-                    )
-                    . div(
-                        div(p('', "id='alert_text'"), '', "class='mainForm'"),
-                        'alertDialog'
-                    )
+                . div('', 'editDialog', 'style=""')
+                . div('', 'editPopupDialog', 'style="d" ')
+                . div(
+                    div(p('', "id='confirm_text'"), '', "class='mainForm'"),
+                    'confirmDialog'
+                )
+                . div(
+                    div(p('', "id='alert_text'"), '', "class='mainForm'"),
+                    'alertDialog'
+                )
 
-                    . $this->js,
-                    " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "' style='height:100%;'"
-                ),
-                " id='html_build' "
-            )
-            . (isset($content['js'])?$content['js']:'')
-            . scriptReady((isset($content['onReadyJs'])?trim($content['onReadyJs']):''));
+                . div(
+                    div(
+                        input('hidden', 'session_expired_user', '', "id='session_expired_user'  autocomplete='off' class='sw-input' style='width:100%;margin-bottom:8px;box-sizing:border-box;'")
+                        . input('hidden', 'session_expired_pass', '', "id='session_expired_pass'  autocomplete='off' class='sw-input' style='width:100%;box-sizing:border-box;'")
+                        . div('', 'session_expired_error', "class='hide' style='color:#c0392b;margin-top:8px;font-size:0.85em;'"),
+                        '',
+                        "class='mainForm'"
+                    ),
+                    'sessionExpiredDialog',
+                    "title='" . _('Session Expired') . "'"
+                )
+
+                . $this->js,
+                " id='body' class='" . (isset($bodyClass) ? $bodyClass : '') . "' style='height:100%;'"
+            ),
+            " id='html_build' "
+        )
+        . (isset($content['js']) ? $content['js'] : '')
+        . scriptReady((isset($content['onReadyJs']) ? trim($content['onReadyJs']) : ''));
 
         return $print;
     }
 
+    /**
+     * getTopNav
+     *
+     * @return string
+     */
     public function getTopNav()
     {
 
-        $menus = ['profil', 'support', 'dashboard'];
-        $items = '';
+        $menus    = ['profil', 'support', 'dashboard'];
+        $items    = '';
         $settings = $this->settings['top_nav'];
         foreach ($menus as $menu) {
             if (isset([$menu]['url'])) {
@@ -173,12 +247,47 @@ class BuilderLayout
             }
         }
 
-        return ul(
-            li(href(img(_SITE_URL.vendor_logo), vendor_url, 'class="logo-wrapper"'))
+        $nav = ul(
+            li(href(img(_SITE_URL . vendor_logo), vendor_url, 'class="logo-wrapper"'))
             . li(href(span(_("Home")), _SITE_URL, 'title="Home" class="icon home"'), "class='right'")
             . $items
             . li(href(span(_("Menu")), "Javascript:void(0);", 'title="Menu" class="icon menu trigger-menu"')),
             'class="nav"'
+        );
+
+        return $nav . $this->getImpersonationBox();
+    }
+
+    /**
+     * Render the user-impersonation drop box for isRoot users.
+     * Empty string when the current session is not isRoot.
+     */
+    private function getImpersonationBox()
+    {
+        if (empty($_SESSION[_AUTH_VAR]) || ! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+            return '';
+        }
+
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] = bin2hex(random_bytes(16));
+        }
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['IdAuthy'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'] = $_SESSION[_AUTH_VAR]->get('id');
+        }
+
+        $username = (string) $_SESSION[_AUTH_VAR]->get('username');
+        $idAuthy  = (string) $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'];
+        $csrf     = (string) $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'];
+
+        return div(
+            form(
+                input('text', 'IarcAutoc', $username, " otherTabs=1 v='IARC' rid='IARC' placeholder='" . _('USER') . "' j='autocomplete' class='ui-autocomplete-input'")
+                . input('hidden', 'Iarc', $idAuthy, "s='d'")
+                . input('hidden', 'IarcCsrf', $csrf, "s='d'"),
+                ' id="select-box-Authy" class="select-box-authy" data-authy="' . htmlspecialchars($idAuthy, ENT_QUOTES) . '" data-csrf="' . htmlspecialchars($csrf, ENT_QUOTES) . '"'
+            ),
+            '',
+            "class='box-Authy'"
         );
     }
 
@@ -205,9 +314,9 @@ class BuilderLayout
     {
         switch ($options['type']) {
             case 'warning':
-                $head = div(h3('Warning'), '', "class='box-header'");
+                $head         = div(h3('Warning'), '', "class='box-header'");
                 $contentClass = 'box';
-                $bodyClass = 'bodybg';
+                $bodyClass    = 'bodybg';
                 break;
         }
 
@@ -217,27 +326,72 @@ class BuilderLayout
 
         if ($content) {
             $content =
-                docType()
-                . htmlTag(
-                    $this->htmlHeader
-                    . body(
-                        div(
-                            $options['top']
-                            . $head
-                            . div(
-                                div($content, '', "style='" . $options['content-style'] . "'")
-                                . $options['bottom-inner'],
-                                '',
-                                "class='centered75 box-body'"
-                            )
-                            . $options['bottom'],
+            docType()
+            . htmlTag(
+                $this->htmlHeader
+                . body(
+                    div(
+                        $options['top']
+                        . $head
+                        . div(
+                            div($content, '', "style='" . $options['content-style'] . "'")
+                            . $options['bottom-inner'],
                             '',
-                            "class='mainContent {$contentClass}'"
-                        ),
-                        "class='{$bodyClass}'"
-                    )
-                );
+                            "class='centered75 box-body'"
+                        )
+                        . $options['bottom'],
+                        '',
+                        "class='mainContent {$contentClass}'"
+                    ),
+                    "class='{$bodyClass}'"
+                )
+            );
         }
         return $content;
+    }
+
+    /**
+     * decoratedForm
+     *
+     * @param  string $content
+     * @param  string $name
+     * @param  array $options ['addSave', 'idPk', 'idParent', 'destUi', 'onSave', 'button']
+     * @return string
+     */
+    public static function decoratedForm($content, $name, $options = [])
+    {
+        if (! empty($options['addSave']) || ! empty($options['onSave'])) {
+            $buttonName  = (! empty($options['button'])) ? $options['button'] : 'Save';
+            $formSaveBar = div(
+                div(input('button', "save$name", _($buttonName), ' class="button-link-blue can-save"')
+                    . input('hidden', "formChanged$name", '', 'j="formChanged"')
+                    . input('hidden', 'idPk', urlencode($options['idPk']), "s='d'")
+                    . input('hidden', 'idParent', $options['idParent'], " s='d' pk")
+                    , "", " class='divtd' colspan='2' style='text-align:right;'")
+                , "", " class='divtr divbut' ");
+
+            if ($options['addSave'] == 'yes') {
+                $editEvent = "$('#form" . $name . " #save" . $name . "').bindSave({
+                                    modelName: '" . $name . "',
+                                    destUi: '" . $options['destUi'] . "',
+                                    pc:'" . $options['pc'] . "',
+                                    ip:'" . $options['idParent'] . "',
+                                    je:'" . $options['jsElement'] . "',
+                                    jet:'" . $options['jsElementType'] . "',
+                                    tp:'" . $options['tp'] . "',
+                                    dialog:'" . $options['dialog'] . "'
+                                });";
+            } else {
+                $editEvent = "$('#form" . $name . " #save" . $name . "').bind('click.save$name', (data)=>{" . $options['onSave'] . "});";
+            }
+        }
+
+        return form(
+            div(
+                $content
+                . $formSaveBar
+                , "divCnt$name", "class='divStdform'")
+            , "id='form$name' class='mainForm formContent' ")
+        . scriptReady($editEvent);
     }
 }

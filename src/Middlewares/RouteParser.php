@@ -152,8 +152,8 @@ class RouteParser implements MiddlewareInterface
 
         # API call
         $data['is_api'] = false;
-        if (strstr($path, 'api/')) {
-            $path = preg_replace('/api\/v[0-9]\//', '', $path, 1);
+        if (preg_match('#^/?api/v[0-9]+/#', $path)) {
+            $path = preg_replace('#^/?api/v[0-9]+/#', '', $path, 1);
             $data['is_api'] = true;
         }
 

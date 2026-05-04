@@ -21,11 +21,14 @@ class BuilderReturn
         'return' => '',
         'diag' => '',
         'a' => '',
-        'p' => ''
+        'p' => '',
+        'action' => '',
     ];
     private $containerId = "";
     private $error = [];
     private $returnType = "";
+    private $messages;
+    private $returnFunction;
     private $return = ['html' => '', 'onReadyJs' => '', 'js' => '', 'json' => ''];
 
     public function __construct($request = [], $error = [], $messages = null)
@@ -35,18 +38,26 @@ class BuilderReturn
             $this->error = $error;
             $this->messages = $messages;
         }
+
+        $this->returnFunction = $this->request['a'] . "_return";
     }
 
-    public function message($message)
+    public function setReturnFunction($returnFunction)
+    {
+        $this->returnFunction = $returnFunction;
+    }
+
+    public function message($message, $error = false)
     {
         //complete-save
-        return "sw_message('" . _($message) . "', true, 'search-progress');";
+        return "sw_message('" . _($message) . "', '" . $error . "', 'search-progress');";
     }
 
-    public function return()
+    public function return ()
     {
-        $returnfunc = $this->request['a'] . "_return";
-        if ($this->inError()) {
+        $returnfunc = $this->returnFunction;
+
+        if (!empty($this->inError())) {
             $this->return_error();
         } else {
             $this->$returnfunc();
@@ -58,8 +69,8 @@ class BuilderReturn
     private function delete_return()
     {
         $this->return['onReadyJs'] =
-            $this->message('Item deleted')
-            . "
+        $this->message(_('Item deleted'))
+        . "
     $('body').css('cursor', 'auto');
     $('#" . $this->request['p'] . "Table tr[rid=" . $this->request['i'] . "]').hide('slow').remove();
     var count = $('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span').html();
@@ -90,18 +101,22 @@ class BuilderReturn
 	$('body').css('cursor', 'auto');";
         }
 
-        if (!empty($this->request['jet'])) {
+        if ($this->request['action'] == 'list') {
+            $action_success = "document.location='" . _SITE_URL . $this->request['p'] . "'";
+        } elseif (!empty($this->request['jet'])) {
             switch ($this->request['jet']) {
                 case 'refreshChild':
                     $child = ($this->request['data']['tp']) ? $this->request['data']['tp'] : $this->request['p'];
+                    $close_dialog = ($this->request['data']['no_close']) ?'': "$('#{$this->request['ui']}').dialog('close');";
                     $action_success =
                         "$.get('" . _SITE_URL . "{$this->request['data']['pc']}/{$child}/{$this->request['data']['ip']}', { ui: '{$this->request['data']['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['data']['pc']}'}, function(data){
                             $('#cnt{$this->request['pc']}Child').html(data);
                             $('[j=conglet_{$this->request['data']['pc']}]').parent().attr('class','ui-corner-top ui-state-default');
                             $('[j=conglet_{$this->request['data']['pc']}][p={$this->request['data']['tp']}]').parent().addClass('ui-state-active');
-                         });"
-                        . "$('body').css('cursor', 'auto');"
-                        . "$('#{$this->request['ui']}').dialog('close');";
+                        });
+                        $('body').css('cursor', 'auto');
+                        $close_dialog
+                        ";
 
                     break;
                 case 'createReload':
@@ -137,7 +152,7 @@ class BuilderReturn
 
             if (!empty($messages)) {
                 $this->return['onReadyJs'] =
-                    "alertb('Alert', '" . addslashes($this->removeNl($messages)) . "');
+                "alertb('Alert', '" . addslashes($this->removeNl($messages)) . "');
 alert_close = function (){
     {$alert_close}
 }";
@@ -162,6 +177,7 @@ alert_close = function (){
     private function inError()
     {
         if (empty($this->error)) {
+            $this->message('Error:' . $this->error, true);
             return false;
         }
         return true;

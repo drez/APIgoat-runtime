@@ -107,7 +107,9 @@ class OauthService extends Service
                     }else{
                         $result['error'] = $result['errors'][0];
                     }
-                   
+                    // Canonical failure shape on the redirect: ?error=<msg>&status=failure
+                    // (drop array form so the URL has no errors%5B0%5D bracket encoding)
+                    unset($result['errors']);
                 }else{
                     $result['status'] = 'success';
                 }
@@ -169,7 +171,7 @@ class OauthService extends Service
             if ($this->isApi) {
                 $AuthyService = new \App\AuthyServiceWrapper($this->request, $this->response, $this->args);
                 $jwt = $AuthyService->getToken($Authy, $this->jwt_config['secret']);
-                return ['jwt' => $jwt];
+                return ['jwt' => $jwt, 'id' => $Authy->getPrimaryKey(), 'action' => 'login'];
             } else {
                 $AuthyService = new \App\AuthyServiceWrapper($this->request, $this->response, $this->args);
                 $AuthyService->setSession($Authy);

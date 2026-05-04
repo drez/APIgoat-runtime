@@ -1,17 +1,16 @@
 <?php
-
 namespace ApiGoat\Middlewares;
 
+use ApiGoat\Api\ApiResponse;
+use ApiGoat\Handlers\InvalidSessionRenderer;
+use Apigoat\Sessions\AuthySession;
+use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Exception\HttpForbiddenException;
-use ApiGoat\Handlers\InvalidSessionRenderer;
 use Slim\Psr7\Response;
-use Psr\Http\Message\ResponseFactoryInterface;
-use ApiGoat\Api\ApiResponse;
-use Apigoat\Sessions\AuthySession;
 
 /**
  * Description of Authy
@@ -40,20 +39,24 @@ class AuthyMiddleware implements MiddlewareInterface
             return $response;
         }
 
+        $access = $this->checkPrivileges($request);
+
         // validate authentication if not an API call
-        if (!$this->args['is_api']) {
-            if (!is_object($_SESSION[_AUTH_VAR]) or (get_class($_SESSION[_AUTH_VAR]) != 'ApiGoat\Sessions\AuthySession')) {
+        if (! $this->args['is_api']) {
+            if (! is_object($_SESSION[_AUTH_VAR]) or (get_class($_SESSION[_AUTH_VAR]) != 'ApiGoat\Sessions\AuthySession')) {
                 unset($_SESSION[_AUTH_VAR]);
                 $_SESSION[_AUTH_VAR] = new AuthySession();
-                $_SESSION[_AUTH_VAR]->set('connected', 'NO');
+                $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
             }
 
-            if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES') {
+            if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
 
-                if (
-                    $this->args['route'] != 'Authy/login' && $this->args['route'] != 'Authy/auth' && $this->args['route'] != 'Authy/reset'
-                    && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth"
-                ) {
+                if (strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
+                    if ($request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
+                        $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
+                        $ApiResponse->setStatus(401);
+                        return $ApiResponse->getResponse();
+                    }
                     $response = new Response();
                     return $response
                         ->withHeader('Location', _SUB_DIR_URL . 'Authy/login')
@@ -64,7 +67,7 @@ class AuthyMiddleware implements MiddlewareInterface
                     return $response;
                 }
             }
-        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $this->args['route'] != 'Authy/auth' && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
+        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && ! $this->checkExclude($this->args['route']) && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
             $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
             $ApiResponse->setStatus(401);
             return $ApiResponse->getResponse();
@@ -72,7 +75,7 @@ class AuthyMiddleware implements MiddlewareInterface
 
         $this->checkUserSwitch($request);
 
-        $access = $this->checkPrivileges($request);
+       // $access = $this->checkPrivileges($request);
         if (false !== $access) {
             // access denied
             if ($access instanceof InvalidSessionRenderer) {
@@ -84,8 +87,8 @@ class AuthyMiddleware implements MiddlewareInterface
                     // progress anyways
                     $response = $handler->handle($request);
                     $response = new Response();
-                    $request = $request->withAttribute('authy_access', 'denied');
-                    $request = $request->withAttribute('authy_message', $access->getMessage());
+                    $request  = $request->withAttribute('authy_access', 'denied');
+                    $request  = $request->withAttribute('authy_message', $access->getMessage());
                     $response->getBody()->write($access->getMessage());
                     return $response->withStatus(403);
                 }
@@ -93,7 +96,7 @@ class AuthyMiddleware implements MiddlewareInterface
                 throw new HttpForbiddenException($request, $access);
             }
         } else {
-            $request = $request->withAttribute('authy_access', 'full');
+            $request  = $request->withAttribute('authy_access', 'full');
             $response = $handler->handle($request);
         }
         return $response;
@@ -101,43 +104,92 @@ class AuthyMiddleware implements MiddlewareInterface
 
     private function checkUserSwitch($request)
     {
-        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
-            if (isset($this->args['data']['iarc']) and $this->args['data']['iarc']) {
-                $q = \App\AuthyQuery::create();
-                $authyObj = $q->findPk($this->args['data']['iarc']);
+        if (! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+            return;
+        }
 
-                if ($authyObj->getIdAuthy()) {
-                    $AuthyForm = new \App\AuthyService($request, null, $this->args['data']);
-                    $AuthyForm->setSession($authyObj, $authyObj->getUsername());
-                    $_SESSION[_AUTH_VAR]->set('isRoot', true);
-                    $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'] = $this->args['data']['iarc'];
-                }
-            }
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] = bin2hex(random_bytes(16));
+        }
+        if (empty($_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'])) {
+            $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'] = $_SESSION[_AUTH_VAR]->get('id');
+        }
+
+        if (! isset($this->args['data']['iarc']) || ! $this->args['data']['iarc']) {
+            return;
+        }
+
+        $submittedCsrf = $this->args['data']['iarc_csrf'] ?? '';
+        $sessionCsrf   = (string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? '');
+        if ($submittedCsrf === '' || $sessionCsrf === '' || ! hash_equals($sessionCsrf, (string) $submittedCsrf)) {
+            error_log('iarc switch rejected: csrf mismatch from ' . $_SERVER['REMOTE_ADDR'] . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
+            return;
+        }
+
+        $authyObj = \App\AuthyQuery::create()->findPk($this->args['data']['iarc']);
+        if (! $authyObj || ! $authyObj->getIdAuthy()) {
+            return;
+        }
+
+        $originalRootId     = $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'];
+        $targetUsername     = $authyObj->getUsername();
+
+        $AuthyForm = new \App\AuthyService($request, null, $this->args['data']);
+        $AuthyForm->setSession($authyObj, $targetUsername);
+        $_SESSION[_AUTH_VAR]->set('isRoot', true);
+        $_SESSION[_AUTH_VAR]->sessVar['IdAuthy']        = $this->args['data']['iarc'];
+        $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'] = $originalRootId;
+
+        try {
+            $al = new \App\AuthyLog();
+            $al->setIp($_SERVER['REMOTE_ADDR']);
+            $al->setTimestamp(time());
+            $al->setLogin($targetUsername);
+            $al->setIdAuthy($originalRootId);
+            $al->setResult('switch');
+            $al->save();
+        } catch (\Exception $e) {
+            error_log('iarc switch audit log failed: ' . $e->getMessage());
         }
     }
 
+    /**
+     * Summary of checkPrivileges
+     * @param mixed $request
+     * @return bool|InvalidSessionRenderer
+     * Return false if no privileges are required
+     */
     private function checkPrivileges($request)
     {
 
-        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
+        // public route
+        if ($this->checkExclude($this->args['route'])) {
             return false;
         }
 
-        if ($this->checkExclude($this->args['route'])) {
+        if($_SESSION[_AUTH_VAR]->get('connected') != 'YES'){
+            return true;
+        }
+
+        if ($_SESSION[_AUTH_VAR]->get('isRoot')) {
             return false;
         }
 
         $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
         if ($requiredPrivileges === false) {
             // custom privileges
-            $model = $this->args['model'] . '-' . $this->args['action'];
+            $model              = $this->args['model']; // . '-' . $this->args['action'];
             $requiredPrivileges = 'r';
         } else {
             $model = $this->args['model'];
         }
 
-        if (!empty($requiredPrivileges)) {
-            if (!$this->authorize($model, $requiredPrivileges) && $requiredPrivileges != 'none') {
+        if(empty($model)){
+            return false;
+        }
+
+        if (! empty($requiredPrivileges)) {
+            if (! $this->authorize($model, $requiredPrivileges) && $requiredPrivileges != 'none') {
                 return new InvalidSessionRenderer($this->args['is_api'], "You do not have permissions to perform this action. [" . $model . ", " . $requiredPrivileges . "]");
             } else {
                 return false;
@@ -162,9 +214,9 @@ class AuthyMiddleware implements MiddlewareInterface
      */
     private function getRequiredPrivilege(string $action, string $model = '')
     {
-        if (!empty($this->privilegeMap['action'][$action])) {
+        if (! empty($this->privilegeMap['action'][$action])) {
             return $this->privilegeMap['action'][$action];
-        } elseif (!empty($this->privilegeMap['action'][$model . "-" . $action])) {
+        } elseif (! empty($this->privilegeMap['action'][$model . "-" . $action])) {
             return $this->privilegeMap['action'][$model . "-" . $action];
         } else {
             return false;

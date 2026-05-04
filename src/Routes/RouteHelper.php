@@ -3,7 +3,9 @@
 namespace ApiGoat\Routes;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Interfaces\RouteInterface;
 use Slim\Routing\RouteContext;
+
 
 /*
  * To change this license header, choose License Headers in Project Properties.
@@ -32,7 +34,7 @@ class RouteHelper
     private $method;
     /**
      * Route object
-     * @var Route
+     * @var RouteInterface
      */
     private $route;
     /**
@@ -97,7 +99,7 @@ class RouteHelper
 
     /**
      * Set one named route parameters
-     * @return array
+     * @return void
      */
     public function setArgs($name, $value)
     {
@@ -220,9 +222,13 @@ class RouteHelper
         $ServiceClass = '\\App\\' . $this->routeName . 'ServiceWrapper';
         if (class_exists($ServiceClass)) {
             return new $ServiceClass($this->request, $response, $this->args);
-        } else {
-            throw new \Exception('Service class (' . $ServiceClass . ') not found');
         }
+        // Fall back to the bare <X>Service when no wrapper class is emitted.
+        $BareServiceClass = '\\App\\' . $this->routeName . 'Service';
+        if (class_exists($BareServiceClass)) {
+            return new $BareServiceClass($this->request, $response, $this->args);
+        }
+        throw new \Exception('Service class (' . $ServiceClass . ' or ' . $BareServiceClass . ') not found');
     }
 
     /**
