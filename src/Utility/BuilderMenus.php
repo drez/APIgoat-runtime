@@ -24,20 +24,6 @@ class BuilderMenus
         require _BASE_DIR . "config/menus.php";
         $Menu = new Menu($args['p']);
 
-        if ($_SESSION[_AUTH_VAR]->get('isRoot') && isset($_SESSION[_AUTH_VAR]->sessVar['IdAuthy'])) {
-            $Menu->addCustomItem('AuthSwitch', [
-                'html' => div(
-                    form(
-                        input('text', 'IarcAutoc', $_SESSION[_AUTH_VAR]->get('username'), "  otherTabs=1 v='IARC'  rid='IARC' placeholder='" . _('USER') . "' j='autocomplete' class='ui-autocomplete-input'")
-                        . input('hidden', 'Iarc', $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'], "s='d'"),
-                        ' id="select-box-Authy" class="select-box-authy" data-authy="' . addslashes($_SESSION[_AUTH_VAR]->sessVar['IdAuthy']) . '"'
-                    ),
-                    '',
-                    "class='box-Authy'"
-                )
-            ]);
-        }
-
         foreach ($menus as $item) {
             if ($item['parent_menu']) {
                 $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index'], $item['subtitle'] ?? null);

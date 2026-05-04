@@ -17,4 +17,12 @@
 |----|------|---|-------|------|
 | #3150 | 8:24 AM | 🟣 | IARC impersonation UI added to modern apigoat runtime BuilderLayout | ~435 |
 | #3148 | 8:08 AM | 🔵 | BuilderLayout renders left panel using getTopNav() method | ~360 |
+
+### May 4, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #3174 | 4:10 AM | 🔵 | Assets.php handles JavaScript minification and bundling | ~298 |
+| #3165 | 4:07 AM | 🔵 | Autocomplete endpoint routing mechanism for IARC authentication | ~415 |
+| #3164 | 4:06 AM | 🔵 | Authentication form structure with Authy integration and CSRF protection | ~384 |
 </claude-mem-context>
