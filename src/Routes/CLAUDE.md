@@ -7,5 +7,13 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3196 | 4:22 AM | ✅ | Removed IarcRoute Implementation Files | ~215 |
 | #3190 | 4:15 AM | 🔴 | IarcRoute.php deployed to handle IARC autocomplete requests | ~312 |
+| #3172 | 4:10 AM | 🔵 | Modern Slim framework routing architecture in APIgoat-runtime | ~405 |
+
+### May 3, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #3060 | 5:53 AM | 🟣 | Comprehensive API documentation audit completed with critical security findings | ~945 |
 </claude-mem-context>

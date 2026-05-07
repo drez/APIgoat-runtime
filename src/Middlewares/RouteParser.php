@@ -84,8 +84,12 @@ class RouteParser implements MiddlewareInterface
             $this->headers['Content-Type'] = $this->headers['Content-Type'][0];
         }
 
-        if (!in_array($this->headers['Content-Type'], $contentTypes)) {
-            // warning, missing or malformed Content-Type Header
+        if (!empty($this->headers['Content-Type']) && !in_array($this->headers['Content-Type'], $contentTypes)) {
+            error_log(sprintf(
+                'RouteParser: unrecognized Content-Type "%s" on %s',
+                $this->headers['Content-Type'],
+                $this->request->getUri()->getPath()
+            ));
         }
 
         if ($this->headers['Content-Type']) {
