@@ -13,9 +13,51 @@ class Menu
     private $indexMenu = 0;
     private $underIndex = 0;
 
+    /** Per-request memo of per-model row counts (model => int|null). */
+    private $countCache = [];
+
     public function __construct($requested, $defaultClass = [])
     {
         $this->requested = $requested;
+    }
+
+    /**
+     * Cheap per-model row count for the .dr-item-tag chip.
+     *
+     * Data-agnostic: the model name comes from menu metadata and maps to
+     * the same "\App\<Model>Query" convention Api.php derives post-camelize
+     * (Api::__construct camelizes the table name first; here $Model is used
+     * verbatim because menu callers pass canonical model names), so no
+     * entity name is hard-coded.
+     *
+     * Cost discipline: emits at most one un-cached "SELECT COUNT(*)" per
+     * distinct visible menu model per request and memoises the result so
+     * duplicate menu entries (parent + leaf) never double-query. Any
+     * failure (missing Query class, no DB column, exception) yields null
+     * and the chip is simply omitted — never a fatal and never an
+     * unbounded number of slow queries.
+     *
+     * @param  string $Model
+     * @return int|null  null => omit the chip
+     */
+    private function countFor($Model)
+    {
+        if (array_key_exists($Model, $this->countCache)) {
+            return $this->countCache[$Model];
+        }
+
+        $count = null;
+        $queryClass = '\\App\\' . $Model . 'Query';
+        if (is_string($Model) && $Model !== '' && class_exists($queryClass)) {
+            try {
+                $count = (int) $queryClass::create()->count();
+            } catch (\Throwable $e) {
+                $count = null;
+            }
+        }
+
+        $this->countCache[$Model] = $count;
+        return $count;
     }
 
     public function addCustomItem($Model, $data = [])
@@ -46,9 +88,15 @@ class Menu
             }
             $this->underIndex++;
 
+            $count = '';
+            $rowCount = $this->countFor($Model);
+            if ($rowCount !== null) {
+                $count = span((int) $rowCount, 'class="dr-item-tag"');
+            }
+
             $this->subTabs[$Parent][$this->underIndex][0] =
                 htmlLink(
-                    "<i class='ri-circle-line'></i>" . span(_($Name), "class='dr-item-label'"),
+                    "<i class='ri-circle-line'></i>" . span(_($Name), "class='dr-item-label'") . $count,
                     _SITE_URL . $Model,
                     " class='dr-item " . $class . "' j='sm_a' entite='" . $Model . "' title='" . _($Name) . "' id='menu_" . $Model . "' "
                 );
@@ -110,8 +158,9 @@ class Menu
                                 'class="dr-sub ac-menu" entite="' . $Model . '" id="menu_' . $Model . '"'
                             );
                     } else {
-                        if (isset($alertsCount[$Model])) {
-                            $count = span($alertsCount[$Model], 'class="dr-item-tag"');
+                        $rowCount = $this->countFor($Model);
+                        if ($rowCount !== null) {
+                            $count = span((int) $rowCount, 'class="dr-item-tag"');
                         }
                         $this->menu .= htmlLink(
                             "<i class='ri-circle-line'></i>"
