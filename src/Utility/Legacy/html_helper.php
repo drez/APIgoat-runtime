@@ -978,3 +978,17 @@ function swheader($name = '', $hasControls = '')
         'class="sw-header"'
     );
 }
+
+// Deterministic avatar background for the guideline initials avatar
+// (.cl-avatar, clients-list). Same string => same hue, mid-saturation
+// so white initials stay legible.
+function gcHashColor($s)
+{
+    $s = (string) $s;
+    $h = 0;
+    $len = strlen($s);
+    for ($i = 0; $i < $len; $i++) {
+        $h = (ord($s[$i]) + (($h << 5) - $h)) & 0xffffffff;
+    }
+    return 'hsl(' . (abs($h) % 360) . ', 52%, 52%)';
+}

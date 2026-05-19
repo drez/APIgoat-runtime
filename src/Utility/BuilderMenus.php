@@ -47,4 +47,9 @@ class BuilderMenus
     {
         return $this->Menu->getMenu();
     }
+
+    public function getRequested()
+    {
+        return $this->Menu->getRequested();
+    }
 }

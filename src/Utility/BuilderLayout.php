@@ -155,10 +155,17 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
 </script>';
 
         $leftPannel = '';
+        $drawer = '';
+        $dim = '';
+        $topbar = '';
         $pannelStylesOverride = '';
 
         if($this->showLeftPannel){
-             $leftPannel = div(
+            // Build the menu HTML once — Menu::getMenu() accumulates state,
+            // so it must not be called twice.
+            $menusHtml = $this->builderMenus->getMenus();
+
+            $leftPannel = div(
             div(
                 div(
                     div(
@@ -167,7 +174,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                         '',
                         'class="top-nav"'
                     )
-                    . nav($this->builderMenus->getMenus(), 'class="ac-nav"'),
+                    . nav($menusHtml, 'class="ac-nav"'),
                     '',
                     'class="left-panel-content" '
                 ),
@@ -177,6 +184,74 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
             '',
             'class="left-panel" '
         );
+
+            // Guideline mobile drawer (SCSS in _formv2: .proto-drawer /
+            // .proto-dim). Reuses the same nav markup + active state.
+            // Toggled by public/js/app/shell.js (vanilla, no jQuery).
+            $gcUser = (string) ($_SESSION[_AUTH_VAR]->get('username') ?? '');
+            $gcRole = (string) ($_SESSION[_AUTH_VAR]->get('group') ?? '');
+            $gcInit = strtoupper(mb_substr(trim($gcUser) !== '' ? $gcUser : 'U', 0, 2));
+            // Project name from the site path (…/<project>/.admin/).
+            $gcSegs = array_values(array_filter(explode('/', trim((string) (parse_url(_SITE_URL, PHP_URL_PATH) ?? ''), '/'))));
+            $gcProj = 'Admin';
+            foreach ($gcSegs as $gcS) {
+                if ($gcS !== '' && strpos($gcS, '.admin') === false) { $gcProj = $gcS; }
+            }
+            $gcProj = ucfirst($gcProj);
+            $drawer = div(
+                div(
+                    div("<i class='ri-shapes-line'></i>", '', "class='dr-logo-mark'")
+                    . div(
+                        span(htmlspecialchars($gcProj))
+                        . ($gcUser !== '' ? "<small>" . htmlspecialchars($gcUser) . "</small>" : ''),
+                        '',
+                        "class='dr-logo-text'"
+                    )
+                    . button("<i class='ri-close-line'></i>", "type='button' class='dr-close' aria-label='" . _('Close') . "'"),
+                    '',
+                    "class='dr-head'"
+                )
+                . div(
+                    "<i class='ri-search-line'></i>"
+                    . input('text', 'drawerFilter', '', "class='dr-search-input' placeholder='" . _('Jump to…') . "' autocomplete='off'"),
+                    '',
+                    "class='dr-search'"
+                )
+                . div(
+                    nav($menusHtml, 'class="ac-nav"'),
+                    '',
+                    "class='dr-scroll'"
+                )
+                . div(
+                    div($gcInit, '', "class='dr-avatar'")
+                    . div(
+                        span($gcUser !== '' ? htmlspecialchars($gcUser) : _('User'), "class='dr-username'")
+                        . span($gcRole !== '' ? htmlspecialchars($gcRole) : '&nbsp;', "class='dr-userrole'"),
+                        '',
+                        "class='dr-userinfo'"
+                    )
+                    . href("<i class='ri-logout-box-r-line'></i>", _SITE_URL . 'Authy/logout', "class='dr-signout' title='" . _('Logout') . "' aria-label='" . _('Logout') . "'"),
+                    '',
+                    "class='dr-footer'"
+                ),
+                'appDrawer',
+                "class='proto-drawer'"
+            );
+            $dim = div('', 'appDim', "class='proto-dim'");
+
+            // Global topbar — the drawer opener must exist on EVERY page,
+            // not only list pages (the list emits its own in-header
+            // .menu-btn; SCSS hides this bar there to avoid two
+            // hamburgers). Without this, non-list pages (home, full-page
+            // edit) had no way to open #appDrawer.
+            $gcEntity = (string) ($this->builderMenus->getRequested() ?: '');
+            $gcCrumb = $gcEntity !== '' ? $gcEntity : _('Home');
+            $topbar = div(
+                button("<i class='ri-menu-line'></i>", "type='button' class='menu-btn' aria-label='" . _('Menu') . "'")
+                . span(htmlspecialchars($gcCrumb), "class='app-topbar-title'"),
+                '',
+                "class='app-topbar'"
+            );
         }else{
             $pannelStylesOverride = "style='width: 100%;transform: none;'";
         }
@@ -189,8 +264,11 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
             . body(
                 $pageLoader
                 . $leftPannel
+                . $drawer
+                . $dim
                 . div(
-                    div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
+                    $topbar
+                    . div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
                     . div('', 'editPane', 'class="edit-pane-hidden"'),
                     '',
                     'class="center-panel" '.$pannelStylesOverride

@@ -126,53 +126,59 @@ trait FormHelper
     public function getPager($pmpoData, $resultsCount, $search)
     {
 
-        $top_button = '';
-        if (!$this->isChild) {
-            $top_button = button(span(_('Top')), "class='scroll-top'");
-            $perPage = $this->maxPerPage;
+        if (get_class($pmpoData) != 'PropelModelPager') {
+            return '';
+        }
+
+        $cur = (int) ($search['page'] ?? 1);
+        if ($cur < 1) {
+            $cur = 1;
+        }
+        $last = (int) $pmpoData->getLastPage();
+        if ($last < 1) {
+            $last = 1;
+        }
+
+        // Hidden carrier — the vanilla list client reads #page value +
+        // data-total to drive prev/next (server contract §5). Kept even
+        // when there is a single page so the client degrades gracefully.
+        $pageInput = input('hidden', 'page', $cur, 'data-total="' . $last . '"');
+
+        // Guideline pager copy: "{shown} of {total}" (06-countries-list /
+        // desktop/02-countries). `shown` is the upper bound of the rows
+        // visible on the current page so a single-page list reads
+        // "N of N" and a paged one reads "20 of 22" → "22 of 22".
+        $perPage = (int) (method_exists($pmpoData, 'getMaxPerPage') ? $pmpoData->getMaxPerPage() : 0);
+        $shown = ($perPage > 0) ? min($cur * $perPage, (int) $resultsCount) : (int) $resultsCount;
+        $countLabel = span(
+            $shown . ' ' . _('of') . ' ' . $resultsCount,
+            "class='va-mob-pager-count'"
+        );
+
+        if ($pmpoData->haveToPaginate()) {
+            $prevCls = ($cur <= 1) ? 'pgr-btn prev disabled' : 'pgr-btn prev';
+            $nextCls = ($cur >= $last) ? 'pgr-btn next disabled' : 'pgr-btn next';
+            $controls = div(
+                button("<i class='ri-arrow-left-s-line'></i>", "class='{$prevCls}' data-direction='prev'")
+                    . button("<i class='ri-arrow-right-s-line'></i>", "class='{$nextCls}' data-direction='next'"),
+                '',
+                "class='pgr' id='{$this->TableName}Pager'"
+            );
+            $pager = div(
+                $countLabel . $pageInput . $controls,
+                '',
+                "class='va-mob-pager pagination-wrapper' data-total-item='{$resultsCount}'"
+            );
         } else {
-            $perPage = $this->childMaxPerPage;
+            $pager = div(
+                $countLabel
+                    . $pageInput
+                    . div('', '', "class='pgr' id='{$this->TableName}Pager'"),
+                '',
+                "class='va-mob-pager pagination-wrapper' data-total-item='{$resultsCount}'"
+            );
         }
 
-        if (get_class($pmpoData) == 'PropelModelPager') {
-
-            if ($pmpoData->haveToPaginate()) {
-                $pager = div(
-                    p('', "class='selectedCount'")
-                        . p(span($perPage) . ' ' . _('per page') . ' - total ' . span($resultsCount), "class='count'")
-                        . div(
-                            href(span(_('Previous')), '#', "class='prev' data-direction='prev'")
-                                . input('text', 'page', $search['page'], 'data-total="' . $pmpoData->getLastPage() . '"')
-                                . p('/ ' . $pmpoData->getLastPage())
-                                . href(span(_('Next')), '#', "class='next' data-direction='next'"),
-                            '',
-                            "id='{$this->TableName}Pager'"
-                        ),
-                    '',
-                    "class='pagination-wrapper' data-total-item='{$resultsCount}'"
-                );
-            } else {
-                $pager = div(
-                    p('', "class='selectedCount'")
-                        . p(span($resultsCount) . ' ' . $this->TableName, "class='count'"),
-                    '',
-                    "class='pagination-wrapper' data-total-item='{$resultsCount}'"
-                );
-            }
-        }
-
-        if (!$this->isChild) {
-            $pagerRow =
-                div(
-                    $top_button
-                        . $pager,
-                    'cntPagerRow',
-                    "class='navigation-wrapper'"
-                );
-        } else {
-            $pagerRow = $pager;
-        }
-
-        return $pagerRow;
+        return $pager;
     }
 }

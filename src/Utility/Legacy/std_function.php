@@ -232,7 +232,7 @@ function isMobile()
 }
 
 // @FORMFIELD
-function stdFieldRow($label, $input, $name = '', $formUnit = '', $comments = '', $comments_css = '', $addClass = '', $options = '', $isCheckbox = 'no')
+function stdFieldRow($label, $input, $name = '', $formUnit = '', $comments = '', $comments_css = '', $addClass = '', $options = '', $isCheckbox = 'no', $variant = '')
 {
     $checkboxLabel = '';
     $hasUnit = '';
@@ -242,6 +242,19 @@ function stdFieldRow($label, $input, $name = '', $formUnit = '', $comments = '',
 
     if ($isCheckbox == 'yes') {
         $checkboxLabel = label('', "for='" . $name . "'");
+    }
+
+    // v2 = guideline mobile edit-form row: <div class="form-row">
+    //   <span class="lbl">Label</span> <input …></div>. No divtr/divtd/
+    //   label[for] grid; _formv2.scss styles .form-row inside .form-card.
+    if ($variant === 'v2') {
+        return
+            div(
+                span($label, "class='lbl'")
+                    . $input . $formUnit . $comments . $checkboxLabel,
+                "",
+                " class='form-row " . $comments_css . $addClass . "' " . $options . " "
+            );
     }
 
     return

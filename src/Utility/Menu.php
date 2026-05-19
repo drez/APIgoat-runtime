@@ -47,9 +47,10 @@ class Menu
             $this->underIndex++;
 
             $this->subTabs[$Parent][$this->underIndex][0] =
-                li(
-                    htmlLink(_($Name), _SITE_URL . $Model, " class='" . $class . "' j=sm_a "),
-                    "  title='" . _($Name) . "' j='sm'  id='menu_" . $Model . "'  "
+                htmlLink(
+                    "<i class='ri-circle-line'></i>" . span(_($Name), "class='dr-item-label'"),
+                    _SITE_URL . $Model,
+                    " class='dr-item " . $class . "' j='sm_a' entite='" . $Model . "' title='" . _($Name) . "' id='menu_" . $Model . "' "
                 );
 
             $this->subTabs[$Parent][$this->underIndex][1] = $Position;
@@ -71,7 +72,7 @@ class Menu
                 if ($subtitle !== $currentSubtitle) {
                     $currentSubtitle = $subtitle;
                     if ($currentSubtitle) {
-                        $subTabsLi .= li(span(_($currentSubtitle)), 'class="menu-subtitle"');
+                        $subTabsLi .= div(_($currentSubtitle), '', 'class="dr-section"');
                     }
                 }
                 $subTabsLi .= $row[0];
@@ -100,30 +101,34 @@ class Menu
                     }
 
                     if ($this->subTabs[$Model]) {
-                        $tabsSub = ul(
-                            $this->buildSubMenu($this->subTabs[$Model]),
-                            ' class="sub-menu" '
-                        );
-                        $link = 'javascript:void(0);';
+                        // Parent with children → guideline .dr-section
+                        // label + .dr-sub group of .dr-item children.
+                        $this->menu .= div(_($Name), '', 'class="dr-section"')
+                            . div(
+                                $this->buildSubMenu($this->subTabs[$Model]),
+                                '',
+                                'class="dr-sub ac-menu" entite="' . $Model . '" id="menu_' . $Model . '"'
+                            );
                     } else {
                         if (isset($alertsCount[$Model])) {
-                            $count = span($alertsCount[$Model], 'data-entity="' . $Model . '" class="ac-alert-count"');
+                            $count = span($alertsCount[$Model], 'class="dr-item-tag"');
                         }
+                        $this->menu .= htmlLink(
+                            "<i class='ri-circle-line'></i>"
+                                . span(_($Name), "class='dr-item-label'")
+                                . $count,
+                            $link,
+                            "data-nav='" . $this->indexMenu . "' j='menu' entite='" . $Model . "' id='menu_" . $Model . "' title='" . _($Name) . "' class='dr-item " . $class . "'"
+                        );
                     }
-                    if (strpos($tabsSub, 'ac-alert-count') && empty($count)) {
-                        $parentCount = span('!', 'class="ac-alert-count"');
-                    }
-
-                    $this->menu .= li(
-                        htmlLink(_($Name) . $parentCount . $count, $link, "data-nav='" . $this->indexMenu . "'  j='menu' entite='" . $Model . "' id='menu_" . $Model . "' title='" . _($Name) . "' class='" . $class . "'")
-                            . $tabsSub,
-                        ' id="menu_' . $Model . '" '
-                    );
                     $this->indexMenu++;
                 }
             }
 
-            $this->menu = ul($this->menu . li(href(_("Logout"), _SITE_URL . 'Authy/logout', 'class="disconnect"')), "class='ac-menu' ");
+            // .dr-* items are wrapped by BuilderLayout in .dr-scroll;
+            // keep an .ac-menu hook so shell.js' nav-link close still
+            // matches. Logout moved to the guideline .dr-footer.
+            $this->menu = div($this->menu, '', "class='ac-menu' ");
         }
 
         return $this->menu;
@@ -133,5 +138,10 @@ class Menu
     {
 
         return $this->subTabs;
+    }
+
+    public function getRequested()
+    {
+        return $this->requested;
     }
 }
