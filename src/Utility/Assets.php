@@ -520,9 +520,12 @@ class Assets
     protected function cssPipeline()
     {
         // If a custom minifier has been set use it, otherwise fallback to default
+        // No bundled CSS minifier (ApiGoat\Utility\CSSmin does not exist and
+        // there is no minifier dependency). The default is an explicit
+        // pass-through: bundles are concatenated, not minified. A real
+        // minifier can be injected via $this->css_minifier.
         $minifier = (isset($this->css_minifier)) ? $this->css_minifier : function ($buffer) {
-            $min = new CSSmin();
-            return $min->minify($buffer);
+            return $buffer;
         };
         return $this->pipeline($this->css, '.css', $this->css_dir, $minifier);
     }
@@ -534,8 +537,11 @@ class Assets
     protected function jsPipeline()
     {
         // If a custom minifier has been set use it, otherwise fallback to default
+        // No bundled JS minifier (ApiGoat\Utility\JSMin does not exist).
+        // Default is an explicit pass-through; inject $this->js_minifier
+        // to enable real minification.
         $minifier = (isset($this->js_minifier)) ? $this->js_minifier : function ($buffer) {
-            return JSMin::minify($buffer);
+            return $buffer;
         };
         return $this->pipeline($this->js, '.js', $this->js_dir, $minifier);
     }
@@ -634,20 +640,38 @@ class Assets
 
         foreach ($links as $link) {
             $originalLink = $link;
+
+            // Same-origin (_SITE_URL-prefixed) links are local project
+            // assets. Fetching them over HTTP silently injects the app's
+            // redirect/login HTML into the bundle whenever the file is
+            // missing or auth-gated, which corrupts every asset packed
+            // after it. Resolve these to a filesystem path and read from
+            // disk instead.
+            $isSiteLocal = (defined('_SITE_URL') && _SITE_URL !== '' && strpos($link, _SITE_URL) === 0);
+
             // Get real link path
-            if ($this->isRemoteLink($link)) {
-                // Add current protocol to agnostic links
+            if ($this->isRemoteLink($link) && ! $isSiteLocal) {
+                // Genuinely remote (CDN / cross-origin) — fetch over HTTP.
                 if ('//' === substr($link, 0, 2)) {
                     $protocol = (isset($_SERVER['HTTPS']) and ! empty($_SERVER['HTTPS']) and $_SERVER['HTTPS'] !== 'off') ? 'https:' : 'http:';
                     $link     = $protocol . $link;
                 }
             } else {
-                $link = realpath(_BASE_DIR . $this->public_dir . $link);
+                if ($isSiteLocal) {
+                    $path = _BASE_DIR . $this->public_dir . '/' . ltrim(substr($link, strlen(_SITE_URL)), '/');
+                } else {
+                    $path = _BASE_DIR . $this->public_dir . $link;
+                }
 
-                if ($link === false) {
-                    throw new \Exception("File not found : base(" . _BASE_DIR . $this->public_dir . ")" . $originalLink);
+                // Check existence before loading: a missing asset must
+                // warn and be skipped, never abort the build and never
+                // poison the bundle with an error page.
+                if (! file_exists($path)) {
+                    trigger_error("Asset not found, skipped : " . $originalLink . " (looked in " . $path . ")", E_USER_WARNING);
                     continue;
                 }
+
+                $link = realpath($path);
             }
             // Fetch link content
             $arrContextOptions = [
@@ -671,7 +695,7 @@ class Assets
             }
 
             // Minify
-            $buffer .= "/*" . $link . "*/" . (preg_match($this->no_minification_regex, $originalLink)) ? $content : $minifier->__invoke($content);
+            $buffer .= "/*" . $link . "*/" . (preg_match($this->no_minification_regex, $originalLink) ? $content : $minifier->__invoke($content));
 
             // Avoid JavaScript minification problems
             $buffer .= PHP_EOL;

@@ -96,7 +96,7 @@ class Menu
 
             $this->subTabs[$Parent][$this->underIndex][0] =
                 htmlLink(
-                    "<i class='ri-circle-line'></i>" . span(_($Name), "class='dr-item-label'") . $count,
+                    "<i class='ri-checkbox-blank-circle-line'></i>" . span(_($Name), "class='dr-item-label'") . $count,
                     _SITE_URL . $Model,
                     " class='dr-item " . $class . "' j='sm_a' entite='" . $Model . "' title='" . _($Name) . "' id='menu_" . $Model . "' "
                 );
@@ -163,7 +163,7 @@ class Menu
                             $count = span((int) $rowCount, 'class="dr-item-tag"');
                         }
                         $this->menu .= htmlLink(
-                            "<i class='ri-circle-line'></i>"
+                            "<i class='ri-checkbox-blank-circle-line'></i>"
                                 . span(_($Name), "class='dr-item-label'")
                                 . $count,
                             $link,
