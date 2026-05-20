@@ -7,6 +7,7 @@ class Menu
 
     public $subTabs = [];
     public $tabs = [];
+    public $icons = [];
     public $menu = '';
 
     private $requested = false;
@@ -40,17 +41,20 @@ class Menu
         return true;
     }
 
-    public function addItem($Name, $Model = '')
+    public function addItem($Name, $Model = '', $Icon = null)
     {
         if (empty($Model)) {
             $Model = $Name;
         }
         if (!isset($this->tabs[$Model])) {
             $this->tabs[$Model] = $Name;
+            if ($Icon) {
+                $this->icons[$Model] = $Icon;
+            }
         }
     }
 
-    public function addUnder($Parent, $Name, $Model, $Position = 0, $Subtitle = null)
+    public function addUnder($Parent, $Name, $Model, $Position = 0, $Subtitle = null, $Icon = null)
     {
         if ($_SESSION[_AUTH_VAR]->get('group') === 'Admin' || $_SESSION[_AUTH_VAR]->hasMenu($Model)) {
             $class = '';
@@ -65,9 +69,11 @@ class Menu
                 $count = span((int) $rowCount, 'class="dr-item-tag"');
             }
 
+            $glyph = $Icon ?: 'ri-checkbox-blank-circle-line';
+
             $this->subTabs[$Parent][$this->underIndex][0] =
                 htmlLink(
-                    "<i class='ri-checkbox-blank-circle-line'></i>" . span(_($Name), "class='dr-item-label'") . $count,
+                    "<i class='" . htmlspecialchars($glyph) . "'></i>" . span(_($Name), "class='dr-item-label'") . $count,
                     _SITE_URL . $Model,
                     " class='dr-item " . $class . "' j='sm_a' entite='" . $Model . "' title='" . _($Name) . "' id='menu_" . $Model . "' "
                 );
@@ -133,8 +139,9 @@ class Menu
                         if ($rowCount !== null) {
                             $count = span((int) $rowCount, 'class="dr-item-tag"');
                         }
+                        $glyph = $this->icons[$Model] ?? 'ri-checkbox-blank-circle-line';
                         $this->menu .= htmlLink(
-                            "<i class='ri-checkbox-blank-circle-line'></i>"
+                            "<i class='" . htmlspecialchars($glyph) . "'></i>"
                                 . span(_($Name), "class='dr-item-label'")
                                 . $count,
                             $link,

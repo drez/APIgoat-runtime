@@ -26,10 +26,10 @@ class BuilderMenus
 
         foreach ($menus as $item) {
             if ($item['parent_menu']) {
-                $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index'], $item['subtitle'] ?? null);
+                $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index'], $item['subtitle'] ?? null, $item['icon'] ?? null);
                 $parents[$item['parent_menu']] = true;
             } else {
-                $Menu->addItem(_($item['desc']), $item['name']);
+                $Menu->addItem(_($item['desc']), $item['name'], $item['icon'] ?? null);
                 unset($parents[$item['name']]);
             }
         }
