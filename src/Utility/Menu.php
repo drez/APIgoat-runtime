@@ -69,11 +69,13 @@ class Menu
                 $count = span((int) $rowCount, 'class="dr-item-tag"');
             }
 
-            $glyph = $Icon ?: 'ri-checkbox-blank-circle-line';
+            $glyphHtml = $Icon
+                ? "<i class='" . htmlspecialchars($Icon) . "'></i>"
+                : "<i class='dr-item-dot' aria-hidden='true'></i>";
 
             $this->subTabs[$Parent][$this->underIndex][0] =
                 htmlLink(
-                    "<i class='" . htmlspecialchars($glyph) . "'></i>" . span(_($Name), "class='dr-item-label'") . $count,
+                    $glyphHtml . span(_($Name), "class='dr-item-label'") . $count,
                     _SITE_URL . $Model,
                     " class='dr-item " . $class . "' j='sm_a' entite='" . $Model . "' title='" . _($Name) . "' id='menu_" . $Model . "' "
                 );
@@ -139,9 +141,12 @@ class Menu
                         if ($rowCount !== null) {
                             $count = span((int) $rowCount, 'class="dr-item-tag"');
                         }
-                        $glyph = $this->icons[$Model] ?? 'ri-checkbox-blank-circle-line';
+                        $iconStr = $this->icons[$Model] ?? null;
+                        $glyphHtml = $iconStr
+                            ? "<i class='" . htmlspecialchars($iconStr) . "'></i>"
+                            : "<i class='dr-item-dot' aria-hidden='true'></i>";
                         $this->menu .= htmlLink(
-                            "<i class='" . htmlspecialchars($glyph) . "'></i>"
+                            $glyphHtml
                                 . span(_($Name), "class='dr-item-label'")
                                 . $count,
                             $link,

@@ -200,7 +200,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
             $gcProj = ucfirst($gcProj);
             $drawer = div(
                 div(
-                    div("<i class='ri-apps-2-fill'></i>", '', "class='dr-logo-mark'")
+                    href("<i class='ri-apps-2-fill'></i>", _SITE_URL, " class='dr-logo-mark' title='" . _('Dashboard') . "' ")
                     . div(
                         span(htmlspecialchars($gcProj))
                         . ($gcUser !== '' ? "<small>" . htmlspecialchars($gcUser) . "</small>" : ''),
