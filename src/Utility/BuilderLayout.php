@@ -248,7 +248,8 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
             $gcCrumb = $gcEntity !== '' ? $gcEntity : _('Home');
             $topbar = div(
                 button("<i class='ri-menu-line'></i>", "type='button' class='menu-btn' aria-label='" . _('Menu') . "'")
-                . span(htmlspecialchars($gcCrumb), "class='app-topbar-title'"),
+                . span(htmlspecialchars($gcCrumb), "class='app-topbar-title'")
+                . div('', 'appTopbarActions', "class='app-topbar-actions'"),
                 '',
                 "class='app-topbar'"
             );

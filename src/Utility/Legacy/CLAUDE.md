@@ -7,6 +7,20 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #4322 | 11:33 AM | 🔵 | Mapped GoatCheese form generation system for mobile refactor | ~483 |
-| #4319 | 11:25 AM | 🔵 | Examined legacy HTML helper functions and guideline directory structure | ~569 |
+| #4395 | 2:38 PM | 🟣 | Builder-native v2 markup emission architecture implemented | ~470 |
+| #4391 | 2:26 PM | 🟣 | Added v2 variant to stdFieldRow for guideline form-row markup | ~190 |
+| #4374 | 1:51 PM | ✅ | Created emitter-to-guideline markup change specification | ~425 |
+
+### May 19, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #4598 | 12:00 PM | ✅ | Plan amendments expanded to mandate data-agnostic coverage of all input types, child tables, and hook anchor preservation | ~830 |
+| #4597 | 11:59 AM | ✅ | Created comprehensive scope inventories documenting 13 input types, 20 hook extension points, and child list rendering architecture | ~874 |
+
+### May 20, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #5019 | 3:30 PM | 🔵 | File upload form missing plupload initialization in generated code | ~356 |
 </claude-mem-context>

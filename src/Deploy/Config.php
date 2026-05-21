@@ -220,7 +220,11 @@ if(!isset(\$skipConfig)){
     }
 
 	if (php_sapi_name() != 'cli') {
-   	 	define("_SITE_URL", "https://" . \$_SERVER['SERVER_NAME'] . _SUB_DIR_URL);
+		\$_gcScheme = ((!empty(\$_SERVER['HTTPS']) && \$_SERVER['HTTPS'] !== 'off')
+			|| (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && \$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+			|| (isset(\$_SERVER['REQUEST_SCHEME']) && \$_SERVER['REQUEST_SCHEME'] === 'https')
+			|| (isset(\$_SERVER['SERVER_PORT']) && (int) \$_SERVER['SERVER_PORT'] === 443)) ? 'https' : 'http';
+   	 	define("_SITE_URL", \$_gcScheme . "://" . \$_SERVER['SERVER_NAME'] . _SUB_DIR_URL);
 	} else {
         define("_SITE_URL", "");
     }
