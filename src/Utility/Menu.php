@@ -10,9 +10,14 @@ class Menu
     public $icons = [];
     public $menu = '';
 
+    public $foldedGroups = [];
+    public $groupIcon = [];
+    public $groupColor = [];
+
     private $requested = false;
     private $indexMenu = 0;
     private $underIndex = 0;
+    private $groupHasActive = [];
 
     public function __construct($requested, $defaultClass = [])
     {
@@ -60,6 +65,7 @@ class Menu
             $class = '';
             if ($this->requested == $Model) {
                 $class = 'active';
+                $this->groupHasActive[$Parent] = true;
             }
             $this->underIndex++;
 
@@ -128,13 +134,40 @@ class Menu
                     }
 
                     if ($this->subTabs[$Model]) {
-                        // Parent with children → guideline .dr-section
+                        // Parent with children → collapsible .dr-section
                         // label + .dr-sub group of .dr-item children.
-                        $this->menu .= div(_($Name), '', 'class="dr-section"')
+                        // set_menu drives the optional icon, color accent
+                        // and default fold (auto-expanded if it holds the
+                        // active page).
+                        $isFolded = !empty($this->foldedGroups[$Model])
+                            && empty($this->groupHasActive[$Model]);
+                        $groupIcon  = $this->groupIcon[$Model] ?? null;
+                        $groupColor = $this->groupColor[$Model] ?? null;
+
+                        $secClass = 'dr-section dr-section-foldable'
+                            . ($isFolded ? ' is-folded' : '')
+                            . ($groupColor ? ' has-group-color' : '');
+                        $secAttr = 'class="' . $secClass . '"'
+                            . ' data-menu-group="' . htmlspecialchars($Model) . '"'
+                            . ($groupColor
+                                ? ' style="--dr-group-color:' . htmlspecialchars($groupColor) . '"'
+                                : '');
+
+                        $iconHtml = $groupIcon
+                            ? "<i class='dr-section-icon " . htmlspecialchars($groupIcon) . "'></i>"
+                            : '';
+                        $chevron = "<i class='dr-fold-chevron ri-arrow-down-s-line' aria-hidden='true'></i>";
+
+                        $this->menu .= div(
+                                $iconHtml . span(_($Name), "class='dr-section-label'") . $chevron,
+                                '',
+                                $secAttr
+                            )
                             . div(
                                 $this->buildSubMenu($this->subTabs[$Model]),
                                 '',
-                                'class="dr-sub ac-menu" entite="' . $Model . '" id="menu_' . $Model . '"'
+                                'class="dr-sub ac-menu' . ($isFolded ? ' is-folded' : '')
+                                    . '" entite="' . $Model . '" id="menu_' . $Model . '"'
                             );
                     } else {
                         $rowCount = $this->countFor($Model);
