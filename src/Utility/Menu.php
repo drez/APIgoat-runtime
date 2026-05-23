@@ -151,7 +151,7 @@ class Menu
                         // active page).
                         $isFolded = !empty($this->foldedGroups[$Model])
                             && empty($this->groupHasActive[$Model]);
-                        $groupIcon  = $this->groupIcon[$Model] ?? null;
+                        $groupIcon  = $this->groupIcon[$Model] ?? ($this->icons[$Model] ?? null);
                         $groupColor = $this->groupColor[$Model] ?? null;
 
                         $secClass = 'dr-section dr-section-foldable'

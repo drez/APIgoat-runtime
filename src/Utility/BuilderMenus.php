@@ -42,7 +42,9 @@ class BuilderMenus
         }
 
         foreach ($parents as $name => $parent) {
-            $Menu->addItem(_($name), $name);
+            if (!isset($Menu->tabs[$name])) {
+                $Menu->addItem(_($name), $name);
+            }
         }
 
         $Menu->foldedGroups = $folded;
