@@ -8,6 +8,7 @@ class Menu
     public $subTabs = [];
     public $tabs = [];
     public $icons = [];
+    public $routeOverrides = [];
     public $menu = '';
 
     public $foldedGroups = [];
@@ -46,7 +47,7 @@ class Menu
         return true;
     }
 
-    public function addItem($Name, $Model = '', $Icon = null)
+    public function addItem($Name, $Model = '', $Icon = null, $routeOverride = null)
     {
         if (empty($Model)) {
             $Model = $Name;
@@ -56,10 +57,13 @@ class Menu
             if ($Icon) {
                 $this->icons[$Model] = $Icon;
             }
+            if ($routeOverride !== null) {
+                $this->routeOverrides[$Model] = $routeOverride;
+            }
         }
     }
 
-    public function addUnder($Parent, $Name, $Model, $Position = 0, $Subtitle = null, $Icon = null)
+    public function addUnder($Parent, $Name, $Model, $Position = 0, $Subtitle = null, $Icon = null, $routeOverride = null)
     {
         if ($_SESSION[_AUTH_VAR]->get('group') === 'Admin' || $_SESSION[_AUTH_VAR]->hasMenu($Model)) {
             $class = '';
@@ -79,10 +83,12 @@ class Menu
                 ? "<i class='" . htmlspecialchars($Icon) . "'></i>"
                 : "<i class='dr-item-dot' aria-hidden='true'></i>";
 
+            $url = $routeOverride !== null ? _SITE_URL . $routeOverride : _SITE_URL . $Model;
+
             $this->subTabs[$Parent][$this->underIndex][0] =
                 htmlLink(
                     $glyphHtml . span(_($Name), "class='dr-item-label'") . $count,
-                    _SITE_URL . $Model,
+                    $url,
                     " class='dr-item " . $class . "' j='sm_a' entite='" . $Model . "' title='" . _($Name) . "' id='menu_" . $Model . "' "
                 );
 
@@ -123,7 +129,9 @@ class Menu
                     $this->menu .= $Name['html'];
                     $this->indexMenu++;
                 } elseif ($_SESSION[_AUTH_VAR]->get('group') === 'Admin' || $_SESSION[_AUTH_VAR]->hasMenu($Model)) {
-                    $link = _SITE_URL . $Model . '';
+                    $link = isset($this->routeOverrides[$Model])
+                        ? _SITE_URL . $this->routeOverrides[$Model]
+                        : _SITE_URL . $Model;
                     $tabsSub = "";
 
                     $parentCount = $count = '';

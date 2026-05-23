@@ -27,7 +27,7 @@ class BuilderMenus
 
         foreach ($menus as $item) {
             if ($item['parent_menu']) {
-                $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index'], $item['subtitle'] ?? null, $item['icon'] ?? null);
+                $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index'], $item['subtitle'] ?? null, $item['icon'] ?? null, $item['route'] ?? null);
                 $parents[$item['parent_menu']] = true;
                 $p = $item['parent_menu'];
                 // The emitter stamps identical folded/group_icon/group_color
@@ -36,7 +36,7 @@ class BuilderMenus
                 if (isset($item['group_icon']))  { $groupIcon[$p]  = $item['group_icon']; }
                 if (isset($item['group_color'])) { $groupColor[$p] = $item['group_color']; }
             } else {
-                $Menu->addItem(_($item['desc']), $item['name'], $item['icon'] ?? null);
+                $Menu->addItem(_($item['desc']), $item['name'], $item['icon'] ?? null, $item['route'] ?? null);
                 unset($parents[$item['name']]);
             }
         }
