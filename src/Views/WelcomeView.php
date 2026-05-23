@@ -58,8 +58,12 @@ class WelcomeView
         if (empty($username)) {
             $username = _('there');
         }
-        $dateLong = (new \IntlDateFormatter('en_US', \IntlDateFormatter::FULL, \IntlDateFormatter::NONE))
-            ->format(new \DateTimeImmutable('now'));
+        if (class_exists('IntlDateFormatter')) {
+            $dateLong = (new \IntlDateFormatter('en_US', \IntlDateFormatter::FULL, \IntlDateFormatter::NONE))
+                ->format(new \DateTimeImmutable('now'));
+        } else {
+            $dateLong = (new \DateTimeImmutable('now'))->format('l, F j, Y');
+        }
 
         $greeting = div(
             h1("Welcome, " . htmlspecialchars($username) . " 👋")
@@ -80,7 +84,9 @@ class WelcomeView
                 $appStatusId  = $Config->getIdConfig();
                 continue;
             }
-            if ($Config->getConfig() === 'api_ips') { $hasAPI = true; }
+            if ($Config->getConfig() === 'api_ips') {
+                $hasAPI = true;
+            }
             $categoryBuckets[$Config->getCategory()][] = $Config;
         }
 
@@ -121,7 +127,7 @@ class WelcomeView
                         label($Config->getConfig())
                             . input('text', 'Value', htmlentities($Config->getValue()), "config='" . $Config->getConfig() . "' ag_save='Config'")
                             . input('hidden', 'IdConfig', $Config->getIdConfig(), "ag_save='Config'")
-                            . div($Config->getDescription(), '', "class='explain'"),
+                            . div(htmlspecialchars($Config->getDescription() ?? ''), '', "class='explain'"),
                         "id='form_" . $Config->getConfig() . "'"
                     ),
                     '', "class='form-row'"
@@ -129,7 +135,7 @@ class WelcomeView
             }
             $cards .= div(
                 div(
-                    div(div($category, '', "class='nav-title'"), '', "class='form-nav'"),
+                    div(div(htmlspecialchars($category), '', "class='nav-title'"), '', "class='form-nav'"),
                     '', "class='sw-header'"
                 ) . div($cardBody, '', "class='sw-body'"),
                 '', "class='sw-drawer proto-form'"
