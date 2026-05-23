@@ -47,7 +47,7 @@ class Menu
         return true;
     }
 
-    public function addItem($Name, $Model = '', $Icon = null, $routeOverride = null)
+    public function addItem($Name, $Model = '', $Icon = null, $RouteOverride = null)
     {
         if (empty($Model)) {
             $Model = $Name;
@@ -57,13 +57,13 @@ class Menu
             if ($Icon) {
                 $this->icons[$Model] = $Icon;
             }
-            if ($routeOverride !== null) {
-                $this->routeOverrides[$Model] = $routeOverride;
+            if ($RouteOverride !== null && $RouteOverride !== '') {
+                $this->routeOverrides[$Model] = $RouteOverride;
             }
         }
     }
 
-    public function addUnder($Parent, $Name, $Model, $Position = 0, $Subtitle = null, $Icon = null, $routeOverride = null)
+    public function addUnder($Parent, $Name, $Model, $Position = 0, $Subtitle = null, $Icon = null, $RouteOverride = null)
     {
         if ($_SESSION[_AUTH_VAR]->get('group') === 'Admin' || $_SESSION[_AUTH_VAR]->hasMenu($Model)) {
             $class = '';
@@ -83,7 +83,9 @@ class Menu
                 ? "<i class='" . htmlspecialchars($Icon) . "'></i>"
                 : "<i class='dr-item-dot' aria-hidden='true'></i>";
 
-            $url = $routeOverride !== null ? _SITE_URL . $routeOverride : _SITE_URL . $Model;
+            $url = ($RouteOverride !== null && $RouteOverride !== '')
+                ? _SITE_URL . $RouteOverride
+                : _SITE_URL . $Model;
 
             $this->subTabs[$Parent][$this->underIndex][0] =
                 htmlLink(
