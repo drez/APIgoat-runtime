@@ -92,7 +92,7 @@ class WelcomeView
 
         $cards = '';
 
-        // App state card (always first when present)
+        // App state card — always rendered on top, never inside the tabs.
         if ($appStatusRow) {
             $checked = ($appStatusRow->getValue() === 'prod') ? 'checked=true' : '';
             $cards .= div(
@@ -118,11 +118,30 @@ class WelcomeView
             );
         }
 
-        // One card per Category
+        // Everything else (per-Category Config blocks + optional API
+        // security block) goes into a single tabbed card. Tabs share the
+        // same data-tab/.is-active/[hidden] contract used by Form.php +
+        // drawer.js so once the JS bundle catches up they're handled by
+        // the same vanilla logic; the inline <script> below covers the
+        // pre-rebuild window.
+        $tabButtons = '';
+        $tabPanes = '';
+        $firstTab = true;
+        $slug = function ($s) {
+            return 'welTab_' . preg_replace('/[^a-zA-Z0-9]+/', '_', (string) $s);
+        };
+
         foreach ($categoryBuckets as $category => $rows) {
-            $cardBody = '';
+            $tabId = $slug($category);
+            $activeCls = $firstTab ? ' is-active' : '';
+            $selected = $firstTab ? 'true' : 'false';
+            $hiddenAttr = $firstTab ? '' : ' hidden';
+
+            $tabButtons .= "<button type='button' class='welcome-tab-btn" . $activeCls . "' role='tab' data-tab='" . $tabId . "' aria-selected='" . $selected . "'>" . htmlspecialchars($category) . "</button>";
+
+            $paneBody = '';
             foreach ($rows as $Config) {
-                $cardBody .= div(
+                $paneBody .= div(
                     form(
                         label($Config->getConfig())
                             . input('text', 'Value', htmlentities($Config->getValue()), "config='" . $Config->getConfig() . "' ag_save='Config'")
@@ -133,42 +152,113 @@ class WelcomeView
                     '', "class='form-row'"
                 );
             }
-            $cards .= div(
-                div(
-                    div(div(htmlspecialchars($category), '', "class='nav-title'"), '', "class='form-nav'"),
-                    '', "class='sw-header'"
-                ) . div($cardBody, '', "class='sw-body'"),
-                '', "class='sw-drawer proto-form'"
-            );
+            $tabPanes .= "<div id='" . $tabId . "' class='welcome-tab-pane" . $activeCls . "' role='tabpanel' data-tab='" . $tabId . "'" . $hiddenAttr . ">" . $paneBody . "</div>";
+            $firstTab = false;
         }
 
-        // API security card (last, only when $hasAPI)
         if ($hasAPI) {
+            $tabId = $slug('apisec');
+            $activeCls = $firstTab ? ' is-active' : '';
+            $selected = $firstTab ? 'true' : 'false';
+            $hiddenAttr = $firstTab ? '' : ' hidden';
+
+            $tabButtons .= "<button type='button' class='welcome-tab-btn" . $activeCls . "' role='tab' data-tab='" . $tabId . "' aria-selected='" . $selected . "'>" . _('API security') . "</button>";
+
+            $tabPanes .= "<div id='" . $tabId . "' class='welcome-tab-pane" . $activeCls . "' role='tabpanel' data-tab='" . $tabId . "'" . $hiddenAttr . ">"
+                . div(
+                    div(_("Before using the API, please make yourself familiar with:"))
+                        . ul(
+                            li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/api-acl/'>" . _("Rule Based Access List") . "</a>")
+                                . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/permissions/'>" . _("App Permissions") . "</a>")
+                                . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/api/rest-api-basics/'>" . _("Overall query/response dynamic") . "</a>")
+                        ),
+                    '', "class='form-row'"
+                )
+                . "</div>";
+            $firstTab = false;
+        }
+
+        if ($tabButtons !== '') {
             $cards .= div(
-                div(
-                    div(div(_('API security'), '', "class='nav-title'"), '', "class='form-nav'"),
-                    '', "class='sw-header'"
-                ) . div(
-                    div(
-                        div(_("Before using the API, please make yourself familiar with:"))
-                            . ul(
-                                li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/api-acl/'>" . _("Rule Based Access List") . "</a>")
-                                    . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/permissions/'>" . _("App Permissions") . "</a>")
-                                    . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/api/rest-api-basics/'>" . _("Overall query/response dynamic") . "</a>")
-                            ),
-                        '', "class='form-row'"
-                    ),
-                    '', "class='sw-body'"
-                ),
-                '', "class='sw-drawer proto-form'"
+                "<div class='welcome-tabnav' role='tablist'>" . $tabButtons . "</div>"
+                . "<div class='welcome-tab-panes sw-body'>" . $tabPanes . "</div>",
+                '', "class='sw-drawer proto-form welcome-tabbed-card'"
             );
         }
 
-        $return['html'] = swheader() . div(
+        // Self-contained baseline so the welcome screen looks right
+        // even before _welcomev2.scss / _formv2.scss are compiled into
+        // main.css (which only happens on `gc build` followed by an
+        // asset-pipeline cache miss). Scoped to .welcome-screen so it
+        // never bleeds into other views; compiled SCSS will override
+        // anything where the cascade prefers it.
+        $welcomeBaseline = <<<'CSS'
+.welcome-screen { padding: 24px; max-width: 760px; margin: 0 auto; box-sizing: border-box; }
+.welcome-screen .welcome-greeting { margin-bottom: 20px; }
+.welcome-screen .welcome-greeting h1 { margin: 0 0 4px; font-size: 24px; font-weight: 600; color: #0a2540; }
+.welcome-screen .welcome-date { color: rgba(0,0,0,0.55); font-size: 13px; }
+.welcome-screen .welcome-stack { display: flex; flex-direction: column; gap: 16px; }
+.welcome-screen .sw-drawer.proto-form { background: #fff; border: 1px solid #e3e8ee; border-radius: 12px; box-shadow: 0 1px 3px rgba(10,37,64,0.06); overflow: hidden; }
+.welcome-screen .sw-header { padding: 12px 18px; border-bottom: 1px solid #eef1f5; background: #fafbfd; }
+.welcome-screen .form-nav { display: flex; align-items: center; }
+.welcome-screen .nav-title { font-size: 14px; font-weight: 600; color: #0a2540; letter-spacing: -0.005em; }
+.welcome-screen .sw-body { padding: 6px 0; }
+.welcome-screen .form-row { padding: 12px 18px; border-bottom: 1px solid #eef1f5; }
+.welcome-screen .form-row:last-child { border-bottom: none; }
+.welcome-screen .form-row form { margin: 0; }
+.welcome-screen .form-row label { display: inline-block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8898aa; margin-bottom: 6px; }
+.welcome-screen .form-row label[for] { font-weight: 500; text-transform: none; letter-spacing: 0; color: #0a2540; margin-left: 6px; font-size: 13px; vertical-align: middle; }
+.welcome-screen .form-row input[type="text"] { width: 100%; height: 38px; padding: 0 12px; border: 1px solid #e3e8ee; border-radius: 8px; font-size: 14px; background: #fff; color: #0a2540; box-sizing: border-box; }
+.welcome-screen .form-row input[type="text"]:focus { outline: none; border-color: #0a2540; box-shadow: 0 0 0 3px rgba(10,37,64,0.08); }
+.welcome-screen .form-row input[type="checkbox"] { vertical-align: middle; margin: 0 2px 0 0; }
+.welcome-screen .form-row .explain { margin-top: 6px; font-size: 12px; color: #8898aa; line-height: 1.45; }
+.welcome-screen .form-row ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: #0a2540; }
+.welcome-screen .form-row a { color: #0a2540; text-decoration: underline; }
+.welcome-screen .form-row a:hover { color: #df1b41; }
+.welcome-screen .welcome-tabnav { display: flex; gap: 4px; padding: 6px 10px 0; border-bottom: 1px solid #eef1f5; background: #fafbfd; overflow-x: auto; }
+.welcome-screen .welcome-tab-btn { appearance: none; background: transparent; border: none; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #8898aa; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; letter-spacing: -0.005em; }
+.welcome-screen .welcome-tab-btn:hover { color: #0a2540; }
+.welcome-screen .welcome-tab-btn.is-active { color: #0a2540; border-bottom-color: #0a2540; }
+.welcome-screen .welcome-tab-btn:focus { outline: none; }
+.welcome-screen .welcome-tab-btn:focus-visible { box-shadow: 0 0 0 3px rgba(10,37,64,0.12); border-radius: 4px; }
+.welcome-screen .welcome-tab-panes { padding: 6px 0; }
+.welcome-screen .welcome-tab-pane[hidden] { display: none; }
+CSS;
+        // Self-contained tab toggle so the new welcome tabs work even
+        // when the cached JS bundle predates drawer.js's .sw-tabnav
+        // handler. Document-level delegation; window-flag guard prevents
+        // double-binding once drawer.js does load.
+        $tabScript = <<<'JS'
+(function(){
+  if (window.__gcWelcomeTabsInline) return;
+  window.__gcWelcomeTabsInline = true;
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest('.welcome-tab-btn');
+    if (!btn) return;
+    e.preventDefault();
+    var nav = btn.closest('.welcome-tabnav');
+    if (!nav) return;
+    var target = btn.getAttribute('data-tab');
+    if (!target) return;
+    nav.querySelectorAll('.welcome-tab-btn').forEach(function (b) {
+      var on = (b === btn);
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    var scope = nav.closest('.welcome-tabbed-card') || document;
+    scope.querySelectorAll('.welcome-tab-pane').forEach(function (p) {
+      var on = (p.getAttribute('data-tab') === target);
+      p.classList.toggle('is-active', on);
+      if (on) { p.removeAttribute('hidden'); } else { p.setAttribute('hidden', ''); }
+    });
+  }, true);
+})();
+JS;
+        $return['html'] = swheader() . "<style>" . $welcomeBaseline . "</style>" . div(
             $greeting . div($cards, '', "class='welcome-stack'"),
             '',
             "class='proto-screen welcome-screen'"
-        );
+        ) . "<script>" . $tabScript . "</script>";
 
         $return['onReadyJs'] = "
     $('[ag_save=Config]').bind('change', function (){

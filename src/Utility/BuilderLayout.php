@@ -45,6 +45,17 @@ class BuilderLayout
 </script>";
 
         // PWA meta tags and icons for iOS / Android / Windows
+        // apple-mobile-web-app-title is per-project — prefer the
+        // configured _SITE_TITLE, fall back to ucfirst(_PROJECT_NAME),
+        // and only default to "App" when neither is defined.
+        $pwaTitle = '';
+        if (defined('_SITE_TITLE') && _SITE_TITLE !== '') {
+            $pwaTitle = (string) _SITE_TITLE;
+        } elseif (defined('_PROJECT_NAME') && _PROJECT_NAME !== '') {
+            $pwaTitle = ucfirst((string) _PROJECT_NAME);
+        } else {
+            $pwaTitle = 'App';
+        }
         $pwaHeaders = '
 <style>html{background-color:#ffffff}</style>
 <link rel="manifest" href="' . _SITE_URL . 'manifest.webmanifest">
@@ -56,7 +67,7 @@ class BuilderLayout
 <link rel="icon" type="image/png" sizes="192x192" href="' . _SITE_URL . 'public/img/fav-2.1.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="AExpert">
+<meta name="apple-mobile-web-app-title" content="' . htmlspecialchars($pwaTitle, ENT_QUOTES) . '">
 <meta name="theme-color" content="#ffffff">
 <meta name="msapplication-TileImage" content="' . _SITE_URL . 'public/img/windows/Square150x150Logo.scale-200.png">
 <meta name="msapplication-TileColor" content="#ffffff">
@@ -222,6 +233,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                     '',
                     "class='dr-scroll'"
                 )
+                . $this->getImpersonatePanel()
                 . div(
                     div($gcInit, '', "class='dr-avatar'")
                     . div(
@@ -230,6 +242,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                         '',
                         "class='dr-userinfo'"
                     )
+                    . $this->getImpersonateIcon()
                     . href("<i class='ri-logout-box-r-line'></i>", _SITE_URL . 'Authy/logout', "class='dr-signout' title='" . _('Logout') . "' aria-label='" . _('Logout') . "'"),
                     '',
                     "class='dr-footer'"
@@ -334,14 +347,36 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
             'class="nav"'
         );
 
-        return $nav . $this->getImpersonationBox();
+        return $nav;
     }
 
     /**
-     * Render the user-impersonation drop box for isRoot users.
-     * Empty string when the current session is not isRoot.
+     * Icon button that lives in the drawer footer; toggles the
+     * impersonation panel rendered by getImpersonatePanel(). Empty when
+     * the current session is not isRoot.
+     *
+     * Carries inline styles so it renders correctly even before
+     * _formv2.scss is recompiled into main.css. The SCSS rules in
+     * .proto-drawer .dr-impersonate-btn override these once compiled.
      */
-    private function getImpersonationBox()
+    private function getImpersonateIcon()
+    {
+        if (empty($_SESSION[_AUTH_VAR]) || ! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+            return '';
+        }
+        $inlineStyle = 'width:32px;height:32px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:#8898aa;background:transparent;border:none;cursor:pointer;font-size:18px;padding:0;line-height:1;';
+        return button(
+            "<i class='ri-user-shared-line'></i>",
+            "type='button' class='dr-impersonate-btn' aria-label='" . _('Impersonate') . "' title='" . _('Impersonate') . "' aria-controls='drImpersonatePanel' aria-expanded='false' style='" . $inlineStyle . "'"
+        );
+    }
+
+    /**
+     * Slide-up panel inside the drawer containing the impersonation
+     * autocomplete. Hidden by default; the icon in dr-footer toggles
+     * its .is-open class via shell.js. Empty when not isRoot.
+     */
+    private function getImpersonatePanel()
     {
         if (empty($_SESSION[_AUTH_VAR]) || ! $_SESSION[_AUTH_VAR]->get('isRoot')) {
             return '';
@@ -358,16 +393,59 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
         $idAuthy  = (string) $_SESSION[_AUTH_VAR]->sessVar['IdAuthy'];
         $csrf     = (string) $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'];
 
+        // `hidden` attribute provides a browser-native default-hide that
+        // works without any compiled CSS. The inline <script> below
+        // wires the toggle directly so it runs even when the bundled
+        // JS (asset pipeline cache, keyed by buildId) hasn't been
+        // refreshed yet. shell.js is intentionally NOT used for this
+        // toggle — the inline script sets window.__gcImpersonateInline
+        // as a sentinel any future bundled handler can check.
+        $panelInlineStyle = 'padding:12px 14px;border-top:1px solid #e3e8ee;background:#fff;';
+        $toggleScript = <<<'JS'
+(function(){
+  if (window.__gcImpersonateInline) return;
+  window.__gcImpersonateInline = true;
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest('.dr-impersonate-btn');
+    var panel = document.getElementById('drImpersonatePanel');
+    if (!panel) return;
+    if (btn) {
+      e.preventDefault();
+      var nowOpen = panel.hasAttribute('hidden');
+      if (nowOpen) {
+        panel.removeAttribute('hidden');
+        btn.setAttribute('aria-expanded', 'true');
+        var inp = panel.querySelector('input[name="IarcAutoc"]');
+        if (inp) { try { inp.focus(); } catch (_) {} }
+      } else {
+        panel.setAttribute('hidden', '');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+      return;
+    }
+    if (!panel.hasAttribute('hidden') && !e.target.closest('.dr-impersonate-panel')) {
+      panel.setAttribute('hidden', '');
+      var openBtn = document.querySelector('.dr-impersonate-btn[aria-expanded="true"]');
+      if (openBtn) { openBtn.setAttribute('aria-expanded', 'false'); }
+    }
+  }, true);
+})();
+JS;
         return div(
-            form(
-                input('text', 'IarcAutoc', $username, " otherTabs=1 v='IARC' rid='IARC' placeholder='" . _('USER') . "' j='autocomplete' class='ui-autocomplete-input'")
-                . input('hidden', 'Iarc', $idAuthy, "s='d'")
-                . input('hidden', 'IarcCsrf', $csrf, "s='d'"),
-                ' id="select-box-Authy" class="select-box-authy" data-authy="' . htmlspecialchars($idAuthy, ENT_QUOTES) . '" data-csrf="' . htmlspecialchars($csrf, ENT_QUOTES) . '"'
+            div(_('Impersonate user'), '', "class='dr-impersonate-title' style='font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#8898aa;margin-bottom:6px;'")
+            . div(
+                form(
+                    input('text', 'IarcAutoc', $username, " otherTabs=1 v='IARC' rid='IARC' placeholder='" . _('USER') . "' j='autocomplete' class='ui-autocomplete-input' style='width:100%;height:36px;padding:0 12px;border:1px solid #e3e8ee;border-radius:8px;font-size:14px;background:#fafbfd;color:#0a2540;box-sizing:border-box;'")
+                    . input('hidden', 'Iarc', $idAuthy, "s='d'")
+                    . input('hidden', 'IarcCsrf', $csrf, "s='d'"),
+                    ' id="select-box-Authy" class="select-box-authy" data-authy="' . htmlspecialchars($idAuthy, ENT_QUOTES) . '" data-csrf="' . htmlspecialchars($csrf, ENT_QUOTES) . '"'
+                ),
+                '',
+                "class='box-Authy'"
             ),
-            '',
-            "class='box-Authy'"
-        );
+            'drImpersonatePanel',
+            "class='dr-impersonate-panel' hidden style='" . $panelInlineStyle . "'"
+        ) . "<script>" . $toggleScript . "</script>";
     }
 
     public function renderOpen($content)

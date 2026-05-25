@@ -407,7 +407,16 @@ class Assets
             return '';
         }
 
-        $assets = ($this->pipeline) ? [$this->cssPipeline()] : $this->css;
+        $assets = $this->css;
+        if ($this->pipeline) {
+            $bundle = $this->cssPipeline();
+            if ($bundle !== false) {
+                $assets = [$bundle];
+            }
+            // else: pipeline write failed (perms, missing dir) — already
+            // warned via trigger_error inside pipeline(); fall back to
+            // emitting individual <link> tags so the page still styles.
+        }
         if ($attributes instanceof Closure) {
             return $attributes->__invoke($assets);
         }
@@ -449,7 +458,14 @@ class Assets
             return '';
         }
 
-        $assets = ($this->pipeline) ? [$this->jsPipeline()] : $this->js;
+        $assets = $this->js;
+        if ($this->pipeline) {
+            $bundle = $this->jsPipeline();
+            if ($bundle !== false) {
+                $assets = [$bundle];
+            }
+            // else: pipeline write failed — fall back to individual <script> tags.
+        }
 
         if ($attributes instanceof Closure) {
             return $attributes->__invoke($assets);
@@ -559,8 +575,9 @@ class Assets
         // Create destination dir if it doesn't exist.
         $pipeline_dir = _BASE_DIR . $subdirectory . (empty($this->pipeline_dir) ? '' : DIRECTORY_SEPARATOR . $this->pipeline_dir);
 
-        if (! is_dir($pipeline_dir)) {
-            mkdir($pipeline_dir, 0777, true);
+        if (! is_dir($pipeline_dir) && ! @mkdir($pipeline_dir, 0777, true) && ! is_dir($pipeline_dir)) {
+            trigger_error("Asset pipeline: cannot create directory $pipeline_dir (check ownership/permissions; gc setpermission fixes this)", E_USER_WARNING);
+            return false;
         }
 
         // Generate paths
@@ -568,7 +585,10 @@ class Assets
 
         $relative_path = empty($this->pipeline_dir) ? "$subdirectory/$filename" : "$subdirectory/{$this->pipeline_dir}/$filename";
 
-        $absolute_path = realpath($pipeline_dir) . DIRECTORY_SEPARATOR . $filename;
+        // Use the constructed path directly. realpath() can return false
+        // when the dir was just created or sits behind a symlink that
+        // isn't yet resolved, which silently corrupted writes.
+        $absolute_path = rtrim($pipeline_dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename;
         // If pipeline already exists return it
         if (file_exists($absolute_path)) {
             return $relative_path;
@@ -578,8 +598,10 @@ class Assets
 
         $buffer = $this->packLinks($assets, $minifier);
         // Write minified file
-
-        file_put_contents($absolute_path, $buffer);
+        if (@file_put_contents($absolute_path, $buffer) === false) {
+            trigger_error("Asset pipeline: cannot write $absolute_path (check ownership/permissions; gc setpermission fixes this)", E_USER_WARNING);
+            return false;
+        }
         // Write gziped file
         if ($gzipAvailable = (function_exists('gzencode') and $this->pipeline_gzip !== false)) {
             $level = ($this->pipeline_gzip === true) ? -1 : intval($this->pipeline_gzip);
