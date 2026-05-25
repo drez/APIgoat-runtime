@@ -125,6 +125,20 @@ class Menu
     public function getMenu()
     {
         if ($_SESSION[_AUTH_VAR]->get('connected') == 'YES') {
+            // Pin the 'Settings' group to the bottom of the side nav. The
+            // emitter (Classes/Menu.php df8f0c6) sorts the Built menus
+            // array Settings-last, but tabs[] insertion order in
+            // BuilderMenus is driven by addItem-during-loop vs the
+            // post-loop $parents cleanup — when Settings has a top-level
+            // row (set_menu in base.hjson) and few groups precede it,
+            // Settings gets addItem'd first and renders at the top.
+            // Re-pin here so the invariant holds regardless of array shape.
+            if (isset($this->tabs['Settings'])) {
+                $settingsValue = $this->tabs['Settings'];
+                unset($this->tabs['Settings']);
+                $this->tabs['Settings'] = $settingsValue;
+            }
+
             foreach ($this->tabs as $Model => $Name) {
 
                 if (is_array($Name)) {
