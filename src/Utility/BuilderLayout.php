@@ -237,7 +237,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                 . div(
                     div($gcInit, '', "class='dr-avatar'")
                     . div(
-                        span($gcUser !== '' ? htmlspecialchars($gcUser) : _('User'), "class='dr-username'")
+                        href($gcUser !== '' ? htmlspecialchars($gcUser) : _('User'), _SITE_URL . 'Account', "class='dr-username' title='" . _('My account') . "'")
                         . span($gcRole !== '' ? htmlspecialchars($gcRole) : '&nbsp;', "class='dr-userrole'"),
                         '',
                         "class='dr-userinfo'"
