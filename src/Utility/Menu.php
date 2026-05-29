@@ -14,6 +14,7 @@ class Menu
     public $foldedGroups = [];
     public $groupIcon = [];
     public $groupColor = [];
+    public $groupDashboard = [];
 
     private $requested = false;
     private $indexMenu = 0;
@@ -181,9 +182,14 @@ class Menu
                             ? "<i class='dr-section-icon " . htmlspecialchars($groupIcon) . "'></i>"
                             : '';
                         $chevron = "<i class='dr-fold-chevron ri-arrow-down-s-line' aria-hidden='true'></i>";
+                        $dashRoute = $this->groupDashboard[$Model] ?? null;
+                        $dashHtml = $dashRoute
+                            ? "<a class='dr-section-dash' href='" . _SITE_URL . htmlspecialchars($dashRoute)
+                                . "' title='" . _('Dashboard') . "'><i class='ri-dashboard-line'></i></a>"
+                            : '';
 
                         $this->menu .= div(
-                                $iconHtml . span(_($Name), "class='dr-section-label'") . $chevron,
+                                $iconHtml . span(_($Name), "class='dr-section-label'") . $dashHtml . $chevron,
                                 '',
                                 $secAttr
                             )

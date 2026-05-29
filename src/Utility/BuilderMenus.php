@@ -21,7 +21,7 @@ class BuilderMenus
     public function __construct($args)
     {
         $parents = [];
-        $folded = $groupIcon = $groupColor = [];
+        $folded = $groupIcon = $groupColor = $groupDashboard = [];
         require _BASE_DIR . "config/menus.php";
         $Menu = new Menu($args['p']);
 
@@ -35,6 +35,7 @@ class BuilderMenus
                 if (!empty($item['folded']))     { $folded[$p]     = true; }
                 if (isset($item['group_icon']))  { $groupIcon[$p]  = $item['group_icon']; }
                 if (isset($item['group_color'])) { $groupColor[$p] = $item['group_color']; }
+                if (isset($item['group_dashboard'])) { $groupDashboard[$p] = $item['group_dashboard']; }
             } else {
                 $Menu->addItem(_($item['desc']), $item['name'], $item['icon'] ?? null, $item['route'] ?? null);
                 unset($parents[$item['name']]);
@@ -50,6 +51,7 @@ class BuilderMenus
         $Menu->foldedGroups = $folded;
         $Menu->groupIcon = $groupIcon;
         $Menu->groupColor = $groupColor;
+        $Menu->groupDashboard = $groupDashboard;
 
         $this->Menu = $Menu;
     }
