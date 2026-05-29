@@ -130,6 +130,36 @@ class GoogleDriveStorage implements FileStorageInterface
         return $this->normalize($resp, $scope);
     }
 
+    /**
+     * Create a folder named $name under the folder path $scope (creating
+     * intermediate folders as needed). Returns the new folder's normalized
+     * metadata. No-op-safe: if a folder with that name already exists under
+     * the scope, Drive will create a second one (Drive allows duplicate
+     * names) — callers that need uniqueness should check first.
+     */
+    public function createFolder(string $scope, string $name): array
+    {
+        $name = trim($name);
+        if ($name === '') {
+            throw new AuthFailed('createFolder: empty folder name');
+        }
+        $parentId = $this->resolveScope($scope, /*create*/ true);
+        $created = $this->google->post(
+            self::FILES_URL . '?fields=' . rawurlencode(self::META_FIELDS),
+            ['name' => $name, 'mimeType' => self::FOLDER_MIME, 'parents' => [$parentId]],
+            self::SCOPES,
+            $this->userEmail
+        );
+        if (empty($created['id'])) {
+            throw new AuthFailed("Drive folder creation returned no id for '{$name}'");
+        }
+        // Seed the path cache so subsequent navigation into the new folder
+        // within this request resolves without a directory round-trip.
+        $childPath = trim($scope, '/') === '' ? $name : (trim($scope, '/') . '/' . $name);
+        $this->folderCache[$childPath] = (string) $created['id'];
+        return $this->normalize($created, $scope);
+    }
+
     public function update(string $id, array $patch): array
     {
         // FileStorageInterface uses stable keys (name, mimeType, …); Drive

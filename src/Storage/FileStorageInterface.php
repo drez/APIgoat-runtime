@@ -45,6 +45,15 @@ interface FileStorageInterface
     public function upload(string $scope, string $name, string $bytes, string $mimeType): array;
 
     /**
+     * Create a sub-folder/namespace under a scope. Returns the created
+     * folder's metadata (must include `id`). Backends without a folder
+     * concept may register a prefix and return synthetic metadata.
+     *
+     * @return array<string,mixed>
+     */
+    public function createFolder(string $scope, string $name): array;
+
+    /**
      * Patch metadata on an existing item (rename, move, change description,
      * etc.). Backends ignore keys they do not understand. Returns the
      * post-patch metadata.

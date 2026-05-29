@@ -89,7 +89,7 @@ class RouteHelper
 
     private function setLegacyVarFromBody()
     {
-        $legacyVars = ['ui', 'pui', 'ms', 'order', 'pg', 'd', 'je', 'jet', 'dialog', 'modelName', 'destUi', 'pc', 'tp'];
+        $legacyVars = ['ui', 'pui', 'ms', 'order', 'pg', 'dpath', 'd', 'je', 'jet', 'dialog', 'modelName', 'destUi', 'pc', 'tp'];
         foreach ($legacyVars as $legacyVar) {
             if (isset($this->args['data'][$legacyVar])) {
                 $this->args[$legacyVar] = $this->args['data'][$legacyVar];

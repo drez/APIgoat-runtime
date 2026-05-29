@@ -217,8 +217,11 @@ class BackedQuery
 
     private function hydrate(array $row): BackedEntity
     {
+        // Build the read-model without running the generated Form constructor
+        // (which requires ($request, $args)). Hydrated entities only need
+        // their storage data, set via fromStorageArray below.
         /** @var BackedEntity $entity */
-        $entity = new ($this->entityClass)();
+        $entity = (new \ReflectionClass($this->entityClass))->newInstanceWithoutConstructor();
         $entity->setStorage($this->storage);
         if ($this->scope) {
             $entity->setScope($this->scope);
@@ -266,6 +269,7 @@ final class NullStorage implements FileStorageInterface
     }
     public function get(string $id): array { return $this->list(''); }
     public function upload(string $scope, string $name, string $bytes, string $mimeType): array { return $this->list(''); }
+    public function createFolder(string $scope, string $name): array { return $this->list(''); }
     public function update(string $id, array $patch): array { return $this->list(''); }
     public function delete(string $id): bool { $this->list(''); return false; }
     public function share(string $id, string $level): string { $this->list(''); return ''; }
