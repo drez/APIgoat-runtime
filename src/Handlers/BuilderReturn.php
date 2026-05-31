@@ -82,7 +82,7 @@ class BuilderReturn
 
         if (strstr($this->request['ui'], 'Dialog')) {
             if ($this->request['diag'] != 'noclose') {
-                $closeDiag = "$('#editDialog').dialog('close');";
+                $closeDiag = "if(window.gcScreens){gcScreens.popAfterSave(null);}";
             }
         }
     }
@@ -107,7 +107,7 @@ class BuilderReturn
             switch ($this->request['jet']) {
                 case 'refreshChild':
                     $child = ($this->request['data']['tp']) ? $this->request['data']['tp'] : $this->request['p'];
-                    $close_dialog = ($this->request['data']['no_close']) ?'': "$('#{$this->request['ui']}').dialog('close');";
+                    $close_dialog = ($this->request['data']['no_close']) ?'': "if(window.gcScreens){gcScreens.popAfterSave(null);}";
                     $action_success =
                         "$.get('" . _SITE_URL . "{$this->request['data']['pc']}/{$child}/{$this->request['data']['ip']}', { ui: '{$this->request['data']['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['data']['pc']}'}, function(data){
                             $('#cnt{$this->request['pc']}Child').html(data);

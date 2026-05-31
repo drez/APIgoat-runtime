@@ -357,8 +357,7 @@ class ExceptionHandler implements ErrorHandlerInterface
         $parsedBody = $this->request->getParsedBody();
         if( isset($parsedBody['dialog']) || isset($parsedBody['ui'])){
             $body = scriptReady("
-                $('#alertDialog p').html(\"".str_replace(array("\r\n", "\n", "\r"), ' ', nl2br(addslashes($body)))."\").show();
-                $('#alertDialog').dialog('open');
+                alertb('Error', \"".str_replace(array("\r\n", "\n", "\r"), ' ', nl2br(addslashes($body)))."\");
             ");
             $response = $this->responseFactory->createResponse(200);
         } else {
