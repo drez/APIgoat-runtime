@@ -528,16 +528,84 @@ JS;
                 , "", " class='divtr divbut' ");
 
             if ($options['addSave'] == 'yes') {
-                $editEvent = "$('#form" . $name . " #save" . $name . "').bindSave({
-                                    modelName: '" . $name . "',
-                                    destUi: '" . $options['destUi'] . "',
-                                    pc:'" . $options['pc'] . "',
-                                    ip:'" . $options['idParent'] . "',
-                                    je:'" . $options['jsElement'] . "',
-                                    jet:'" . $options['jsElementType'] . "',
-                                    tp:'" . $options['tp'] . "',
-                                    dialog:'" . $options['dialog'] . "'
-                                });";
+                // Vanilla port of the former jQuery $.fn.bindSave plugin (jquery
+                // core removal, stage 5). Behaviour-matched to the old plugin:
+                // gcScreens owns regular (non-panel) edit screens and binds its
+                // own .nav-save handler, so step aside there exactly as the old
+                // guard did; panels (data-model __panel__) keep this save flow.
+                // The data-save-bound flag guards against the onReadyJs re-exec
+                // double-bind (see screens.js inline-script pass).
+                $editEvent = "
+                (function () {
+                    var __f = document.getElementById('form" . $name . "');
+                    var __b = __f ? __f.querySelector('#save" . $name . "') : null;
+                    if (!__b || __b.getAttribute('data-save-bound')) { return; }
+                    if (window.gcScreens) {
+                        var __sc = __b.closest ? __b.closest('.proto-screen[data-model]') : null;
+                        if (__sc && __sc.getAttribute('data-model') !== '__panel__') { return; }
+                    }
+                    __b.setAttribute('data-save-bound', '1');
+                    __b.addEventListener('click', function () {
+                        __b.setAttribute('disabled', 'disabled');
+                        document.body.style.cursor = 'progress';
+                        __b.style.cursor = 'progress';
+                        __b.classList.remove('ac-light-red');
+                        __b.classList.add('ac-light-blue');
+                        Array.prototype.forEach.call(__f.querySelectorAll('.tinymce'), function (tm) {
+                            var __id = tm.getAttribute('Id');
+                            if (__id && window.CKEDITOR && CKEDITOR.instances[__id]) {
+                                var __t = __f.querySelector('#' + __id);
+                                if (__t) { __t.value = CKEDITOR.instances[__id].getData(); }
+                            }
+                        });
+                        var __p = new URLSearchParams();
+                        Array.prototype.forEach.call(__f.querySelectorAll('[s=d]'), function (fld) {
+                            if (fld.disabled || !fld.name) { return; }
+                            var __ty = (fld.type || '').toLowerCase();
+                            if ((__ty === 'checkbox' || __ty === 'radio') && !fld.checked) { return; }
+                            if (fld.tagName === 'SELECT' && fld.multiple) {
+                                Array.prototype.forEach.call(fld.selectedOptions, function (o) { __p.append(fld.name, o.value); });
+                                return;
+                            }
+                            __p.append(fld.name, fld.value);
+                        });
+                        var __body = new URLSearchParams();
+                        __body.set('d', __p.toString());
+                        __body.set('ui', '" . $options['destUi'] . "');
+                        __body.set('pc', '" . $options['pc'] . "');
+                        __body.set('ip', '" . $options['idParent'] . "');
+                        __body.set('je', '" . $options['jsElement'] . "');
+                        __body.set('jet', '" . $options['jsElementType'] . "');
+                        __body.set('dialog', '" . $options['dialog'] . "');
+                        __body.set('tp', '" . $options['tp'] . "');
+                        fetch(_SITE_URL + '" . $name . "/update', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+                            body: __body.toString()
+                        }).then(function (r) { return r.text(); }).then(function (html) {
+                            var __d = document.getElementById('" . $options['destUi'] . "');
+                            if (!__d) { return; }
+                            // Mirror jQuery .append(html): insert markup AND execute
+                            // any returned <script> (the /update response is a
+                            // <script> body — sw_message on success / alertb on
+                            // validation failure). innerHTML alone never runs scripts.
+                            var __tmp = document.createElement('div');
+                            __tmp.innerHTML = html;
+                            while (__tmp.firstChild) {
+                                var __n = __tmp.firstChild;
+                                if (__n.tagName === 'SCRIPT') {
+                                    var __s2 = document.createElement('script');
+                                    if (__n.src) { __s2.src = __n.src; } else { __s2.textContent = __n.textContent; }
+                                    __tmp.removeChild(__n);
+                                    __d.appendChild(__s2);
+                                } else {
+                                    __d.appendChild(__n);
+                                }
+                            }
+                        });
+                    });
+                })();";
             } else {
                 $editEvent = "$('#form" . $name . " #save" . $name . "').bind('click.save$name', (data)=>{" . $options['onSave'] . "});";
             }
