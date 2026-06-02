@@ -562,7 +562,7 @@ function getUrlParamsJSON($arrayParams = "", $asUrl = false)
 
 function message($message)
 {
-    return "<script>$(document).ready(function() {message('" . $message . "');});</script>";
+    return "<script>(function(){function r(){message('" . $message . "');}if(document.readyState!='loading'){r();}else{document.addEventListener('DOMContentLoaded',r);}})();</script>";
 }
 
 function script($data, $option = "")
@@ -572,10 +572,15 @@ function script($data, $option = "")
 
 function scriptReady($data, $option = "")
 {
+    // Vanilla equivalent of $(document).ready (jquery core removal stage 5):
+    // run now if the DOM is already parsed (the gcScreens SPA re-executes these
+    // inline <script> blocks after load — jQuery's ready fired them immediately
+    // too), else on DOMContentLoaded. Self-contained IIFE so multiple readyJs
+    // blocks on one page don't collide.
     return "<script type='text/javascript' " . $option . ">
-$(document).ready(function(){
+(function(){function __gcReady(){
     " . $data . "
-});</script>";
+}if(document.readyState!='loading'){__gcReady();}else{document.addEventListener('DOMContentLoaded',__gcReady);}})();</script>";
 }
 
 function style($data, $option = "")
