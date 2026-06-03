@@ -131,17 +131,17 @@ class PropelErrorHandler
         $this->errorMessage['error'] = 'yes';
 
         $this->errorMessage['onReadyJs'] .= "
-        $('{$this->parentContainer} .error_field').removeClass('error_field');";
+        document.querySelectorAll('{$this->parentContainer} .error_field').forEach(function (__e) { __e.classList.remove('error_field'); });";
 
         foreach ($this->errorArray['all'] as $error) {
             foreach ($error as $field => $msg) {
                 if (!empty($field)) {
                     $fieldName = $this->getField($field);
                     $this->errorMessage['onReadyJs'] .= "
-                    if($('{$this->parentContainer} [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span').length > 0){
-                         $('{$this->parentContainer} [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span').addClass('error_field');
+                    if(document.querySelector('{$this->parentContainer} [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span') !== null){
+                         document.querySelectorAll('{$this->parentContainer} [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span').forEach(function (__e) { __e.classList.add('error_field'); });
                     }else{
-                         $('{$this->parentContainer} [v=" . addslashes(strtoupper($fieldName)) . "]').addClass('error_field');
+                         document.querySelectorAll('{$this->parentContainer} [v=" . addslashes(strtoupper($fieldName)) . "]').forEach(function (__e) { __e.classList.add('error_field'); });
                     }
                 ";
                     $this->errorMessage['txt'] .= $msg . "<br>";
@@ -152,8 +152,12 @@ class PropelErrorHandler
         $this->errorMessage['onReadyJs'] .=
             "alertb('" . addslashes($this->title) . "', '" . addslashes($this->errorMessage['txt']) . "');"
             . "alert_close = function(){
-    $('{$this->parentContainer} .error_field').first().focus();
-    $('{$this->parentContainer} .can-save, body').css('cursor', 'auto').removeAttr('disabled');
+    var __ef = document.querySelector('{$this->parentContainer} .error_field');
+    if (__ef) { __ef.focus(); }
+    document.querySelectorAll('{$this->parentContainer} .can-save, body').forEach(function (__e) {
+        __e.style.cursor = 'auto';
+        __e.removeAttribute('disabled');
+    });
 }";
 
         return $this->errorMessage;

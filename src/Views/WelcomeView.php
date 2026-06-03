@@ -261,20 +261,66 @@ JS;
         ) . "<script>" . $tabScript . "</script>";
 
         $return['onReadyJs'] = "
-    $('[ag_save=Config]').bind('change', function (){
-        var config = $(this).attr('config');
-        var value = 'dev';
-        if(config == 'app_status'){
-            if($(this).prop( 'checked')){
-                value = 'prod';
+    document.querySelectorAll('[ag_save=Config]').forEach(function (__cfg) {
+        __cfg.addEventListener('change', function () {
+            var config = this.getAttribute('config');
+            var value = 'dev';
+            if (config == 'app_status') {
+                if (this.checked) {
+                    value = 'prod';
+                }
+                var __valEl = this.parentElement.querySelector('#Value');
+                if (__valEl) { __valEl.value = value; }
             }
-            $(this).siblings('#Value').val(value);
-        }
-        var id = $(this).siblings('#IdConfig').val();
-        $.post(_SITE_URL+'Config/update/'+id, { 
-            d: $(this).parents('#form_'+config).find('[ag_save=Config]').serialize(), ui: 'tabsContain', jet:'swWarn'
-         }, function (response){
-            $('#tabsContain').append(response);
+            var __idEl = this.parentElement.querySelector('#IdConfig');
+            var id = __idEl ? __idEl.value : '';
+            // Rebuild jQuery .serialize() over the form's [ag_save=Config] inputs:
+            // same field names/encoding the server contract expects.
+            var __form = this.closest('#form_' + config);
+            var __ser = new URLSearchParams();
+            if (__form) {
+                __form.querySelectorAll('[ag_save=Config]').forEach(function (__f) {
+                    if (!__f.name || __f.disabled) { return; }
+                    var __t = (__f.type || '').toLowerCase();
+                    if ((__t === 'checkbox' || __t === 'radio') && !__f.checked) { return; }
+                    if (__f.tagName === 'SELECT' && __f.multiple) {
+                        Array.prototype.forEach.call(__f.selectedOptions, function (__o) {
+                            __ser.append(__f.name, __o.value);
+                        });
+                        return;
+                    }
+                    __ser.append(__f.name, __f.value);
+                });
+            }
+            var __body = new URLSearchParams();
+            __body.set('d', __ser.toString());
+            __body.set('ui', 'tabsContain');
+            __body.set('jet', 'swWarn');
+            fetch(_SITE_URL + 'Config/update/' + id, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+                body: __body.toString()
+            }).then(function (r) { return r.text(); }).then(function (response) {
+                var __d = document.getElementById('tabsContain');
+                if (!__d) { return; }
+                // Mirror jQuery .append(response): insert markup AND execute any
+                // returned <script> (the /update response is a swWarn script body).
+                // insertAdjacentHTML/innerHTML alone never runs scripts.
+                var __tmp = document.createElement('div');
+                __tmp.innerHTML = response;
+                while (__tmp.firstChild) {
+                    var __n = __tmp.firstChild;
+                    if (__n.tagName === 'SCRIPT') {
+                        var __s2 = document.createElement('script');
+                        if (__n.src) { __s2.src = __n.src; } else { __s2.textContent = __n.textContent; }
+                        __tmp.removeChild(__n);
+                        __d.appendChild(__s2);
+                    } else {
+                        __d.appendChild(__n);
+                    }
+                }
+            });
         });
     });
         ";

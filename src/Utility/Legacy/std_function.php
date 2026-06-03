@@ -219,9 +219,9 @@ function handleOkResponse($msg, $ui = '', $print = false, $text_title = 'Message
     //$msg = message_label($msg);
     $error['txt'] .= $msg;
     $error['onReadyJs'] = "
-        $('body').css('cursor', 'progress');
-        $('input').css('cursor', 'progress');
-        setTimeout(function (){ $('body').css('cursor', 'auto'); $('input').css('cursor', 'pointer'); },200);
+        document.body.style.cursor = 'progress';
+        document.querySelectorAll('input').forEach(function(el){ el.style.cursor = 'progress'; });
+        setTimeout(function (){ document.body.style.cursor = 'auto'; document.querySelectorAll('input').forEach(function(el){ el.style.cursor = 'pointer'; }); },200);
     ";
     return $error;
 }

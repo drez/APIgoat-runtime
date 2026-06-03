@@ -71,12 +71,15 @@ class BuilderReturn
         $this->return['onReadyJs'] =
         $this->message(_('Item deleted'))
         . "
-    $('body').css('cursor', 'auto');
-    $('#" . $this->request['p'] . "Table tr[rid=" . $this->request['i'] . "]').hide('slow').remove();
-    var count = $('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span').html();
-    $('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span').html(count-1);
+    document.body.style.cursor = 'auto';
+    var __row = document.querySelector('#" . $this->request['p'] . "Table tr[rid=\"" . $this->request['i'] . "\"]');
+    if (__row) { __row.remove(); }
+    var __countEl = document.querySelector('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span');
+    var count = __countEl ? __countEl.textContent : 0;
+    if (__countEl) { __countEl.textContent = (count - 1); }
     if((count-1) == 0){
-        $('#" . $this->request['p'] . "Table').append( $('<tr>').append( $('<td>', {'colspan':'100%'}).append( $('<p>', {'class':'no-results'}).append( $('<span>').html('Nothing left')) ) ) );
+        var __tbl = document.querySelector('#" . $this->request['p'] . "Table');
+        if (__tbl) { __tbl.insertAdjacentHTML('beforeend', '<tr><td colspan=\"100%\"><p class=\"no-results\"><span>Nothing left</span></p></td></tr>'); }
     }
 "; // update paging
 
@@ -93,12 +96,14 @@ class BuilderReturn
 
         if ($this->request['action'] == 'create') {
             $alert_close = "
-    $('#form" . $this->request['p'] . " #save" . $this->request['p'] . "').removeAttr('disabled').removeClass('unsaved').css('cursor', 'auto');
-    $('body').css('cursor', 'auto');";
+    var __saveBtn = document.querySelector('#form" . $this->request['p'] . " #save" . $this->request['p'] . "');
+    if (__saveBtn) { __saveBtn.removeAttribute('disabled'); __saveBtn.classList.remove('unsaved'); __saveBtn.style.cursor = 'auto'; }
+    document.body.style.cursor = 'auto';";
         } else {
             $alert_close = "
-    $('#form" . $this->request['p'] . " #save" . $this->request['p'] . "').removeAttr('disabled').removeClass('unsaved').css('cursor', 'auto');
-	$('body').css('cursor', 'auto');";
+    var __saveBtn = document.querySelector('#form" . $this->request['p'] . " #save" . $this->request['p'] . "');
+    if (__saveBtn) { __saveBtn.removeAttribute('disabled'); __saveBtn.classList.remove('unsaved'); __saveBtn.style.cursor = 'auto'; }
+    document.body.style.cursor = 'auto';";
         }
 
         if ($this->request['action'] == 'list') {
@@ -109,12 +114,39 @@ class BuilderReturn
                     $child = ($this->request['data']['tp']) ? $this->request['data']['tp'] : $this->request['p'];
                     $close_dialog = ($this->request['data']['no_close']) ?'': "if(window.gcScreens){gcScreens.popAfterSave(null);}";
                     $action_success =
-                        "$.get('" . _SITE_URL . "{$this->request['data']['pc']}/{$child}/{$this->request['data']['ip']}', { ui: '{$this->request['data']['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['data']['pc']}'}, function(data){
-                            $('#cnt{$this->request['pc']}Child').html(data);
-                            $('[j=conglet_{$this->request['data']['pc']}]').parent().attr('class','ui-corner-top ui-state-default');
-                            $('[j=conglet_{$this->request['data']['pc']}][p={$this->request['data']['tp']}]').parent().addClass('ui-state-active');
-                        });
-                        $('body').css('cursor', 'auto');
+                        "(function(){
+                            var __qs = new URLSearchParams({ ui: '{$this->request['data']['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['data']['pc']}'});
+                            fetch('" . _SITE_URL . "{$this->request['data']['pc']}/{$child}/{$this->request['data']['ip']}?' + __qs.toString(), {
+                                credentials: 'same-origin',
+                                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                            }).then(function (r) { return r.text(); }).then(function (data) {
+                                var __cnt = document.getElementById('cnt{$this->request['pc']}Child');
+                                if (__cnt) {
+                                    // Mirror jQuery .html(data): replace markup AND execute any returned <script>.
+                                    __cnt.innerHTML = '';
+                                    var __tmp = document.createElement('div');
+                                    __tmp.innerHTML = data;
+                                    while (__tmp.firstChild) {
+                                        var __n = __tmp.firstChild;
+                                        if (__n.tagName === 'SCRIPT') {
+                                            var __s2 = document.createElement('script');
+                                            if (__n.src) { __s2.src = __n.src; } else { __s2.textContent = __n.textContent; }
+                                            __tmp.removeChild(__n);
+                                            __cnt.appendChild(__s2);
+                                        } else {
+                                            __cnt.appendChild(__n);
+                                        }
+                                    }
+                                }
+                                document.querySelectorAll('[j=conglet_{$this->request['data']['pc']}]').forEach(function (__c) {
+                                    if (__c.parentElement) { __c.parentElement.className = 'ui-corner-top ui-state-default'; }
+                                });
+                                document.querySelectorAll('[j=conglet_{$this->request['data']['pc']}][p={$this->request['data']['tp']}]').forEach(function (__c) {
+                                    if (__c.parentElement) { __c.parentElement.classList.add('ui-state-active'); }
+                                });
+                            });
+                        })();
+                        document.body.style.cursor = 'auto';
                         $close_dialog
                         ";
 

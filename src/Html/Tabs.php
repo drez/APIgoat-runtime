@@ -132,32 +132,85 @@ class tabs
 
         if ($this->defaultSelected) {
             $defaultSelected = "
-                $(\"[j='" . $this->tabsTarget . "']#" . $this->defaultSelected . "\").trigger('click');
-                
+                (function () {
+                    var __def = document.querySelector(\"[j='" . $this->tabsTarget . "']#" . $this->defaultSelected . "\");
+                    if (__def) { __def.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+                })();
             ";
         }
 
         if ($this->AjaxLoad) {
             $AjaxLoad = "
-        $('#" . $this->parentContentDivId . "').hide();
-        $(' #axContentDiv' ).children('div').html( $('<img>').attr('src', '" . _SITE_URL . "img/Ellipsis-3.9s-200px.svg') );
-        $.post($(this).attr('load'), {}, function (data){
-            $(' #axContentDiv' ).children('div').html(data);
+        var __pcd = document.getElementById('" . $this->parentContentDivId . "');
+        if (__pcd) { __pcd.style.display = 'none'; }
+        var __axc = document.querySelector('#axContentDiv > div');
+        if (__axc) {
+            var __img = document.createElement('img');
+            __img.setAttribute('src', '" . _SITE_URL . "img/Ellipsis-3.9s-200px.svg');
+            __axc.innerHTML = '';
+            __axc.appendChild(__img);
+        }
+        fetch(this.getAttribute('load'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+            body: new URLSearchParams({}).toString()
+        }).then(function (r) { return r.text(); }).then(function (data) {
+            var __ax = document.querySelector('#axContentDiv > div');
+            if (!__ax) { return; }
+            // Mirror jQuery .html(data): replace markup AND execute any returned
+            // <script> nodes (the ajax-loaded child panel may carry inline init
+            // scripts). innerHTML alone never runs scripts.
+            __ax.innerHTML = '';
+            var __tmp = document.createElement('div');
+            __tmp.innerHTML = data;
+            while (__tmp.firstChild) {
+                var __n = __tmp.firstChild;
+                if (__n.tagName === 'SCRIPT') {
+                    var __s2 = document.createElement('script');
+                    if (__n.src) { __s2.src = __n.src; } else { __s2.textContent = __n.textContent; }
+                    __tmp.removeChild(__n);
+                    __ax.appendChild(__s2);
+                } else {
+                    __ax.appendChild(__n);
+                }
+            }
         });
                 ";
         }
 
         $this->onReadyJs .= "
-    $('#" . $this->parentContentDivId . "').children('div').hide();
-    
-    $(\"[j='" . $this->tabsTarget . "']\").unbind('click');
-    $(\"[j='" . $this->tabsTarget . "']\").click(function (){
-        $(\"[j='" . $this->tabsTarget . "']\").parent().removeClass('selected ui-state-active');
-        $('#" . $this->parentContentDivId . "').children('div').hide();
-        $(this).parent().addClass('selected ui-state-active');
-        $('#" . $this->parentContentDivId . " '+$(this).attr('t') ).show();
-        " . $AjaxLoad . "
-    });
+    (function () {
+        var __sel = \"[j='" . $this->tabsTarget . "']\";
+        var __pcdId = '" . $this->parentContentDivId . "';
+        var __pcd0 = document.getElementById(__pcdId);
+        if (__pcd0) {
+            __pcd0.querySelectorAll(':scope > div').forEach(function (d) { d.style.display = 'none'; });
+        }
+
+        document.querySelectorAll(__sel).forEach(function (tab) {
+            // .unbind('click') + rebind: clone-replace strips any prior listeners,
+            // then attach the single click handler to the fresh node.
+            var __fresh = tab.cloneNode(true);
+            tab.parentNode.replaceChild(__fresh, tab);
+            __fresh.addEventListener('click', function () {
+                document.querySelectorAll(__sel).forEach(function (t) {
+                    if (t.parentNode) { t.parentNode.classList.remove('selected', 'ui-state-active'); }
+                });
+                var __pcd = document.getElementById(__pcdId);
+                if (__pcd) {
+                    __pcd.querySelectorAll(':scope > div').forEach(function (d) { d.style.display = 'none'; });
+                }
+                if (this.parentNode) { this.parentNode.classList.add('selected', 'ui-state-active'); }
+                var __t = this.getAttribute('t');
+                if (__t) {
+                    var __target = document.querySelector('#' + __pcdId + ' ' + __t);
+                    if (__target) { __target.style.display = ''; }
+                }
+                " . $AjaxLoad . "
+            });
+        });
+    })();
     " . $defaultSelected . "
     ";
     }

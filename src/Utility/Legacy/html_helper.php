@@ -778,7 +778,7 @@ function handleValidationError($objValidationFails, $ui = '', $text_title = 'Mes
     }
     $ui = (!empty($ui)) ? "#" . $ui : "";
     $error['onReadyJs'] .= "
-    $('" . $ui . " .error_field').removeClass('error_field');";
+    document.querySelectorAll('" . $ui . " .error_field').forEach(function(el){ el.classList.remove('error_field'); });";
     foreach ($fields as $field) {
         if (!empty($field)) {
             if (strstr($field, '.')) {
@@ -787,17 +787,17 @@ function handleValidationError($objValidationFails, $ui = '', $text_title = 'Mes
             } else
                 $fieldName = $field;
             $error['onReadyJs'] .= "
-                if($('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span').length > 0){
-                     $('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span').addClass('error_field');
+                if(document.querySelector('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span') !== null){
+                     document.querySelectorAll('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span').forEach(function(el){ el.classList.add('error_field'); });
                 }else{
-                     $('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "]').addClass('error_field');
+                     document.querySelectorAll('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "]').forEach(function(el){ el.classList.add('error_field'); });
                 }
             ";
         }
     }
     $error['onReadyJs'] .= "
     alertb('" . addslashes($text_title) . "', '" . addslashes($error['txt']) . "');
-    alert_close = '$(\'" . $ui . " .error_field\').first().focus();';
+    alert_close = 'var __ef = document.querySelector(\'" . $ui . " .error_field\'); if(__ef){ __ef.focus(); }';
     ";
 
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {

@@ -613,7 +613,7 @@ JS;
                     });
                 })();";
             } else {
-                $editEvent = "$('#form" . $name . " #save" . $name . "').bind('click.save$name', (data)=>{" . $options['onSave'] . "});";
+                $editEvent = "(function(){ var __b = document.querySelector('#form" . $name . " #save" . $name . "'); if(__b){ __b.addEventListener('click', (data)=>{" . $options['onSave'] . "}); } })();";
             }
         }
 
