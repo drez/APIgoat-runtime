@@ -39,9 +39,15 @@ class BuilderLayout
             $csrfMeta = "<meta name='csrf-token' content='" . htmlspecialchars($_SESSION[_AUTH_VAR]->getCsrf(), ENT_QUOTES) . "'>\n";
         }
         $vapidPublicKey = function_exists('env') ? (env('VAPID_PUBLIC_KEY') ?: '') : '';
+        // Floating notifications pill (public/js/pwa.js): OFF by default so the
+        // Account page hosts the canonical control. Set GC_NOTIF_PILL=1 in a
+        // project .env to restore the zero-setup floating pill.
+        $notifPillOn = function_exists('env') ? filter_var(env('GC_NOTIF_PILL'), FILTER_VALIDATE_BOOLEAN) : false;
+        $pillOffLiteral = $notifPillOn ? 'false' : 'true';
         $headjs = $csrfMeta . "<script type='text/javascript'>
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
     let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
+    window.gcNotifPillOff = " . $pillOffLiteral . ";
 </script>";
 
         // PWA meta tags and icons for iOS / Android / Windows
