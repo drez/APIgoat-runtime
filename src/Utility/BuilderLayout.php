@@ -44,10 +44,22 @@ class BuilderLayout
         // project .env to restore the zero-setup floating pill.
         $notifPillOn = function_exists('env') ? filter_var(env('GC_NOTIF_PILL'), FILTER_VALIDATE_BOOLEAN) : false;
         $pillOffLiteral = $notifPillOn ? 'false' : 'true';
+        $gcTheme = $this->resolveTheme();
         $headjs = $csrfMeta . "<script type='text/javascript'>
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
     let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
     window.gcNotifPillOff = " . $pillOffLiteral . ";
+    (function () {
+        var ok = ['mint', 'ink', 'indigo', 'terracotta', 'graphite'];
+        var t = " . json_encode($gcTheme) . ";
+        try {
+            if (t) { localStorage.setItem('gcTheme', t); }
+            else { t = localStorage.getItem('gcTheme') || ''; }
+        } catch (e) {}
+        if (ok.indexOf(t) > -1 && t !== 'mint') {
+            document.documentElement.setAttribute('data-theme', t);
+        }
+    }());
 </script>";
 
         // PWA meta tags and icons for iOS / Android / Windows
@@ -63,7 +75,7 @@ class BuilderLayout
             $pwaTitle = 'App';
         }
         $pwaHeaders = '
-<style>html{background-color:#ffffff}</style>
+<style>html{background-color:var(--bg,#ffffff)}</style>
 <link rel="manifest" href="' . _SITE_URL . 'manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="' . _SITE_URL . 'public/img/fav-2.1.png">
 <link rel="apple-touch-icon" sizes="152x152" href="' . _SITE_URL . 'public/img/fav-2.1.png">
@@ -354,6 +366,41 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
         );
 
         return $nav;
+    }
+
+    /**
+     * Per-user theme for html[data-theme]. Session-cached after one
+     * AuthyQuery lookup; '' pre-auth (the head script then falls back
+     * to the localStorage device echo). Guards make projects whose
+     * authy table predates the theme column resolve to the default.
+     */
+    private function resolveTheme()
+    {
+        $allowed = ['mint', 'ink', 'indigo', 'terracotta', 'graphite'];
+        if (! defined('_AUTH_VAR') || ! isset($_SESSION[_AUTH_VAR]) || ! is_object($_SESSION[_AUTH_VAR])) {
+            return '';
+        }
+        $sess = $_SESSION[_AUTH_VAR];
+        $cached = isset($sess->sessVar['Theme']) ? $sess->sessVar['Theme'] : null;
+        if (is_string($cached) && in_array($cached, $allowed, true)) {
+            return $cached;
+        }
+        $userId = (int) ($sess->get('id') ?? 0);
+        if (! $userId) {
+            return '';
+        }
+        $theme = 'mint';
+        if (class_exists('\App\AuthyQuery')) {
+            $authy = \App\AuthyQuery::create()->findPk($userId);
+            if ($authy && method_exists($authy, 'getTheme')) {
+                $t = (string) $authy->getTheme();
+                if (in_array($t, $allowed, true)) {
+                    $theme = $t;
+                }
+            }
+        }
+        $sess->sessVar['Theme'] = $theme;
+        return $theme;
     }
 
     /**
