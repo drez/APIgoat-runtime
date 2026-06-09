@@ -210,7 +210,13 @@ class WelcomeView
 .welcome-screen .form-row label[for] { font-weight: 500; text-transform: none; letter-spacing: 0; color: #0a2540; margin-left: 6px; font-size: 13px; vertical-align: middle; }
 .welcome-screen .form-row input[type="text"] { width: 100%; height: 38px; padding: 0 12px; border: 1px solid #e3e8ee; border-radius: 8px; font-size: 14px; background: #fff; color: #0a2540; box-sizing: border-box; }
 .welcome-screen .form-row input[type="text"]:focus { outline: none; border-color: #0a2540; box-shadow: 0 0 0 3px rgba(10,37,64,0.08); }
-.welcome-screen .form-row input[type="checkbox"] { vertical-align: middle; margin: 0 2px 0 0; }
+.welcome-screen .form-row input[type="checkbox"] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.welcome-screen .form-row input[type="checkbox"] + label[for] { position: relative; display: inline-block; min-height: 25px; padding-right: 50px; vertical-align: middle; cursor: pointer; }
+.welcome-screen .form-row input[type="checkbox"] + label[for]::before { content: ""; position: absolute; right: 0; top: 0; width: 42px; height: 25px; border-radius: 13px; background: #e3e8ee; transition: background .18s ease; }
+.welcome-screen .form-row input[type="checkbox"] + label[for]::after { content: ""; position: absolute; right: 19px; top: 2px; width: 21px; height: 21px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(10,37,64,0.16); transition: right .18s cubic-bezier(0.32,0.72,0.32,1); }
+.welcome-screen .form-row input[type="checkbox"]:checked + label[for]::before { background: #00d1b2; }
+.welcome-screen .form-row input[type="checkbox"]:checked + label[for]::after { right: 2px; }
+.welcome-screen .form-row input[type="checkbox"]:focus + label[for]::before { box-shadow: 0 0 0 3px #d4f3ed; }
 .welcome-screen .form-row .explain { margin-top: 6px; font-size: 12px; color: #8898aa; line-height: 1.45; }
 .welcome-screen .form-row ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: #0a2540; }
 .welcome-screen .form-row a { color: #0a2540; text-decoration: underline; }
