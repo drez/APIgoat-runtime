@@ -23,4 +23,22 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #5019 | 3:30 PM | 🔵 | File upload form missing plupload initialization in generated code | ~356 |
+
+### May 23, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #5454 | 6:09 AM | 🔵 | Legacy HTML helper functions provide string concatenation markup generators | ~614 |
+
+### May 29, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #6345 | 3:11 PM | 🔵 | GoatCheese v2 design system mapped for Account interface implementation | ~592 |
+
+### Jun 2, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #8322 | 4:21 AM | 🔄 | Runtime message() helper ported from $(document).ready to vanilla DOMContentLoaded | ~445 |
 </claude-mem-context>
