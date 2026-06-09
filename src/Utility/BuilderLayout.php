@@ -557,13 +557,7 @@ JS;
                         __b.style.cursor = 'progress';
                         __b.classList.remove('ac-light-red');
                         __b.classList.add('ac-light-blue');
-                        Array.prototype.forEach.call(__f.querySelectorAll('.tinymce'), function (tm) {
-                            var __id = tm.getAttribute('Id');
-                            if (__id && window.CKEDITOR && CKEDITOR.instances[__id]) {
-                                var __t = __f.querySelector('#' + __id);
-                                if (__t) { __t.value = CKEDITOR.instances[__id].getData(); }
-                            }
-                        });
+                        if (window.gcEditor) { gcEditor.syncWithin(__f); }
                         var __p = new URLSearchParams();
                         Array.prototype.forEach.call(__f.querySelectorAll('[s=d]'), function (fld) {
                             if (fld.disabled || !fld.name) { return; }
