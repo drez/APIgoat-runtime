@@ -691,6 +691,11 @@ function message_label($label, $local = NULL)
 {
 
     if ($label) {
+        // Projects without a Message table have no App\MessageQuery model;
+        // fall back to the label itself instead of a fatal class-not-found.
+        if (!class_exists('\App\MessageQuery')) {
+            return $label;
+        }
         global $messagesCache;
         if (!$local)
             $local = $_SESSION[_AUTH_VAR]->config['locale']['locale'];
