@@ -301,15 +301,18 @@ class AuthySession
 
     public function setGroups()
     {
+        // The audit FK (id_group_creation -> authy_group) always coexists
+        // with the membership FK, so Propel suffixes both relations with
+        // RelatedBy — the bare 'AuthyGroup' relation never exists here.
         $AuthyGroupX = \App\AuthyGroupXQuery::create()
-            ->leftJoin('AuthyGroup')
+            ->leftJoin('AuthyGroupRelatedByIdAuthyGroup')
             ->filterByIdAuthy($_SESSION[\_AUTH_VAR]->getIdAuthy())
             ->find();
 
         if ($AuthyGroupX) {
             foreach ($AuthyGroupX as $AuthyGroup) {
-                if ($AuthyGroup->getAuthyGroup()) {
-                    if ($AuthyGroup->getAuthyGroup()->getAdmin() === 'Yes') {
+                if ($AuthyGroup->getAuthyGroupRelatedByIdAuthyGroup()) {
+                    if ($AuthyGroup->getAuthyGroupRelatedByIdAuthyGroup()->getAdmin() === 'Yes') {
                         $this->group = 'Admin';
                     }
                     $this->Groups[] = $AuthyGroup->getIdAuthyGroup();
