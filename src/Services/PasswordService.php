@@ -36,6 +36,21 @@ class PasswordService extends Service
                 // send email
                 if ($this->args['i'] && $this->args['data']['passwd_hash']) {
                     $Authy = \App\AuthyQuery::create()->filterByValidationKey($this->args['i'])->findOne();
+
+                    // Reset keys embed their mint time as an 8-hex-char prefix
+                    // (see EmailSender::getEmailContent in the template).
+                    // Expire after 24h; legacy keys without the prefix are
+                    // treated as expired and cleared.
+                    if ($Authy) {
+                        $key      = (string) $this->args['i'];
+                        $mintedAt = (strlen($key) >= 8 && ctype_xdigit(substr($key, 0, 8))) ? hexdec(substr($key, 0, 8)) : 0;
+                        if ($mintedAt < time() - 86400 || $mintedAt > time() + 3600) {
+                            $Authy->setValidationKey('');
+                            $Authy->save();
+                            $Authy = null;
+                        }
+                    }
+
                     if ($Authy) {
                         $Authy->setPasswdHash($this->args['data']['passwd_hash']);
                         $Authy->setValidationKey('');

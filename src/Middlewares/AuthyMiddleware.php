@@ -73,6 +73,11 @@ class AuthyMiddleware implements MiddlewareInterface
             return $ApiResponse->getResponse();
         }
 
+        $csrfFailure = $this->checkCsrf($request);
+        if ($csrfFailure !== null) {
+            return $csrfFailure;
+        }
+
         $this->checkUserSwitch($request);
 
        // $access = $this->checkPrivileges($request);
@@ -100,6 +105,52 @@ class AuthyMiddleware implements MiddlewareInterface
             $response = $handler->handle($request);
         }
         return $response;
+    }
+
+    /**
+     * CSRF gate for state-changing session-authenticated requests.
+     *
+     * Accepts either a valid session token (X-Csrf-Token header or `csrf`
+     * body field, compared with hash_equals) or the X-Requested-With:
+     * XMLHttpRequest marker. The XHR marker is a sound CSRF defense here
+     * because the CORS layer never allows credentialed cross-origin
+     * requests, so a foreign origin cannot attach that header; classic
+     * HTML-form CSRF cannot set it either. All emitted clients already send
+     * it, so enforcement is non-breaking. API (JWT) routes are exempt —
+     * they carry no ambient cookie credential.
+     *
+     * @return ResponseInterface|null a 403 response, or null when allowed
+     */
+    private function checkCsrf(ServerRequestInterface $request): ?ResponseInterface
+    {
+        $method = strtoupper($request->getMethod());
+        if ($this->args['is_api']
+            || ! in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+            || $_SESSION[_AUTH_VAR]->get('connected') != 'YES'
+            || $this->checkExclude($this->args['route'])) {
+            return null;
+        }
+
+        $token = $request->getHeaderLine('X-Csrf-Token');
+        if ($token === '' && isset($this->args['data']['csrf'])) {
+            $token = (string) $this->args['data']['csrf'];
+        }
+        $sessionToken = method_exists($_SESSION[_AUTH_VAR], 'getCsrf')
+            ? (string) $_SESSION[_AUTH_VAR]->getCsrf() : '';
+
+        if ($token !== '' && $sessionToken !== '' && hash_equals($sessionToken, $token)) {
+            return null;
+        }
+        if ($request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
+            return null;
+        }
+
+        error_log('csrf rejected: ' . $method . ' ' . ($this->args['route'] ?? '')
+            . ' from ' . ($_SERVER['REMOTE_ADDR'] ?? '?')
+            . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
+        $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Invalid or missing CSRF token']]);
+        $ApiResponse->setStatus(403);
+        return $ApiResponse->getResponse();
     }
 
     private function checkUserSwitch($request)

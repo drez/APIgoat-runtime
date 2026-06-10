@@ -1,6 +1,20 @@
 <?php
 
 
+/**
+ * Escape a value for an HTML attribute / text position.
+ *
+ * double_encode=false keeps already-escaped callers (the emitter wraps many
+ * values in htmlentities() at the call site) byte-identical while making the
+ * raw-value callers safe. NOTE: $options/$attr parameters of these helpers
+ * are intentionally raw attribute fragments built by trusted emitter code —
+ * never pass user data there.
+ */
+function gc_attr($value)
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8', false);
+}
+
 function clean($string, $more = false)
 {
     $string = str_replace("\'", "'", $string);
@@ -52,7 +66,7 @@ function input($type, $name, $value = "", $options = "", $id = "")
 
     $optionsContent = generateData($options);
 
-    return "<input type=\"$type\" name=\"$name\" id=\"$id\" value=\"" . $value . "\" $optionsContent/>";
+    return "<input type=\"$type\" name=\"$name\" id=\"$id\" value=\"" . gc_attr($value) . "\" $optionsContent/>";
 }
 
 function img($path, $height = "", $width = "", $options = "", $alt = "", $title = "")
@@ -411,7 +425,7 @@ function arrayToJson($options, $idSelected = '')
 
 function option($caption, $value, $options = "")
 {
-    return "<option value=\"$value\" $options>$caption</option>";
+    return "<option value=\"" . gc_attr($value) . "\" $options>$caption</option>";
 }
 
 function iframe($src, $options = "")
@@ -424,7 +438,7 @@ function textarea($id, $value = "", $options = "")
 {
     $optionsContent = generateData($options);
 
-    return "<textarea id=\"$id\" name=\"$id\" $optionsContent >$value</textarea>";
+    return "<textarea id=\"$id\" name=\"$id\" $optionsContent >" . gc_attr($value) . "</textarea>";
 }
 
 function customCheckInput($input, $label)
@@ -441,11 +455,11 @@ function customCheckInput($input, $label)
 }
 function checkbox($id, $value, $options = "")
 {
-    return "<input type=\"checkbox\" id=\"$id\" name=\"$id\" value=\"$value\" $options>";
+    return "<input type=\"checkbox\" id=\"$id\" name=\"$id\" value=\"" . gc_attr($value) . "\" $options>";
 }
 function radio($id, $value, $options = "")
 {
-    return "<input type=\"radio\" id=\"$id\" name=\"$id\" value=\"$value\" $options>";
+    return "<input type=\"radio\" id=\"$id\" name=\"$id\" value=\"" . gc_attr($value) . "\" $options>";
 }
 
 function loadCss($style, $options = "")
