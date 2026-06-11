@@ -543,7 +543,7 @@ class Assets
         $minifier = (isset($this->css_minifier)) ? $this->css_minifier : function ($buffer) {
             return $buffer;
         };
-        return $this->pipeline($this->css, '.css', $this->css_dir, $minifier);
+        return $this->pipeline($this->css, '.css', $this->css_dir, $minifier, true);
     }
     /**
      * Minifiy and concatenate JavaScript files.
@@ -568,9 +568,10 @@ class Assets
      * @param string  $extension
      * @param string  $subdirectory
      * @param Closure $minifier
+     * @param bool    $isCss rewrite relative url() refs so they stay valid from the bundle location
      * @return string
      */
-    protected function pipeline(array $assets, $extension, $subdirectory, \Closure $minifier)
+    protected function pipeline(array $assets, $extension, $subdirectory, \Closure $minifier, $isCss = false)
     {
         // Create destination dir if it doesn't exist.
         $pipeline_dir = _BASE_DIR . $subdirectory . (empty($this->pipeline_dir) ? '' : DIRECTORY_SEPARATOR . $this->pipeline_dir);
@@ -596,7 +597,7 @@ class Assets
 
         // Download, concatenate and minifiy files
 
-        $buffer = $this->packLinks($assets, $minifier);
+        $buffer = $this->packLinks($assets, $minifier, $isCss);
         // Write minified file
         if (@file_put_contents($absolute_path, $buffer) === false) {
             trigger_error("Asset pipeline: cannot write $absolute_path (check ownership/permissions; gc setpermission fixes this)", E_USER_WARNING);
@@ -654,14 +655,16 @@ class Assets
      *
      * @param  array   $links
      * @param  Closure $minifier
+     * @param  bool    $isCss rewrite relative url() refs in local CSS sources
      * @return string
      */
-    protected function packLinks(array $links, \Closure $minifier)
+    protected function packLinks(array $links, \Closure $minifier, $isCss = false)
     {
         $buffer = '';
 
         foreach ($links as $link) {
             $originalLink = $link;
+            $localPath    = null;
 
             // Same-origin (_SITE_URL-prefixed) links are local project
             // assets. Fetching them over HTTP silently injects the app's
@@ -693,7 +696,8 @@ class Assets
                     continue;
                 }
 
-                $link = realpath($path);
+                $link      = realpath($path);
+                $localPath = $link;
             }
             // Fetch link content
             $arrContextOptions = [
@@ -716,6 +720,15 @@ class Assets
                 continue;
             }
 
+            // The bundle is written to {css_dir}/{pipeline_dir}/ — one or more
+            // directories away from the source stylesheet — so relative url()
+            // references (e.g. url("../img/sprite-sw.png") in public/css/*.css)
+            // would resolve against the bundle location and 404. Rewrite them
+            // to _SITE_URL-absolute paths based on the source file's location.
+            if ($isCss && $localPath !== null) {
+                $content = $this->rewriteCssRelativeUrls($content, $localPath);
+            }
+
             // Minify
             $buffer .= "/*" . $link . "*/" . (preg_match($this->no_minification_regex, $originalLink) ? $content : $minifier->__invoke($content));
 
@@ -723,6 +736,63 @@ class Assets
             $buffer .= PHP_EOL;
         }
         return $buffer;
+    }
+    /**
+     * Rewrite relative url() references of a local CSS file to absolute
+     * _SITE_URL-based URLs so they keep resolving once the rule lives in a
+     * concatenated bundle under {css_dir}/{pipeline_dir}/.
+     *
+     * Absolute (/...), protocol (http:, data:, ...), protocol-relative (//)
+     * and fragment (#...) references are left untouched. Sources outside the
+     * public root are left untouched too (nothing sane to rebase against).
+     *
+     * @param  string $css            CSS source content
+     * @param  string $absSourcePath  realpath of the source stylesheet
+     * @return string
+     */
+    protected function rewriteCssRelativeUrls($css, $absSourcePath)
+    {
+        if (! defined('_SITE_URL') || _SITE_URL === '') {
+            return $css;
+        }
+        $root   = realpath(_BASE_DIR . $this->public_dir);
+        $srcDir = realpath(dirname($absSourcePath));
+        if ($root === false || $srcDir === false) {
+            return $css;
+        }
+        $root   = str_replace('\\', '/', $root);
+        $srcDir = str_replace('\\', '/', $srcDir);
+        if (strpos($srcDir . '/', rtrim($root, '/') . '/') !== 0) {
+            return $css;
+        }
+        $srcRel = trim(substr($srcDir, strlen($root)), '/'); // e.g. "public/css"
+
+        return preg_replace_callback(
+            '/url\(\s*([\'"]?)([^)\'"]+)\1\s*\)/i',
+            function ($m) use ($srcRel) {
+                $url = trim($m[2]);
+                if ($url === ''
+                    || $url[0] === '/'
+                    || $url[0] === '#'
+                    || preg_match('#^(?:[a-z][a-z0-9+.-]*:|//)#i', $url)
+                ) {
+                    return $m[0];
+                }
+                $segments = $srcRel === '' ? [] : explode('/', $srcRel);
+                foreach (explode('/', $url) as $part) {
+                    if ($part === '' || $part === '.') {
+                        continue;
+                    }
+                    if ($part === '..') {
+                        array_pop($segments);
+                        continue;
+                    }
+                    $segments[] = $part;
+                }
+                return 'url("' . _SITE_URL . implode('/', $segments) . '")';
+            },
+            $css
+        );
     }
     /**
      * Build link to local asset.
