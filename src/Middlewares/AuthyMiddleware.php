@@ -49,6 +49,22 @@ class AuthyMiddleware implements MiddlewareInterface
                 $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
             }
 
+            // Stale-session guard: a session can outlive its user (DB reseed,
+            // deleted account). Such a ghost session would stamp a now-invalid
+            // id on every audit-stamped write and 500 on the authy FK. If the
+            // user row is definitively gone, clear the session so the redirect
+            // below sends them to re-login with a valid id. A DB error (query
+            // throws) must NOT log anyone out — only a successful "no such row".
+            if ($_SESSION[_AUTH_VAR]->get('connected') == 'YES' && $_SESSION[_AUTH_VAR]->getIdAuthy()) {
+                try {
+                    if (\App\AuthyQuery::create()->findPk($_SESSION[_AUTH_VAR]->getIdAuthy()) === null) {
+                        unset($_SESSION[_AUTH_VAR]);
+                        $_SESSION[_AUTH_VAR] = new AuthySession();
+                        $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
+                    }
+                } catch (\Exception $e) { /* DB transient: keep the session, don't lock out */ }
+            }
+
             if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
 
                 if (strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
