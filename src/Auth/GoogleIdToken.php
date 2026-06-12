@@ -33,11 +33,14 @@ class GoogleIdToken
             throw new \RuntimeException(_('Google sign-in is not configured'));
         }
         $keys = $this->keys();
+        $prevLeeway = JWT::$leeway;
         JWT::$leeway = 60;
         try {
-            $claims = (array) JWT::decode($idToken, JWK::parseKeySet($keys));
+            $claims = (array) JWT::decode($idToken, JWK::parseKeySet($keys, 'RS256'));
         } catch (\Exception $e) {
             throw new \RuntimeException(_('Google sign-in failed'));
+        } finally {
+            JWT::$leeway = $prevLeeway;
         }
         $emailVerified = $claims['email_verified'] ?? false;
         if (!in_array($claims['iss'] ?? '', self::ISSUERS, true)
@@ -73,7 +76,11 @@ class GoogleIdToken
             }
             throw new \RuntimeException(_('Google sign-in unavailable'));
         }
-        @file_put_contents($f, $raw);
+        $tmp = $f . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, $raw) !== false) {
+            @chmod($tmp, 0600);
+            @rename($tmp, $f);
+        }
         return $json;
     }
 }
