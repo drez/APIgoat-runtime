@@ -105,7 +105,7 @@ class RbacMiddleware implements MiddlewareInterface
         $ApiRbac = ApiRbacQuery::create()->findPk($rbac_id);
         if ($ApiRbac) {
             $ApiRbac->setCount($ApiRbac->getCount() + 1);
-            $ApiRbac->save();
+            $this->saveBookkeeping($ApiRbac);
             $this->logApi($rbac_id, $idAuthy);
         }
 
@@ -169,11 +169,10 @@ class RbacMiddleware implements MiddlewareInterface
             $ApiRbac->setRule($default_rule);
             $ApiRbac->setBody(((\is_null($body)) ? null : \json_encode(\json_decode($body, true), \JSON_PRETTY_PRINT)));
             $ApiRbac->setCount(1);
-            $ApiRbac->save();
+            $this->rbac_id = $this->saveBookkeeping($ApiRbac);
             $this->rbac_rule = $default_rule;
             $this->rbac_role = null;
             $this->rbac_is_new = true;
-            $this->rbac_id = $ApiRbac->getPrimaryKey();
             $this->logApi($this->rbac_id);
             if (\defined('app_status') && \app_status == 'dev') {
                 return false;
@@ -182,8 +181,7 @@ class RbacMiddleware implements MiddlewareInterface
         } elseif ($ApiRbac->getScope() == 'Public' && $ApiRbac->getRule() != 'Deny') {
             // pass public route
             $ApiRbac->setCount($ApiRbac->getCount() + 1);
-            $ApiRbac->save();
-            $this->rbac_id = $ApiRbac->getPrimaryKey();
+            $this->rbac_id = $this->saveBookkeeping($ApiRbac);
             $this->logApi($this->rbac_id);
             return false;
         } else {
@@ -193,7 +191,7 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_id = $ApiRbac->getPrimaryKey();
             if (\defined('app_status') && \app_status == 'dev') {
                 $ApiRbac->setCount($ApiRbac->getCount() + 1);
-                $ApiRbac->save();
+                $this->saveBookkeeping($ApiRbac);
                 // Keep private routes on the private-auth pass in dev mode too.
                 return true;
             }
@@ -208,7 +206,28 @@ class RbacMiddleware implements MiddlewareInterface
         $ApiLog->setIdAuthy($IdAuthy);
         $ApiLog->setTime(time());
         $ApiLog->setRawParameters($this->raw_parameters);
-        $ApiLog->save();
+        $this->saveBookkeeping($ApiLog);
+    }
+
+    /**
+     * Persist a non-essential RBAC/audit row. Route auto-discovery, hit
+     * counts and api-log entries are bookkeeping; if the write fails — e.g.
+     * the session points at a since-deleted authy user (DB reseed, dropped
+     * account), so the add_tablestamp id_creation/id_modification stamp
+     * violates the authy FK — log a warning and let the user's actual
+     * request proceed rather than surfacing a 500.
+     *
+     * @return mixed primary key on success, null on failure
+     */
+    private function saveBookkeeping($obj)
+    {
+        try {
+            $obj->save();
+            return method_exists($obj, 'getPrimaryKey') ? $obj->getPrimaryKey() : true;
+        } catch (\Exception $e) {
+            \Propel::log('RBAC/audit bookkeeping write skipped (request continues): ' . $e->getMessage(), \Propel::LOG_WARNING);
+            return null;
+        }
     }
 
     function excludeBody()
