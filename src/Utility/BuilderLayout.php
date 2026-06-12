@@ -211,7 +211,13 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                 'class="left-panel-wrapper" '
             ),
             '',
-            'class="left-panel" '
+            // Inline display:none — the legacy sidebar is fully replaced by
+            // #appDrawer (.proto-drawer) and only kept in the DOM for the
+            // impersonation JS. The _formv2 kill rule (`body .left-panel
+            // { display:none !important }`) lives in main.css, which clients
+            // may cache stale for weeks (no hash on raw css adds historically)
+            // — an inline style is cache-immune.
+            'class="left-panel" style="display:none" '
         );
 
             // Guideline mobile drawer (SCSS in _formv2: .proto-drawer /
