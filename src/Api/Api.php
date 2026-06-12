@@ -34,20 +34,42 @@ class Api
     private $response;
     private $ServiceWrapper;
     private $colsToValidate;
+    /**
+     * Per-form editable-column allowlist (camelized PhpNames) emitted by the
+     * code generator. null = no allowlist available (fall back to the
+     * denylist-only behavior). Prevents mass-assignment of columns the form
+     * never exposes.
+     *
+     * @var array|null
+     */
+    private $editableFields;
+    /**
+     * Columns that must never be set via the generic API body, regardless of
+     * the editable allowlist (system flag + audit-stamp columns).
+     *
+     * @var array
+     */
+    protected $denyColumns = [
+        'IsSystem',
+        'IdCreation', 'IdModification', 'IdGroupCreation',
+        'DateCreation', 'DateModification',
+    ];
 
     /**
      * Set the basic variables
      *
      * @param string $tablename
      * @param string|object $ServiceWrapper
+     * @param array|null $editableFields per-form editable column allowlist
      */
-    public function __construct(string $tablename, string|object $ServiceWrapper = null)
+    public function __construct(string $tablename, string|object $ServiceWrapper = null, array $editableFields = null)
     {
         $this->tablename = \camelize($tablename, true);
         $this->queryObjName = "\App\\" . $this->tablename . "Query";
         if ($ServiceWrapper) {
             $this->ServiceWrapper = $ServiceWrapper;
         }
+        $this->editableFields = $editableFields;
     }
 
     /**
@@ -62,19 +84,23 @@ class Api
         $peerClass = "\App\\" . $this->tablename . "Peer";
         $fieldsName = $peerClass::getFieldNames();
 
+        $return = [];
+
         if ($isMultiple) {
 
             foreach ($request as $fieldList) {
                 foreach ($fieldList as $key => $val) {
-                    if (in_array(\camelize($key, true), $fieldsName)) {
-                        $return[\camelize($key, true)] = $val;
+                    $cam = \camelize($key, true);
+                    if ($this->isWritableColumn($cam, $fieldsName)) {
+                        $return[$cam] = $val;
                     }
                 }
             }
         } else {
             foreach ($request as $key => $val) {
-                if (in_array(\camelize($key, true), $fieldsName)) {
-                    $return[\camelize($key, true)] = $val;
+                $cam = \camelize($key, true);
+                if ($this->isWritableColumn($cam, $fieldsName)) {
+                    $return[$cam] = $val;
                 }
             }
         }
@@ -83,7 +109,35 @@ class Api
             $return['Id' . $this->tablename] = $request['i'];
         }*/
 
+        // The PK identifies the update target (re-attached in setJson and
+        // resolved through the ACL filter in setEntry); it must never be a
+        // writable column value here (prevents PK-reassignment / IDOR).
+        unset($return['Id' . $this->tablename]);
+
         return $return;
+    }
+
+    /**
+     * Decide whether a (camelized) request key may be written: it must be a
+     * real column, not on the sensitive-column denylist, and — when the
+     * generator supplied a per-form allowlist — present on that allowlist.
+     *
+     * @param string $cam camelized column name
+     * @param array $fieldsName Peer::getFieldNames()
+     * @return boolean
+     */
+    private function isWritableColumn($cam, $fieldsName)
+    {
+        if (!in_array($cam, $fieldsName)) {
+            return false;
+        }
+        if (in_array($cam, $this->denyColumns, true)) {
+            return false;
+        }
+        if ($this->editableFields !== null && !in_array($cam, $this->editableFields, true)) {
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -102,6 +156,20 @@ class Api
         #one entry, or multiple with querybuilder
 
         $data = $this->filterRequest($request['data']);
+
+        // Re-attach the body PK (stripped by filterRequest) for update-target
+        // resolution only — setEntry resolves it through the ACL filter and
+        // setColumn never writes it. The body key may be raw (id_<table>) or
+        // already camelized; match on its camelized form.
+        $pkKey = 'Id' . $this->tablename;
+        if (is_array($request['data'])) {
+            foreach ($request['data'] as $k => $v) {
+                if (\camelize($k, true) === $pkKey) {
+                    $data[$pkKey] = $v;
+                    break;
+                }
+            }
+        }
 
         if (empty($data)) {
             $this->response['error'] = "Wrong input 1007, nothing found to update";
@@ -366,7 +434,10 @@ class Api
             $isNew = true;
         } elseif (!($DataObj instanceof PropelCollection)) {
             $this->response['debug'][] = "Update {$this->tablename}";
-            $obj =  $this->queryObjName::create()->findPk($data["Id{$this->tablename}"]);
+            // ACL-filter the target resolution: a body-supplied PK resolves
+            // only to rows the caller is allowed to access (Owner/Group ACL),
+            // closing the cross-row/cross-tenant overwrite (write-IDOR).
+            $obj = $this->setAclFilter($this->queryObjName::create())->findPk($data["Id{$this->tablename}"]);
         } else {
             $this->response['debug'][] = "Update {$this->tablename}";
             $obj = $DataObj;
@@ -435,6 +506,11 @@ class Api
             }
         } else {
             foreach ($columns as $key => $val) {
+                // Defensive: never write the PK as a column value even if it
+                // slips through (it is only an update-target selector).
+                if ($key === 'Id' . $this->tablename) {
+                    continue;
+                }
                 if ($key) {
                     $setStr = "set" . $key;
                     if (!method_exists($obj, $setStr)) {

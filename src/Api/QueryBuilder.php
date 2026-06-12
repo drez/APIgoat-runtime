@@ -251,6 +251,30 @@ class QueryBuilder
         return true;
     }
 
+    /**
+     * Allowlist a client-supplied select-clause expression before it reaches
+     * Propel withColumn() (which emits unrecognized tokens as raw SELECT SQL).
+     * Accepts a bare/qualified identifier or a single safe aggregate over one;
+     * rejects subqueries, stacked queries, comments, functions, and '*'.
+     *
+     * @param string $clause
+     * @return boolean
+     */
+    public static function isSafeSelectClause($clause)
+    {
+        $clause = trim((string) $clause);
+        if ($clause === '') {
+            return false;
+        }
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $clause)) {
+            return true;
+        }
+        if (preg_match('/^(COUNT|SUM|AVG|MIN|MAX)\(\s*(DISTINCT\s+)?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?\s*\)$/i', $clause)) {
+            return true;
+        }
+        return false;
+    }
+
     private function setSelect(array $selectRequest)
     {
         foreach ($selectRequest as $select) {
@@ -258,6 +282,15 @@ class QueryBuilder
                 // Foreign column
                 if (count($select) !== 2) {
                     $this->messages[] = "Select: Parameters incorrect.";
+                    return true;
+                }
+
+                if (!self::isSafeSelectClause($select[0])) {
+                    $this->messages[] = "Select: column expression not allowed.";
+                    return true;
+                }
+                if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', (string) $select[1])) {
+                    $this->messages[] = "Select: alias not allowed.";
                     return true;
                 }
 

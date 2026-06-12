@@ -272,6 +272,7 @@ function selectbox($name, $select, $valeur = '', $class = '')
 
 function optionListeSelect($options, $selectedValue, $defaultLabel = true)
 {
+    $optionsList = "";
     if ($options) {
         $selectedLabel = "";
         foreach ($options as $option) {
@@ -280,18 +281,19 @@ function optionListeSelect($options, $selectedValue, $defaultLabel = true)
             if (is_array($selectedValue)) {
                 if (array_search($option[1], $selectedValue) !== false) {
                     $class = ' class="selected"';
-                    $selectedLabel .= $option[0] . ',';
+                    $selectedLabel .= gc_attr($option[0]) . ',';
                 }
             } else {
                 if ($selectedValue == $option[1]) {
                     $class = ' class="selected"';
-                    $selectedLabel .= $option[0] . ',';
+                    $selectedLabel .= gc_attr($option[0]) . ',';
                 }
             }
+            $safeLabel = gc_attr(ucfirst($option[0]));
             $optionsList .=
                 li(
-                    strong(ucfirst($option[0]), 'unselectable="on" title="' . ucfirst($option[0]) . '"'),
-                    'v=\'' . $option[2] . '\' unselectable="on" data-label="' . $option[0] . '" data-value="' . $option[1] . '"' . $class
+                    strong($safeLabel, 'unselectable="on" title="' . $safeLabel . '"'),
+                    'v=\'' . gc_attr($option[2]) . '\' unselectable="on" data-label="' . $safeLabel . '" data-value="' . gc_attr($option[1]) . '"' . $class
                 );
         }
     }
@@ -340,10 +342,12 @@ function selectboxCustomArray($name, $options, $defaultLabel = '', $attr = '', $
     $selectedLabel = $rOption['selectedLabel'];
 
     if (!empty($defaultLabel)) {
-        $defaultLabel = li(span(_('Clear'), 'unselectable="on" title="' . ucfirst($defaultLabel) . '"'), 'class="default" unselectable="on" data-label="' . $defaultLabel . '" data-value="default"');
+        $safeDefault = gc_attr(ucfirst($defaultLabel));
+        $defaultLabel = li(span(_('Clear'), 'unselectable="on" title="' . $safeDefault . '"'), 'class="default" unselectable="on" data-label="' . gc_attr($defaultLabel) . '" data-value="default"');
     }
     if ($null_in_sel) {
-        $emptyLabel = li(span(_('Empty value'), 'unselectable="off" title="' . ucfirst(_('Empty value')) . '"'), 'class="null" unselectable="off" data-label="' . _('Empty value') . '" data-value="_null"');
+        $safeEmpty = gc_attr(_('Empty value'));
+        $emptyLabel = li(span(_('Empty value'), 'unselectable="off" title="' . gc_attr(ucfirst(_('Empty value'))) . '"'), 'class="null" unselectable="off" data-label="' . $safeEmpty . '" data-value="_null"');
         $classParam .= " hasNull";
     }
     $grayClass = " gray ";
@@ -381,17 +385,18 @@ function arrayToOptions(array $array, string $idSelected = '')
             $option = '';
             if (!empty($array[$i][0])) {
                 // handle multiple selected id
+                $safeV = gc_attr($array[$i][2]);
                 if (is_array($idSelected)) {
                     if (array_search($array[$i][1], $idSelected)) {
-                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "' selected=\"yes\"");
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $safeV . "' selected=\"yes\"");
                     } else
-                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "'");
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $safeV . "'");
                 } else {
                     // handle standard selected id
                     if ($idSelected == $array[$i][1]) {
-                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "' selected=\"yes\"");
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $safeV . "' selected=\"yes\"");
                     } else
-                        $options .= option($array[$i][0], $array[$i][1], "v='" . $array[$i][2] . "'");
+                        $options .= option($array[$i][0], $array[$i][1], "v='" . $safeV . "'");
                 }
             }
         }
@@ -405,17 +410,20 @@ function arrayToJson($options, $idSelected = '')
         for ($i = 0, $c = count($options); $i < $c; $i++) {
             if (!empty($options[$i][0])) {
                 // handle multiple selected id
+                $safeLabel = gc_attr($options[$i][0]);
+                $safeValue = gc_attr($options[$i][1]);
+                $safeV = gc_attr($options[$i][2]);
                 if (is_array($idSelected)) {
                     if (array_search($options[$i][1], $idSelected)) {
-                        $option[$options[$i][1]] = li($options[$i][0], "data-label='" . $options[$i][0] . "' data-value='" . $options[$i][1] . "' v='" . $options[$i][2] . "' class='selected'");
+                        $option[$options[$i][1]] = li($safeLabel, "data-label='" . $safeLabel . "' data-value='" . $safeValue . "' v='" . $safeV . "' class='selected'");
                     } else
-                        $option[$options[$i][1]] = li($options[$i][0], "data-label='" . $options[$i][0] . "' data-value='" . $options[$i][1] . "' v='" . $options[$i][2] . "'");
+                        $option[$options[$i][1]] = li($safeLabel, "data-label='" . $safeLabel . "' data-value='" . $safeValue . "' v='" . $safeV . "'");
                 } else {
                     // handle standard selected id
                     if ($idSelected == $options[$i][1]) {
-                        $option[$options[$i][1]] = li($options[$i][0], "data-label='" . $options[$i][0] . "' data-value='" . $options[$i][1] . "' v='" . $options[$i][2] . "' class='selected'");
+                        $option[$options[$i][1]] = li($safeLabel, "data-label='" . $safeLabel . "' data-value='" . $safeValue . "' v='" . $safeV . "' class='selected'");
                     } else
-                        $option[$options[$i][1]] = li($options[$i][0], "data-label='" . $options[$i][0] . "' data-value='" . $options[$i][1] . "' v='" . $options[$i][2] . "'");
+                        $option[$options[$i][1]] = li($safeLabel, "data-label='" . $safeLabel . "' data-value='" . $safeValue . "' v='" . $safeV . "'");
                 }
             }
         }
@@ -425,7 +433,7 @@ function arrayToJson($options, $idSelected = '')
 
 function option($caption, $value, $options = "")
 {
-    return "<option value=\"" . gc_attr($value) . "\" $options>$caption</option>";
+    return "<option value=\"" . gc_attr($value) . "\" $options>" . gc_attr($caption) . "</option>";
 }
 
 function iframe($src, $options = "")

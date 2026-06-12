@@ -60,19 +60,38 @@ function security_redirect($redirect = true, $request = [])
 
 function en_de($action, $string)
 {
-    $output = false;
     $encrypt_method = "AES-256-CBC";
-    $secret_key = _CRYPT_KEY;
-    $secret_iv = _CRYPT_IV;
-    $key = hash('sha256', $secret_key);
-    $iv = substr(hash('sha256', $secret_iv), 0, 16);
+    // 32-byte binary key for AES-256.
+    $key = hash('sha256', _CRYPT_KEY, true);
+
     if ($action == 'encrypt') {
-        $output = openssl_encrypt($string, $encrypt_method, $key, 0, $iv);
-        $output = base64_encode($output);
-    } else if ($action == 'decrypt') {
-        $output = openssl_decrypt(base64_decode($string), $encrypt_method, $key, 0, $iv);
+        // Fresh random IV per ciphertext (no fixed-IV reuse), prepended to the
+        // ciphertext so decryption can recover it.
+        $iv = random_bytes(16);
+        $ct = openssl_encrypt($string, $encrypt_method, $key, OPENSSL_RAW_DATA, $iv);
+        if ($ct === false) {
+            return false;
+        }
+        return base64_encode($iv . $ct);
+    } elseif ($action == 'decrypt') {
+        $raw = base64_decode($string, true);
+        if ($raw !== false && strlen($raw) > 16) {
+            $iv = substr($raw, 0, 16);
+            $ct = substr($raw, 16);
+            $plain = openssl_decrypt($ct, $encrypt_method, $key, OPENSSL_RAW_DATA, $iv);
+            if ($plain !== false) {
+                return $plain;
+            }
+        }
+        // Legacy fixed-IV format fallback (pre-random-IV ciphertexts).
+        if (defined('_CRYPT_IV')) {
+            $legacyKey = hash('sha256', _CRYPT_KEY);
+            $legacyIv = substr(hash('sha256', _CRYPT_IV), 0, 16);
+            return openssl_decrypt(base64_decode($string), $encrypt_method, $legacyKey, 0, $legacyIv);
+        }
+        return false;
     }
-    return $output;
+    return false;
 }
 
 function rmv_var($stringIn, $rmv_string, $sep, $space = true)
