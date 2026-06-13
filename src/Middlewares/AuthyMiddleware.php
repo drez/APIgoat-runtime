@@ -126,14 +126,13 @@ class AuthyMiddleware implements MiddlewareInterface
     /**
      * CSRF gate for state-changing session-authenticated requests.
      *
-     * Accepts either a valid session token (X-Csrf-Token header or `csrf`
-     * body field, compared with hash_equals) or the X-Requested-With:
-     * XMLHttpRequest marker. The XHR marker is a sound CSRF defense here
-     * because the CORS layer never allows credentialed cross-origin
-     * requests, so a foreign origin cannot attach that header; classic
-     * HTML-form CSRF cannot set it either. All emitted clients already send
-     * it, so enforcement is non-breaking. API (JWT) routes are exempt —
-     * they carry no ambient cookie credential.
+     * Requires a valid session token — the X-Csrf-Token header (attached by the
+     * client fetch wrapper and the upload XHR) or the `csrf` body field (forms),
+     * compared with hash_equals. The old X-Requested-With-only fallback was
+     * removed: its safety depended on CORS never allowing credentialed cross-
+     * origin requests, so a token is the robust, config-independent defense.
+     * CorsMiddleware additionally guarantees no credentialed CORS. API (JWT)
+     * routes are exempt — they carry no ambient cookie credential.
      *
      * @return ResponseInterface|null a 403 response, or null when allowed
      */
@@ -155,9 +154,6 @@ class AuthyMiddleware implements MiddlewareInterface
             ? (string) $_SESSION[_AUTH_VAR]->getCsrf() : '';
 
         if ($token !== '' && $sessionToken !== '' && hash_equals($sessionToken, $token)) {
-            return null;
-        }
-        if ($request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
             return null;
         }
 

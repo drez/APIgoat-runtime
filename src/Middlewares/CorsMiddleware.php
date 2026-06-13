@@ -28,16 +28,24 @@ class CorsMiddleware
         $routeContext = RouteContext::fromRequest($request);
         $routingResults = $routeContext->getRoutingResults();
         $methods = $routingResults->getAllowedMethods();
-        $requestHeaders = $request->getHeaderLine('Access-Control-Request-Headers');
 
         $response = $handler->handle($request);
 
         $response = $response->withHeader('Access-Control-Allow-Origin', '*');
         $response = $response->withHeader('Access-Control-Allow-Methods', implode(',', $methods));
-        $response = $response->withHeader('Access-Control-Allow-Headers', $requestHeaders);
+        // Fixed allow-list instead of reflecting Access-Control-Request-Headers.
+        $response = $response->withHeader(
+            'Access-Control-Allow-Headers',
+            'Content-Type, X-Requested-With, X-Csrf-Token, Authorization, Accept'
+        );
 
-        // Optional: Allow Ajax CORS requests with Authorization header
-        //$response = $response->withHeader('Access-Control-Allow-Credentials', 'true');
+        // SECURITY: a wildcard Allow-Origin is only safe WITHOUT credentials.
+        // Never send Access-Control-Allow-Credentials here — the cookie-session
+        // CSRF defense (AuthyMiddleware) depends on credentialed cross-origin
+        // requests being impossible, which a wildcard origin guarantees as long
+        // as credentials stay off. If a future feature needs credentialed CORS,
+        // switch to a strict per-request origin allowlist first.
+        $response = $response->withoutHeader('Access-Control-Allow-Credentials');
 
         return $response;
     }
