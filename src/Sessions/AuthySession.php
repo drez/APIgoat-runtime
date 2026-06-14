@@ -301,21 +301,25 @@ class AuthySession
 
     public function setGroups()
     {
-        // The audit FK (id_group_creation -> authy_group) always coexists
-        // with the membership FK, so Propel suffixes both relations with
-        // RelatedBy — the bare 'AuthyGroup' relation never exists here.
-        $AuthyGroupX = \App\AuthyGroupXQuery::create()
-            ->leftJoin('AuthyGroupRelatedByIdAuthyGroup')
+        // authy_group_x's relation to authy_group is named differently across
+        // project schema vintages: the bare 'AuthyGroup' (single membership FK)
+        // on older projects, or 'AuthyGroupRelatedByIdAuthyGroup' when
+        // add_tablestamp adds a second authy_group FK (id_group_creation). This
+        // runtime is shared across every project, so we must not hard-code
+        // either relation name — resolve the membership group by its id
+        // directly, which works regardless of how many FKs the table carries.
+        $rows = \App\AuthyGroupXQuery::create()
             ->filterByIdAuthy($_SESSION[\_AUTH_VAR]->getIdAuthy())
             ->find();
 
-        if ($AuthyGroupX) {
-            foreach ($AuthyGroupX as $AuthyGroup) {
-                if ($AuthyGroup->getAuthyGroupRelatedByIdAuthyGroup()) {
-                    if ($AuthyGroup->getAuthyGroupRelatedByIdAuthyGroup()->getAdmin() === 'Yes') {
+        if ($rows) {
+            foreach ($rows as $row) {
+                $group = \App\AuthyGroupQuery::create()->findPk($row->getIdAuthyGroup());
+                if ($group) {
+                    if ($group->getAdmin() === 'Yes') {
                         $this->group = 'Admin';
                     }
-                    $this->Groups[] = $AuthyGroup->getIdAuthyGroup();
+                    $this->Groups[] = $row->getIdAuthyGroup();
                 }
             }
         }
