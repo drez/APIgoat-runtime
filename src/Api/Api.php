@@ -321,8 +321,20 @@ class Api
     public function getOneJson($data)
     {
 
+        if ($data['rbac_public'] != 'passed') {
+            $acls = $this->authorize($this->tablename, 'r');
+            if (!$acls) {
+                $ret['status'] = "failure";
+                $ret['error'] = "Permission denied";
+                return $ret;
+            }
+        }
+
         try {
-            $QueryBuilder = new \ApiGoat\Api\QueryBuilder($this->queryObjName::create(), $data);
+            // ACL-filter the single-row read so it can't reach rows outside the
+            // caller's tenant / Owner / Group scope (IDOR guard), matching
+            // getJson/deleteJson.
+            $QueryBuilder = new \ApiGoat\Api\QueryBuilder($this->setAclFilter($this->queryObjName::create()), $data);
 
 
             $obj = $QueryBuilder->Query->findOne();

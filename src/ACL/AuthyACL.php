@@ -21,6 +21,12 @@ trait AuthyACL
      */
     public function authorize(string $modelName, string $acls)
     {
+        // Reset per-call: aclGroup is reused by setAclFilter() to build the
+        // Owner/Group row filter. Without this reset, an object that authorizes
+        // two models in one request would carry the first model's group scope
+        // into the second's filter.
+        $this->aclGroup = null;
+
         if ($_SESSION[\_AUTH_VAR]->isAdmin()) {
             return true;
         }
