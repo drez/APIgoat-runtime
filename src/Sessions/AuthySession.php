@@ -85,6 +85,56 @@ class AuthySession
         return false;
     }
 
+    /**
+     * Load one row by primary key, scoped to this user's ACL — the airtight
+     * counterpart of the list/API row filters, for the privileged findPk loads
+     * (edit-form load, saveUpdate, bulk update, delete).
+     *
+     * It deliberately goes through filterByPrimaryKey()->findOne() rather than
+     * findPk(): findPk() on a simple PK uses findPkSimple()/the instance pool,
+     * which build raw SQL and BYPASS query filters (and the GoatCheese tenant
+     * behavior). findOne() runs through doSelect(), so the tenant partition and
+     * the model's Owner/Group row scope for $right both apply.
+     *
+     * Returns the row, or null when it does not exist OR the current user is not
+     * allowed to reach it — callers MUST null-check. Root sees every row (still
+     * PK-scoped). Mirrors AuthyACL::setAclFilter's Owner/Group grouping so the
+     * _or() pair ANDs cleanly with the tenant filter.
+     *
+     * @param string $queryClass Fully-qualified Propel Query class (pass FooQuery::class)
+     * @param mixed  $pk         Primary key (scalar, or array for a composite PK)
+     * @param string $model      RBAC model name for the rights lookup ('' = tenant only)
+     * @param string $right      Right to scope by ('r', 'w', 'd', …)
+     * @return mixed The model object, or null
+     */
+    public function loadPkScoped($queryClass, $pk, $model = '', $right = 'r')
+    {
+        $q = $queryClass::create()->filterByPrimaryKey($pk);
+
+        if (! $this->isRoot()) {
+            // Tenant hard partition.
+            if ($this->get('id_tenant') && method_exists($q, 'filterByIdTenant')) {
+                $q->filterByIdTenant($this->get('id_tenant'));
+            }
+            // Owner/Group row scope for this model + right.
+            if ($model !== '') {
+                $scope = $this->hasRights($model, $right);
+                if (is_array($scope)) {
+                    if (in_array('Owner', $scope) && method_exists($q, 'filterByIdCreation')) {
+                        $q->filterByIdCreation($this->getIdAuthy());
+                        if (in_array('Group', $scope) && method_exists($q, 'filterByIdGroupCreation')) {
+                            $q->_or()->filterByIdGroupCreation($this->getGroups(), \Criteria::IN);
+                        }
+                    } elseif (in_array('Group', $scope) && method_exists($q, 'filterByIdGroupCreation')) {
+                        $q->filterByIdGroupCreation($this->getGroups(), \Criteria::IN);
+                    }
+                }
+            }
+        }
+
+        return $q->findOne();
+    }
+
     public function getIdPrimaryGroup()
     {
         return $this->IdPrimaryGroup;
