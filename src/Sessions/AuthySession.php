@@ -13,6 +13,8 @@ class AuthySession
 
     public $omMap;
     public $isConnected;
+    /** Tenant the logged-in user belongs to (authy.id_tenant); drives row scoping. */
+    public $idTenant;
     public $lang;
     private $group;
     private $Group;
@@ -187,6 +189,9 @@ class AuthySession
             case 'isRoot':
                 return $this->isRoot;
                 break;
+            case 'id_tenant':
+                return $this->idTenant;
+                break;
         }
     }
 
@@ -234,6 +239,9 @@ class AuthySession
                 break;
             case 'isRoot':
                 $this->isRoot = $value;
+                break;
+            case 'id_tenant':
+                $this->idTenant = $value;
                 break;
         }
     }

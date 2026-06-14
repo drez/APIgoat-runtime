@@ -99,6 +99,17 @@ trait AuthyACL
      */
     public function setAclFilter(&$QueryObj)
     {
+        // Tenant row-scoping (independent of Owner/Group RBAC): a non-root user
+        // bound to a tenant only ever sees rows of their own tenant, on any model
+        // that has an id_tenant column. Added as a leading AND — Propel groups the
+        // Owner/Group _or() below, so the tenant filter ANDs cleanly with it (no
+        // (tenant AND owner) OR group leak; verified). Root users see all tenants.
+        if (! $_SESSION[\_AUTH_VAR]->get('isRoot')
+            && $_SESSION[\_AUTH_VAR]->get('id_tenant')
+            && method_exists($QueryObj, 'filterByIdTenant')) {
+            $QueryObj->filterByIdTenant($_SESSION[\_AUTH_VAR]->get('id_tenant'));
+        }
+
         if (isset($this->aclGroup) && $this->aclGroup !== false) {
             if (! is_array($this->aclGroup)) {
                 $this->aclGroup = $_SESSION[\_AUTH_VAR]->aclGroup;
