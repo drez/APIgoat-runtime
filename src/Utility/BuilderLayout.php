@@ -313,15 +313,6 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                 )
 
                 . div('', 'editDialog', 'style=""')
-                . div('', 'editPopupDialog', 'style="d" ')
-                . div(
-                    div(p('', "id='confirm_text'"), '', "class='mainForm'"),
-                    'confirmDialog'
-                )
-                . div(
-                    div(p('', "id='alert_text'"), '', "class='mainForm'"),
-                    'alertDialog'
-                )
 
                 . div(
                     div(
@@ -507,24 +498,6 @@ JS;
         ) . "<script>" . $toggleScript . "</script>";
     }
 
-    public function renderOpen($content)
-    {
-    }
-
-    public function renderDownload($content, $name)
-    {
-        if ($content) {
-            return $content;
-        } else {
-            return "Error";
-        }
-        /*header("Content-disposition: attachment; filename=".$name."");
-        header("Content-Type: application/force-download");
-        header("Content-Transfer-Encoding: $type\n"); // Surtout ne pas enlever le \n
-        header("Pragma: no-cache");
-        header("Cache-Control: must-revalidate, post-check=0, pre-check=0, public");
-        header("Expires: 0");*/
-    }
 
     public function decorate(string $content, array $options)
     {

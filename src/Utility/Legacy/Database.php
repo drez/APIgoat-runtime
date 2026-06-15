@@ -1,14 +1,6 @@
 <?php
 #session_start();
 
-define('MYSQL_ONCE', '1');
-define('MYSQL_FOREACH_ARRAY', '2');
-define('MYSQL_INSERT_ID', '3');
-define('MYSQL_NUM_ROW', '4');
-define('MYSQL_FOR_ARRAY', '5');
-define('MYSQL_AFFECTED', '6');
-define('MYSQL_NUM_ARRAY', '7');
-define('MYSQL_OBJ_ARRAY', '8');
 /*
  * Fonction de connection a la base de donnee
  */
