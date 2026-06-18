@@ -50,7 +50,7 @@ class BuilderLayout
     let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
     window.gcNotifPillOff = " . $pillOffLiteral . ";
     (function () {
-        var ok = ['mint', 'ink', 'indigo', 'terracotta', 'graphite'];
+        var ok = " . json_encode(array_values($this->validThemes())) . ";
         var t = " . json_encode($gcTheme) . ";
         try {
             if (t) { localStorage.setItem('gcTheme', t); }
@@ -366,6 +366,25 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
     }
 
     /**
+     * Valid theme names, sourced from the authy.theme ENUM valueSet so
+     * themes added to the schema (e.g. slate, dusk) are honoured without
+     * editing this file — mirrors AccountServiceWrapper's validation and
+     * keeps the html[data-theme] gate from drifting out of sync. Falls
+     * back to the original five for projects whose authy table predates
+     * the theme column (no THEME constant / valueSet).
+     */
+    private function validThemes()
+    {
+        if (class_exists('\App\AuthyPeer') && defined('\App\AuthyPeer::THEME')) {
+            $vs = \App\AuthyPeer::getValueSet(\App\AuthyPeer::THEME);
+            if (is_array($vs) && ! empty($vs)) {
+                return $vs;
+            }
+        }
+        return ['mint', 'ink', 'indigo', 'terracotta', 'graphite'];
+    }
+
+    /**
      * Per-user theme for html[data-theme]. Session-cached after one
      * AuthyQuery lookup; '' pre-auth (the head script then falls back
      * to the localStorage device echo). Guards make projects whose
@@ -373,7 +392,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
      */
     private function resolveTheme()
     {
-        $allowed = ['mint', 'ink', 'indigo', 'terracotta', 'graphite'];
+        $allowed = $this->validThemes();
         if (! defined('_AUTH_VAR') || ! isset($_SESSION[_AUTH_VAR]) || ! is_object($_SESSION[_AUTH_VAR])) {
             return '';
         }
