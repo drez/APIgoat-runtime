@@ -264,9 +264,16 @@ class AuthyMiddleware implements MiddlewareInterface
 
     private function checkExclude($route)
     {
-        if (in_array($route, $this->privilegeMap['exclude'])) {
-            return true;
+        // Match an exclude entry exactly, or as a leading path segment so that
+        // tokenised public routes work (e.g. entry "inv" excludes "inv/<token>"
+        // and "inv/<token>/pdf"; "t/pixel" excludes "t/pixel/<token>.gif"). The
+        // trailing-slash boundary prevents "inv" from matching "invoice/...".
+        foreach ($this->privilegeMap['exclude'] as $entry) {
+            if ($route === $entry || strpos($route, $entry . '/') === 0) {
+                return true;
+            }
         }
+        return false;
     }
 
     /**
