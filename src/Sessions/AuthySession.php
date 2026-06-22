@@ -71,7 +71,12 @@ class AuthySession
             return true;
         }
 
-        if (is_array($this->accessControl[$model])) {
+        // Init before the loop: $model may be absent from accessControl (no
+        // grant) — previously left $groupAccess undefined (PHP 8 warning) and
+        // relied on is_array(null)===false. This is the single canonical copy
+        // now (#18: AuthyACL::hasRights delegates here).
+        $groupAccess = [];
+        if (isset($this->accessControl[$model]) && is_array($this->accessControl[$model])) {
             foreach ($this->accessControl[$model] as $group => $right) {
                 if (strstr($right, $needeRight)) {
                     // collect acl group that contains the proper access
@@ -81,7 +86,7 @@ class AuthySession
         }
 
         // Priorize the acl group. Order All, Group, Owner
-        if (is_array($groupAccess)) {
+        if ($groupAccess !== []) {
             // if All, unrestricted access
             if (in_array('All', $groupAccess)) {
                 return true;

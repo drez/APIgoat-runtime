@@ -69,32 +69,13 @@ trait AuthyACL
 
     public function hasRights($model = '', $needeRight = '')
     {
-
-        // Admin bypass Rights
-        if ($_SESSION[\_AUTH_VAR]->getGroup() === 'Admin') {
-            return true;
-        }
-
-        if (is_array($_SESSION[\_AUTH_VAR]->accessControl[$model])) {
-            foreach ($_SESSION[\_AUTH_VAR]->accessControl[$model] as $group => $right) {
-                if (strstr($right, $needeRight)) {
-                    // collect acl group that contains the proper access
-                    $groupAccess[] = $group;
-                }
-            }
-        }
-
-        // Priorize the acl group. Order All, Group, Owner
-        if (is_array($groupAccess)) {
-            // if All, unrestricted access
-            if (in_array('All', $groupAccess)) {
-                return true;
-            } else {
-                // return the acl group for filtering
-                return $groupAccess;
-            }
-        }
-        return false;
+        // Single source of the rights decision (#18): delegate to the canonical
+        // implementation on the session object. $_SESSION[_AUTH_VAR] is the
+        // AuthySession instance, and this method previously duplicated
+        // AuthySession::hasRights verbatim against the same state
+        // ($this->group/getGroup() and ->accessControl) — a divergence risk for
+        // security-critical authorization logic. One copy, one behaviour.
+        return $_SESSION[\_AUTH_VAR]->hasRights($model, $needeRight);
     }
 
     /**
