@@ -780,7 +780,9 @@ function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Mess
 {
     $ui = (!empty($ui)) ? '#' . $ui : '';
     $msg = message_label($msg);
-    $error['txt'] .= $msg;
+    // Initialize $error so the legacy return path doesn't read an undefined
+    // variable/key ($error['txt'] .= on a fresh $error == ['txt' => $msg]).
+    $error = ['txt' => $msg];
 
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {
         header('Cache-Control: no-cache, must-revalidate');
