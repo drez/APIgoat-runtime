@@ -129,23 +129,65 @@ class AuthySession
             if ($this->get('id_tenant') && method_exists($q, 'filterByIdTenant')) {
                 $q->filterByIdTenant($this->get('id_tenant'));
             }
-            // Owner/Group row scope for this model + right.
+            // Owner/Group row scope for this model + right. Shared with
+            // AuthyACL::setAclFilter via applyOwnerGroupScope (#18) — one copy
+            // of the security-critical row filter, fail-closed.
             if ($model !== '') {
-                $scope = $this->hasRights($model, $right);
-                if (is_array($scope)) {
-                    if (in_array('Owner', $scope) && method_exists($q, 'filterByIdCreation')) {
-                        $q->filterByIdCreation($this->getIdAuthy());
-                        if (in_array('Group', $scope) && method_exists($q, 'filterByIdGroupCreation')) {
-                            $q->_or()->filterByIdGroupCreation($this->getGroups(), \Criteria::IN);
-                        }
-                    } elseif (in_array('Group', $scope) && method_exists($q, 'filterByIdGroupCreation')) {
-                        $q->filterByIdGroupCreation($this->getGroups(), \Criteria::IN);
-                    }
-                }
+                $this->applyOwnerGroupScope($q, $this->hasRights($model, $right));
             }
         }
 
         return $q->findOne();
+    }
+
+    /**
+     * Apply the Owner/Group row scope from a hasRights() result to a query.
+     *
+     * The single source of the Owner/Group filter, shared by AuthyACL::
+     * setAclFilter (the list/API chokepoint) and loadPkScoped (privileged PK
+     * loads) so both narrow identically (#18). For correctly-modelled tables the
+     * behaviour is unchanged: scope 'Owner' → rows the user created; 'Owner'+
+     * 'Group' → those OR rows owned by the user's groups (the _or() pair groups
+     * cleanly under any leading tenant AND); 'Group' alone → group-owned rows.
+     *
+     * Fail-CLOSED: when $scope demands a filter the model can't satisfy (no
+     * filterByIdCreation / filterByIdGroupCreation column) it forces an empty
+     * result via where('1 = 0') instead of returning every row. Previously
+     * setAclFilter fataled on the missing method while loadPkScoped's
+     * method_exists guard fell through to NO filter (fail-open — a narrow IDOR
+     * on a mis-modelled table). A non-array $scope (true = unrestricted,
+     * false = no grant) carries no Owner/Group narrowing; model-level access is
+     * gated by the caller.
+     *
+     * @param object $query A Propel ModelCriteria (by reference semantics via the object)
+     * @param mixed  $scope hasRights() result: true, an array of ACL groups, or false
+     * @return object the same query
+     */
+    public function applyOwnerGroupScope($query, $scope)
+    {
+        if (!is_array($scope)) {
+            return $query;
+        }
+
+        $wantOwner = in_array('Owner', $scope);
+        $wantGroup = in_array('Group', $scope);
+
+        if ($wantOwner) {
+            if (!method_exists($query, 'filterByIdCreation')) {
+                return $query->where('1 = 0'); // fail-closed: cannot owner-scope
+            }
+            $query->filterByIdCreation($this->getIdAuthy());
+            if ($wantGroup && method_exists($query, 'filterByIdGroupCreation')) {
+                $query->_or()->filterByIdGroupCreation($this->getGroups(), \Criteria::IN);
+            }
+        } elseif ($wantGroup) {
+            if (!method_exists($query, 'filterByIdGroupCreation')) {
+                return $query->where('1 = 0'); // fail-closed: cannot group-scope
+            }
+            $query->filterByIdGroupCreation($this->getGroups(), \Criteria::IN);
+        }
+
+        return $query;
     }
 
     public function getIdPrimaryGroup()

@@ -97,19 +97,13 @@ trait AuthyACL
             $QueryObj->filterByIdTenant($_SESSION[\_AUTH_VAR]->get('id_tenant'));
         }
 
-        if (isset($this->aclGroup) && $this->aclGroup !== false) {
-            if (! is_array($this->aclGroup)) {
-                $this->aclGroup = $_SESSION[\_AUTH_VAR]->aclGroup;
-            } else {
-                if (in_array('Owner', $this->aclGroup)) {
-                    $QueryObj->filterByIdCreation($_SESSION[_AUTH_VAR]->getIdAuthy());
-                    if (in_array('Group', $this->aclGroup)) {
-                        $QueryObj->_or()->filterByIdGroupCreation($_SESSION[_AUTH_VAR]->getGroups(), \Criteria::IN);
-                    }
-                } elseif (in_array('Group', $this->aclGroup)) {
-                    $QueryObj->filterByIdGroupCreation($_SESSION[_AUTH_VAR]->getGroups(), \Criteria::IN);
-                }
-            }
+        // Owner/Group row scope — the single shared implementation, identical to
+        // the privileged-PK-load path (#18: AuthySession::applyOwnerGroupScope).
+        // A non-array $aclGroup (true = unrestricted, false = no grant) is a
+        // no-op there, matching the previous behaviour; a missing scope column
+        // now fails closed (empty result) instead of fataling.
+        if (isset($this->aclGroup)) {
+            $_SESSION[\_AUTH_VAR]->applyOwnerGroupScope($QueryObj, $this->aclGroup);
         }
 
         return $QueryObj;
