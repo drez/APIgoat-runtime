@@ -456,9 +456,17 @@ class Api
         } elseif (!($DataObj instanceof PropelCollection)) {
             $this->response['debug'][] = "Update {$this->tablename}";
             // ACL-filter the target resolution: a body-supplied PK resolves
-            // only to rows the caller is allowed to access (Owner/Group ACL),
-            // closing the cross-row/cross-tenant overwrite (write-IDOR).
-            $obj = $this->setAclFilter($this->queryObjName::create())->findPk($data["Id{$this->tablename}"]);
+            // only to rows the caller is allowed to access (Owner/Group ACL +
+            // tenant), closing the cross-row/cross-tenant overwrite (write-IDOR).
+            // Must go through filterByPrimaryKey()->findOne(), NOT findPk():
+            // findPk() on a simple PK uses findPkSimple()/the instance pool,
+            // which build raw SQL and BYPASS the conditions setAclFilter() just
+            // added (and the GoatCheese tenant behavior). findOne() runs through
+            // doSelect() so the ACL/tenant filters actually apply. See
+            // AuthySession::loadPkScoped for the same reasoning.
+            $obj = $this->setAclFilter($this->queryObjName::create())
+                ->filterByPrimaryKey($data["Id{$this->tablename}"])
+                ->findOne();
         } else {
             $this->response['debug'][] = "Update {$this->tablename}";
             $obj = $DataObj;
