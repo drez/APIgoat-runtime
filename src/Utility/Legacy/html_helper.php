@@ -26,6 +26,15 @@ function clean($string, $more = false)
 
 function htmlLink($name, $link, $options = "", $title = "")
 {
+    // CSP enforcement (#19): a `javascript:` href is a script sink a strict
+    // CSP blocks. Across the emitter/runtime these are placeholders for action
+    // links whose behavior is delegated (j=/class handlers that preventDefault),
+    // so collapse any javascript:… variant to a non-navigating '#'. Real
+    // navigations pass an actual URL and are untouched. (index.js also
+    // preventDefaults bare-'#' clicks so no placeholder link jumps to top.)
+    if (is_string($link) && preg_match('/^\s*javascript:/i', $link)) {
+        $link = '#';
+    }
     if (!empty($title)) {
         if ($title === true) {
             $title = ' title="' . strip_tags($name) . '" ';
