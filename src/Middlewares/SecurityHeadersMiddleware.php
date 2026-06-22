@@ -82,16 +82,21 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
     private function policy(string $nonce): string
     {
         $report = function_exists('env') ? (string) (env('GC_CSP_REPORT_URI') ?: '') : '';
+        // Google Sign-In (the built-in login button) pulls its script (nonced),
+        // a stylesheet, an iframe and API calls from accounts.google.com — its
+        // documented CSP needs that host in style/frame/connect.
+        $gsi = 'https://accounts.google.com';
         $parts = [
             "default-src 'self'",
             // 'strict-dynamic' trusts scripts created by the nonced scripts (the
             // re-exec arm) and makes conformant browsers ignore the host list;
             // 'self' https: is the legacy fallback for browsers without it.
             "script-src 'nonce-{$nonce}' 'strict-dynamic' 'self' https:",
-            "style-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline' {$gsi}",
             "img-src 'self' data: https:",
             "font-src 'self' data:",
-            "connect-src 'self'",
+            "connect-src 'self' {$gsi}",
+            "frame-src 'self' {$gsi}",
             "object-src 'none'",
             "base-uri 'self'",
             "frame-ancestors 'self'",
