@@ -36,6 +36,14 @@ class AuthySession
     public $IdPrimaryGroup = null;
     public $menuAccess = null;
     public $aclGroup  = null;
+    # User identity attributes set via set()/setSession; declared explicitly so
+    # PHP 8.4 doesn't emit a dynamic-property deprecation on the login hot path.
+    public $firstname = null;
+    public $lastname = null;
+    public $fullname = null;
+    public $key = null;
+    public $ip = null;
+    public $sess_id = null;
 
 
     function __construct()

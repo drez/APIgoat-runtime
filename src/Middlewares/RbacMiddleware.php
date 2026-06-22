@@ -27,6 +27,8 @@ class RbacMiddleware implements MiddlewareInterface
     private $rbac_role;
     private $response;
     private $raw_parameters;
+    # Declared explicitly so PHP 8.4 doesn't emit a dynamic-property deprecation.
+    private $prettyBody;
 
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
