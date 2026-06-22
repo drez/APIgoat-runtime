@@ -32,7 +32,8 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         // message via gcCspNonce()) can carry it. Fresh per request — overwrites
         // any value left in a persistent FPM worker; null when the trial is off
         // so emitted scripts stay byte-identical.
-        $nonce = $this->cspEnabled()
+        $mode  = $this->cspMode();
+        $nonce = $mode !== 'off'
             ? rtrim(strtr(base64_encode(random_bytes(16)), '+/', '-_'), '=')
             : null;
         $GLOBALS['__gc_csp_nonce'] = $nonce;
@@ -45,22 +46,37 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
             }
         }
 
-        // Report-only: observe violations without breaking pages. eval is gone
-        // (#22); the gcScreens re-exec'd scripts ride on 'strict-dynamic' (they
-        // are created by the nonced index.js). Un-nonced inline scripts, inline
-        // event handlers and javascript: URLs are REPORTED, not blocked, so they
-        // can be cleaned up before any enforcing policy. Opt-in: GC_CSP_REPORT.
-        if ($nonce !== null && !$response->hasHeader('Content-Security-Policy-Report-Only')) {
-            $response = $response->withHeader('Content-Security-Policy-Report-Only', $this->policy($nonce));
+        // eval is gone (#22) and every inline/external <script> is nonced, so the
+        // strict script policy enforces cleanly; the gcScreens re-exec'd scripts
+        // ride on 'strict-dynamic' (created by the nonced index.js). style-src
+        // keeps 'unsafe-inline' deliberately — inline style="…" attributes are
+        // pervasive and largely dynamic (per-record colours, computed widths),
+        // and CSS injection can't execute code, so removing them is high-effort/
+        // low-value. GC_CSP_ENFORCE → enforcing header; GC_CSP_REPORT → report-only.
+        if ($nonce !== null) {
+            $header = $mode === 'enforce'
+                ? 'Content-Security-Policy'
+                : 'Content-Security-Policy-Report-Only';
+            if (!$response->hasHeader($header) && !$response->hasHeader('Content-Security-Policy')) {
+                $response = $response->withHeader($header, $this->policy($nonce));
+            }
         }
 
         return $response;
     }
 
-    private function cspEnabled(): bool
+    private function cspMode(): string
     {
-        return function_exists('env')
-            && filter_var(env('GC_CSP_REPORT'), FILTER_VALIDATE_BOOLEAN);
+        if (!function_exists('env')) {
+            return 'off';
+        }
+        if (filter_var(env('GC_CSP_ENFORCE'), FILTER_VALIDATE_BOOLEAN)) {
+            return 'enforce';
+        }
+        if (filter_var(env('GC_CSP_REPORT'), FILTER_VALIDATE_BOOLEAN)) {
+            return 'report';
+        }
+        return 'off';
     }
 
     private function policy(string $nonce): string
