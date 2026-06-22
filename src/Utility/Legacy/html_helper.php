@@ -855,7 +855,7 @@ function handleValidationError($objValidationFails, $ui = '', $text_title = 'Mes
     }
     $error['onReadyJs'] .= "
     alertb('" . addslashes($text_title) . "', '" . addslashes($error['txt']) . "');
-    alert_close = 'var __ef = document.querySelector(\'" . $ui . " .error_field\'); if(__ef){ __ef.focus(); }';
+    alert_close = function(){ var __ef = document.querySelector('" . $ui . " .error_field'); if(__ef){ __ef.focus(); } };
     ";
 
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {
