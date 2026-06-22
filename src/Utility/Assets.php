@@ -477,6 +477,16 @@ class Assets
         if (! array_key_exists('type', $attributes)) {
             $attributes['type'] = 'text/javascript';
         }
+        // CSP nonce (#19): stamp the per-request nonce (minted by
+        // SecurityHeadersMiddleware) onto the bundle/editor <script src> tags so
+        // a `script-src 'nonce-…' 'strict-dynamic'` policy trusts them. Read the
+        // global directly so this is independent of html_helper being loaded;
+        // empty when the report-only trial is off → byte-identical tags.
+        $cspNonce = isset($GLOBALS['__gc_csp_nonce']) && is_string($GLOBALS['__gc_csp_nonce'])
+            ? $GLOBALS['__gc_csp_nonce'] : '';
+        if ($cspNonce !== '') {
+            $attributes['nonce'] = $cspNonce;
+        }
 
         $attributes = $this->buildTagAttributes($attributes);
         // Build tags
