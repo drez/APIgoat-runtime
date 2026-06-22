@@ -760,6 +760,22 @@ function message_label($label, $local = NULL)
     }
 }
 
+/**
+ * The save/update/delete JSON response envelope (#23 S4) is enabled when
+ * GC_ENVELOPE=1 AND the client advertised support via the X-GC-Envelope header.
+ * Shared by BuilderLayout::renderXHR and handleNotOkResponse so the structured
+ * contract is consistent — including the paths (e.g. the FK delete-refusal in
+ * the generated Service.php) that die() through handleNotOkResponse instead of
+ * going through renderXHR.
+ */
+function gcEnvelopeEnabled(): bool
+{
+    if (!function_exists('env') || !filter_var(env('GC_ENVELOPE'), FILTER_VALIDATE_BOOLEAN)) {
+        return false;
+    }
+    return !empty($_SERVER['HTTP_X_GC_ENVELOPE']);
+}
+
 function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Message')
 {
     $ui = (!empty($ui)) ? '#' . $ui : '';
@@ -774,17 +790,30 @@ function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Mess
         $ret['data']['title'] = $text_title;
         $ret['data']['msg'] = $msg;
         die(json_encode($ret));
-    } else {
-        if ($print) {
-            $error['onReadyJs'] = scriptReady("alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');");
-        } else {
-            $error['onReadyJs'] = "
-            alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');";
-            $error['error'] = 'yes';
-        }
-
-        return $error;
     }
+
+    // S4 — emit the canonical UI envelope for refusals so callers that die()
+    // here (notably the FK delete-refusal in the generated Service.php, which
+    // never reaches renderXHR) still produce the structured contract instead of
+    // a legacy <script> the client has to scrape. 'refused' = a message-bag
+    // refusal (no field-level errors).
+    if (gcEnvelopeEnabled()) {
+        header('Content-type: application/json');
+        die(json_encode([
+            'status' => 'refused',
+            'messages' => [['type' => 'error', 'title' => $text_title, 'text' => $msg]],
+        ]));
+    }
+
+    if ($print) {
+        $error['onReadyJs'] = scriptReady("alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');");
+    } else {
+        $error['onReadyJs'] = "
+        alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');";
+        $error['error'] = 'yes';
+    }
+
+    return $error;
 }
 function handleValidationError($objValidationFails, $ui = '', $text_title = 'Message', $extValidationErr = '')
 {

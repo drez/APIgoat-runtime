@@ -151,10 +151,10 @@ class BuilderLayout
      */
     private function wantsEnvelope(): bool
     {
-        if (! function_exists('env') || ! filter_var(env('GC_ENVELOPE'), FILTER_VALIDATE_BOOLEAN)) {
-            return false;
-        }
-        return ! empty($_SERVER['HTTP_X_GC_ENVELOPE']);
+        // Single source of the gating logic — gcEnvelopeEnabled() lives in the
+        // legacy html_helper (loaded for scriptReady), shared with
+        // handleNotOkResponse so the die()-bypass refusals use the same rule.
+        return function_exists('gcEnvelopeEnabled') ? gcEnvelopeEnabled() : false;
     }
 
     /**
