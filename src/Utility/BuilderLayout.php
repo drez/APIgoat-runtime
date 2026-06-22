@@ -114,6 +114,20 @@ class BuilderLayout
             return "The response is empty.";
         }
 
+        // S4 — JSON response envelope. When the client advertises support via the
+        // X-GC-Envelope request header (and the GC_ENVELOPE_OFF kill-switch is
+        // off), serialize the outcome as a structured envelope the client can
+        // JSON.parse, instead of the legacy <script> body it has to scrape. The
+        // envelope is DERIVED from the existing $content (status from
+        // content['error']; messages/fields parsed once here, server-side, with
+        // proper quote handling) — so no per-table emitter change is required and
+        // the legacy branch below stays byte-identical whenever the flag is
+        // absent. Old/stale clients never send the flag → always get the legacy
+        // <script> shape; the client tries JSON.parse first and falls back.
+        if ($this->wantsEnvelope()) {
+            return json_encode($this->buildXhrEnvelope($content));
+        }
+
         if (! empty($content['html']) || ! empty($content['js']) || ! empty($content['onReadyJs'])) {
             return $content['html'] . ($content['js'] ?? '')
             . scriptReady(trim($content['onReadyJs']));
@@ -125,6 +139,74 @@ class BuilderLayout
             }
         }
 
+    }
+
+    /**
+     * True when the JSON envelope should be emitted. OPT-IN and off by default:
+     * an operator enables it per project with GC_ENVELOPE=1 (after browser-
+     * verifying the save/update/delete F1-F5 flows), and even then only clients
+     * that advertise support via the X-GC-Envelope header receive it — so a
+     * stale/cached client always still gets the legacy <script> body. With the
+     * flag unset (the default), every client keeps the legacy path unchanged.
+     */
+    private function wantsEnvelope(): bool
+    {
+        if (! function_exists('env') || ! filter_var(env('GC_ENVELOPE'), FILTER_VALIDATE_BOOLEAN)) {
+            return false;
+        }
+        return ! empty($_SERVER['HTTP_X_GC_ENVELOPE']);
+    }
+
+    /**
+     * Translate a renderXHR $content (html/js/onReadyJs + error flag) into the
+     * canonical envelope {status, messages[], fields[], html?, pk?}. The legacy
+     * onReadyJs markers (sw_message / error_field / [v=Field] / alertb) are
+     * parsed ONCE here, server-side, with proper quote handling (messages are
+     * addslashes-escaped, so a fr/it apostrophe arrives as \' — stripslashes
+     * restores it), replacing the fragile per-client scrape. status: 'ok'
+     * (saved/deleted), 'error' (field validation), 'refused' (alertb-only
+     * message-bag / refusal).
+     */
+    private function buildXhrEnvelope($content): array
+    {
+        $js = isset($content['onReadyJs']) ? (string) $content['onReadyJs'] : '';
+        $isError = (isset($content['error']) && $content['error'] === 'yes');
+        $hasFieldErrors = (strpos($js, 'error_field') !== false);
+
+        preg_match_all('/\[v=([A-Za-z0-9_]+)\]/', $js, $fm);
+        $fields = array_values(array_unique($fm[1]));
+
+        $title = null;
+        $msg = null;
+        if (preg_match('/alertb\s*\(\s*([\'"])((?:\\\\.|(?!\1).)*?)\1\s*,\s*([\'"])((?:\\\\.|(?!\3).)*?)\3/', $js, $am)) {
+            $title = trim(stripslashes($am[2]));
+            $msg = trim(preg_replace('/\s+/', ' ', preg_replace('#<br\s*/?>#i', ' ', stripslashes($am[4]))));
+        }
+
+        if (! $isError && ! $hasFieldErrors) {
+            $status = 'ok';
+        } elseif ($hasFieldErrors) {
+            $status = 'error';
+        } else {
+            $status = ($msg !== null) ? 'refused' : 'error';
+        }
+
+        $env = ['status' => $status];
+        if ($msg !== null) {
+            $env['messages'] = [['type' => $status === 'ok' ? 'success' : 'error', 'title' => $title, 'text' => $msg]];
+        }
+        if ($fields) {
+            $env['fields'] = array_map(function ($f) {
+                return ['name' => $f];
+            }, $fields);
+        }
+        if (! empty($content['html'])) {
+            $env['html'] = $content['html'];
+        }
+        if (isset($content['pk'])) {
+            $env['pk'] = $content['pk'];
+        }
+        return $env;
     }
 
     public function renderLogin($content)
