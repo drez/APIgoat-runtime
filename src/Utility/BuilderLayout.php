@@ -45,7 +45,7 @@ class BuilderLayout
         $notifPillOn = function_exists('env') ? filter_var(env('GC_NOTIF_PILL'), FILTER_VALIDATE_BOOLEAN) : false;
         $pillOffLiteral = $notifPillOn ? 'false' : 'true';
         $gcTheme = $this->resolveTheme();
-        $headjs = $csrfMeta . "<script type='text/javascript'>
+        $headjs = $csrfMeta . "<script type='text/javascript'" . gcNonceAttr() . ">
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
     let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
     window.gcNotifPillOff = " . $pillOffLiteral . ";
@@ -260,7 +260,7 @@ class BuilderLayout
 <img src="' . _SITE_URL . 'public/img/ios/512.png" class="page-loader-logo" alt="">
 <div class="page-loader-spinner"></div>
 </div>
-<script>
+<script' . gcNonceAttr() . '>
 window.addEventListener("load",function(){var l=document.getElementById("pageLoader");if(l){l.style.opacity="0";setTimeout(function(){l.style.display="none";document.documentElement.style.backgroundColor="";},300);}});
 if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.serviceWorker.addEventListener("message",function(e){if(e.data&&e.data.type==="SW_AUTH_RELOAD")window.location.reload();});}
 </script>';
@@ -596,7 +596,7 @@ JS;
             ),
             'drImpersonatePanel',
             "class='dr-impersonate-panel' hidden style='" . $panelInlineStyle . "'"
-        ) . "<script>" . $toggleScript . "</script>";
+        ) . "<script" . gcNonceAttr() . ">" . $toggleScript . "</script>";
     }
 
 
