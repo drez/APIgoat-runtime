@@ -480,7 +480,7 @@ function loadCss($style, $options = "")
 function loadjs($js)
 {
     if ($js) {
-        return "<script src=\"$js\" type=\"text/javascript\"></script>";
+        return "<script src=\"$js\" type=\"text/javascript\"" . gcNonceAttr() . "></script>";
     }
 }
 
@@ -582,14 +582,34 @@ function getUrlParamsJSON($arrayParams = "", $asUrl = false)
     return $urlParams;
 }
 
+/**
+ * Per-request CSP nonce (#19). SecurityHeadersMiddleware mints it before the
+ * page renders and stores it in a global; gcCspNonce() returns '' when the
+ * report-only CSP trial is off (GC_CSP_REPORT), so emitted <script> tags stay
+ * byte-identical. With it on, every inline <script> below carries the nonce so
+ * a `script-src 'nonce-…' 'strict-dynamic'` policy trusts them (the gcScreens
+ * re-exec'd scripts then ride on strict-dynamic).
+ */
+function gcCspNonce(): string
+{
+    return isset($GLOBALS['__gc_csp_nonce']) && is_string($GLOBALS['__gc_csp_nonce'])
+        ? $GLOBALS['__gc_csp_nonce'] : '';
+}
+
+function gcNonceAttr(): string
+{
+    $n = gcCspNonce();
+    return $n !== '' ? ' nonce="' . htmlspecialchars($n, ENT_QUOTES) . '"' : '';
+}
+
 function message($message)
 {
-    return "<script>(function(){function r(){message('" . $message . "');}if(document.readyState!='loading'){r();}else{document.addEventListener('DOMContentLoaded',r);}})();</script>";
+    return "<script" . gcNonceAttr() . ">(function(){function r(){message('" . $message . "');}if(document.readyState!='loading'){r();}else{document.addEventListener('DOMContentLoaded',r);}})();</script>";
 }
 
 function script($data, $option = "")
 {
-    return "<script type='text/javascript' " . $option . ">" . $data . "</script>";
+    return "<script type='text/javascript'" . gcNonceAttr() . " " . $option . ">" . $data . "</script>";
 }
 
 function scriptReady($data, $option = "")
@@ -599,7 +619,7 @@ function scriptReady($data, $option = "")
     // inline <script> blocks after load — jQuery's ready fired them immediately
     // too), else on DOMContentLoaded. Self-contained IIFE so multiple readyJs
     // blocks on one page don't collide.
-    return "<script type='text/javascript' " . $option . ">
+    return "<script type='text/javascript'" . gcNonceAttr() . " " . $option . ">
 (function(){function __gcReady(){
     " . $data . "
 }if(document.readyState!='loading'){__gcReady();}else{document.addEventListener('DOMContentLoaded',__gcReady);}})();</script>";
