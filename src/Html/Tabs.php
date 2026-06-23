@@ -134,7 +134,7 @@ class tabs
             $defaultSelected = "
                 (function () {
                     var __def = document.querySelector(\"[j='" . $this->tabsTarget . "']#" . $this->defaultSelected . "\");
-                    if (__def) { __def.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+                    if (__def) { __def.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }
                 })();
             ";
         }
@@ -193,7 +193,12 @@ class tabs
             // then attach the single click handler to the fresh node.
             var __fresh = tab.cloneNode(true);
             tab.parentNode.replaceChild(__fresh, tab);
-            __fresh.addEventListener('click', function () {
+            __fresh.addEventListener('click', function (e) {
+                // Tabs are <a> links; a security pass downgrades their
+                // javascript:void(0) href to '#', so a real OR synthetic
+                // (defaultSelected) click would navigate to '#', fire popstate
+                // and close the surrounding push-screen drawer. Never navigate.
+                if (e && e.preventDefault) { e.preventDefault(); }
                 document.querySelectorAll(__sel).forEach(function (t) {
                     if (t.parentNode) { t.parentNode.classList.remove('selected', 'ui-state-active'); }
                 });
