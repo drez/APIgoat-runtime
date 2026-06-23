@@ -264,7 +264,7 @@ JS;
             $greeting . div($cards, '', "class='welcome-stack'"),
             '',
             "class='proto-screen welcome-screen'"
-        ) . "<script>" . $tabScript . "</script>";
+        ) . "<script" . gcNonceAttr() . ">" . $tabScript . "</script>";
 
         $return['onReadyJs'] = "
     document.querySelectorAll('[ag_save=Config]').forEach(function (__cfg) {

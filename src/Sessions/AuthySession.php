@@ -36,6 +36,10 @@ class AuthySession
     public $IdPrimaryGroup = null;
     public $menuAccess = null;
     public $aclGroup  = null;
+    # Per-model ACL grants ({model: {group: rights}}), populated by setRights()
+    # and read by hasRights() (the canonical rights decision, #18). Declared so
+    # PHP 8.4 doesn't emit a dynamic-property deprecation on the auth hot path.
+    public $accessControl = [];
     # User identity attributes set via set()/setSession; declared explicitly so
     # PHP 8.4 doesn't emit a dynamic-property deprecation on the login hot path.
     public $firstname = null;
