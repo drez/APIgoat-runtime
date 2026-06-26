@@ -63,6 +63,23 @@ class GoogleClientFactory
             );
         }
 
+        // The configured key path is a host-absolute path (kept absolute so the
+        // deploy env-push rewrites its prefix to the remote layout). That path
+        // does not exist in every runtime — e.g. the ddev container mounts the
+        // project at /var/www/html, not the host PROJECT_PATH. When the literal
+        // path is missing, fall back to the same secrets file under this .admin
+        // tree (six parents up from this vendor file) so dev (container) and
+        // prod both resolve the key.
+        if (!is_file($path)) {
+            $adminRoot = realpath(__DIR__ . '/../../../../../..');
+            $candidate = ($adminRoot !== false)
+                ? $adminRoot . '/config/secrets/' . basename($path)
+                : '';
+            if ($candidate !== '' && is_file($candidate)) {
+                $path = $candidate;
+            }
+        }
+
         return new self(JwtSigner::fromKeyFile($email, $path));
     }
 
