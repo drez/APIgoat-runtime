@@ -510,7 +510,9 @@ function htmlHeader($title = "", $style = "", $desciption = "", $keywords = "", 
         $Html_head .= $style;
     $Html_head .= $others;
     $Html_head .= "<meta name='Author' content='" . $author . "' />";
-    $Html_head .= "<meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1'>";
+    // No maximum-scale / user-scalable=no: locking zoom fails WCAG 1.4.4 (resize text)
+    // and is a PWA/mobile anti-pattern. Let users pinch-zoom.
+    $Html_head .= "<meta name='viewport' content='width=device-width, initial-scale=1'>";
 
     $Html_head .= "</head>";
     return $Html_head;
