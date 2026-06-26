@@ -120,17 +120,22 @@ function rmv_var($stringIn, $rmv_string, $sep, $space = true)
 function serializeRights($data, $fieldName)
 {
     require _BASE_DIR . "config/permissions.php";
+    // Always start from an array so an all-unchecked matrix encodes to an empty
+    // JSON object ("{}"), never the literal string "null". The old code left
+    // $arrayRights undefined when no box was ticked, so json_encode(null) wrote
+    // "null" into the rights column — a value that read back as "no rights" and
+    // silently clobbered group-derived rights. The "?? ''" guards also stop the
+    // PHP 8 "undefined array key" warnings for matrix cells absent from $data.
+    $arrayRights = [];
     foreach ($omMap as $right) {
-        if ($data[$fieldName . '-' . $right['name'] . 'r'] == 'r')
-            $arrayRights[$right['name']] .= "r";
-        if ($data[$fieldName . '-' . $right['name'] . 'w'] == 'w')
-            $arrayRights[$right['name']] .= "w";
-        if ($data[$fieldName . '-' . $right['name'] . 'a'] == 'a')
-            $arrayRights[$right['name']] .= "a";
-        if ($data[$fieldName . '-' . $right['name'] . 'd'] == 'd')
-            $arrayRights[$right['name']] .= "d";
+        $name = $right['name'];
+        foreach (['r', 'w', 'a', 'd'] as $perm) {
+            if (($data[$fieldName . '-' . $name . $perm] ?? '') == $perm) {
+                $arrayRights[$name] = ($arrayRights[$name] ?? '') . $perm;
+            }
+        }
     }
-    return json_encode($arrayRights);
+    return json_encode($arrayRights, JSON_FORCE_OBJECT);
 }
 
 function isntPo($str)
