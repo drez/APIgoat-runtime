@@ -222,7 +222,14 @@ class tabs
 
     function getOnReadyJs()
     {
-        return $this->onReadyJs;
+        // #23 S5: the tab click/init JS is no longer emitted inline. The vanilla
+        // client (template screens.js bindStdTabs, bound from push()) owns the
+        // [j='conglet_StdTabs'] tab toggling + initial default selection off the
+        // <script> re-exec arm. The markup ($this->getHtml(), incl. the default
+        // li.selected) is unchanged, so bindStdTabs has everything it needs.
+        // NOTE: requires the matching template (bindStdTabs) — ship/deploy the
+        // template with or before this runtime so no project loses tab switching.
+        return '';
     }
 
     function setParentContentDivId($parentContentDivId)
