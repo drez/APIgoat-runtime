@@ -15,7 +15,7 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * setSession refuses (expired user, corrupted rights JSON), connected
  * stays 'NO' and AuthyMiddleware returns 401 downstream.
  *
- * References project-level \App\AuthyQuery / \App\AuthyServiceWrapper, in
+ * References project-level \App\AuthyQuery / \App\AuthyService, in
  * line with the rest of the runtime (e.g. Routes\RouteHelper).
  */
 class JwtBeforeHandler implements BeforeHandlerInterface
@@ -29,7 +29,9 @@ class JwtBeforeHandler implements BeforeHandlerInterface
         if (!$authyRow) {
             return;
         }
-        $AuthyService = new \App\AuthyServiceWrapper($request, null, $routeArgs);
+        // \App\AuthyServiceWrapper is emitted as a class-less stub (build copy skips it), so the
+        // class never loads. Use the real \App\AuthyService, which carries setSession().
+        $AuthyService = new \App\AuthyService($request, null, $routeArgs);
         try {
             $AuthyService->setSession($authyRow);
         } catch (\Throwable $e) {
