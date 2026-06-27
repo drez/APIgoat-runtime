@@ -45,16 +45,21 @@ class Api
     private $editableFields;
     /**
      * Columns that must never be set via the generic API body, regardless of
-     * the editable allowlist (system flag + audit-stamp columns).
+     * the editable allowlist (system flag + audit-stamp columns). Single source
+     * of truth — read by MetaCatalog so the `writable` flag cannot drift from
+     * the enforcement point.
      *
-     * @var array
+     * @var string[]
      */
-    protected $denyColumns = [
+    public const SYSTEM_COLUMNS = [
         'IsSystem',
         'IdCreation', 'IdModification', 'IdGroupCreation',
         'DateCreation', 'DateModification',
         'IdTenant', // tenant is assigned server-side on create, never client-set
     ];
+
+    /** @var string[] */
+    protected $denyColumns = self::SYSTEM_COLUMNS;
 
     /**
      * Set the basic variables
