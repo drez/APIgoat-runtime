@@ -76,13 +76,12 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
         $q = \App\AuthyLogQuery::create()
             ->filterByResult('refresh')
             ->filterByTimestamp((new \DateTime())->setTimestamp($since), \Criteria::GREATER_EQUAL);
-        $q->condition('byIp', \App\AuthyLogPeer::IP . ' = ?', $ip);
         if ($familyId !== '') {
-            $q->condition('byFam', \App\AuthyLogPeer::LOGIN . ' = ?', $familyId);
-            $q->combine(['byIp', 'byFam'], \Criteria::LOGICAL_OR, 'ipOrFam');
-            $q->where('ipOrFam');
+            $q->condition('byIp', \App\AuthyLogPeer::IP . ' = ?', $ip)
+              ->condition('byFam', \App\AuthyLogPeer::LOGIN . ' = ?', $familyId)
+              ->where(['byIp', 'byFam'], \Criteria::LOGICAL_OR);
         } else {
-            $q->where('byIp');
+            $q->filterByIp($ip);
         }
         return (int) $q->count();
     }
