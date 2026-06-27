@@ -29,6 +29,29 @@ class JwtBeforeHandler implements BeforeHandlerInterface
         if (!$authyRow) {
             return;
         }
+        // SECURITY (review R1): never hydrate a session for a deactivated or
+        // expired account on the token path. Password login filters these out
+        // (AuthyClass deactivate filter), but the JWT/refresh path loaded the
+        // row with a bare findPk — so a disabled/compromised account kept API
+        // access for the refresh-token-family window. Mirror login's
+        // "active = deactivate null/'No'/0" semantics; expiry is also enforced
+        // in setSession, re-checked here for defense in depth.
+        if (method_exists($authyRow, 'getDeactivate')) {
+            $deact  = $authyRow->getDeactivate();
+            $active = ($deact === null || $deact === '' || $deact === '0' || $deact === 0
+                || strcasecmp((string) $deact, 'No') === 0);
+            if (!$active) {
+                error_log('[JwtAuthentication before] refused: account deactivated');
+                return;
+            }
+        }
+        if (method_exists($authyRow, 'getExpire')) {
+            $exp = $authyRow->getExpire();
+            if ($exp !== null && $exp !== '' && ($ts = strtotime((string) $exp)) !== false && $ts <= time()) {
+                error_log('[JwtAuthentication before] refused: account expired');
+                return;
+            }
+        }
         // \App\AuthyServiceWrapper is emitted as a class-less stub (build copy skips it), so the
         // class never loads. Use the real \App\AuthyService, which carries setSession().
         $AuthyService = new \App\AuthyService($request, null, $routeArgs);

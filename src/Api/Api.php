@@ -51,6 +51,7 @@ class Api
      */
     protected $denyColumns = [
         'IsSystem',
+        'IsRoot', // privilege flag — never settable via the generic API body
         'IdCreation', 'IdModification', 'IdGroupCreation',
         'DateCreation', 'DateModification',
         'IdTenant', // tenant is assigned server-side on create, never client-set
