@@ -2,7 +2,6 @@
 
 namespace ApiGoat\Services;
 
-use ApiGoat\Services\Service;
 use ApiGoat\Api\ApiResponse;
 
 /**

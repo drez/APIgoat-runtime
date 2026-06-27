@@ -66,7 +66,7 @@ final class MetaCatalog
                     continue; // hide entities the user has no read right on
                 }
                 $entities[$name] = $this->describe($name, $map);
-            } catch (\Throwable $e) {
+            } catch (\Throwable) {
                 // One bad peer must not 500 the whole catalog. Catch \Throwable (NOT \Exception):
                 // a dangling classmap entry makes the autoloader's require fail with a catchable
                 // \Error, which a narrower \Exception catch would let escape and 500 /_meta.
@@ -75,11 +75,17 @@ final class MetaCatalog
         }
 
         return [
-            'version'      => defined('API_VERSION') ? (string) API_VERSION : '1',
+            'version'      => $this->apiVersion(),
             'generated_at' => time(),
             'user'         => ['is_admin' => $this->session->isAdmin()],
             'entities'     => $entities,
         ];
+    }
+
+    /** The API version string, used for both the catalog header and endpoint URLs. */
+    private function apiVersion(): string
+    {
+        return defined('API_VERSION') ? (string) API_VERSION : '1';
     }
 
     /** Default resolver: \App\{Name}Peer::getTableMap(), or null when absent. */
@@ -99,7 +105,7 @@ final class MetaCatalog
 
     private function describe(string $name, \TableMap $map): array
     {
-        $version = defined('API_VERSION') ? (string) API_VERSION : '1';
+        $version = $this->apiVersion();
         $base = "/api/v{$version}/{$name}";
 
         $fields = [];
