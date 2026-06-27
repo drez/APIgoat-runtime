@@ -58,8 +58,8 @@ final class MetaCatalog
             try {
                 $map = ($this->mapResolver)($name);
                 if (!$map instanceof \TableMap) {
-                    // service-only routes (no Peer) OR a peer whose load FAILS (dangling classmap entry,
-                    // e.g. DriveBrowser) — resolver returns null / the per-entity catch below absorbs a failed require
+                    // resolver returned null: a service-only route with no Peer, or a name whose
+                    // class fails class_exists() / lacks getTableMap(). Just skip it.
                     continue;
                 }
                 if (!$this->permitted($name, 'r')) {
@@ -67,8 +67,9 @@ final class MetaCatalog
                 }
                 $entities[$name] = $this->describe($name, $map);
             } catch (\Throwable $e) {
-                // catches \Error from a failed require (dangling classmap entry, e.g. DriveBrowserPeer)
-                // as well as any exception from getTableMap() — one bad peer must not 500 the whole catalog
+                // One bad peer must not 500 the whole catalog. Catch \Throwable (NOT \Exception):
+                // a dangling classmap entry makes the autoloader's require fail with a catchable
+                // \Error, which a narrower \Exception catch would let escape and 500 /_meta.
                 continue;
             }
         }
