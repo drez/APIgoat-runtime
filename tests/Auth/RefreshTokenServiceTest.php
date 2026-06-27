@@ -141,4 +141,18 @@ final class RefreshTokenServiceTest extends TestCase
         $live = array_filter($store->rows, fn ($r) => $r['revoked'] === 'No' && $r['id_authy'] === 7);
         $this->assertCount(0, $live);
     }
+
+    public function testStringTtlAnchorsToInjectedClock(): void
+    {
+        $store = new ArrayRefreshTokenStore();
+        $svc = new RefreshTokenService(
+            $store,
+            ['secret' => 'k', 'expire' => 'now +15 minutes', 'refresh_expire' => 'now +30 days', 'refresh_family_expire' => 'now +90 days'],
+            fn () => $this->clock
+        );
+        $svc->mintForLogin(7);
+        $row = array_values($store->rows)[0];
+        $this->assertSame($this->clock + 30 * 86400, $row['expires']);
+        $this->assertSame($this->clock + 90 * 86400, $row['family_expires']);
+    }
 }

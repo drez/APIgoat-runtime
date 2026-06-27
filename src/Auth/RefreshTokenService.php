@@ -125,13 +125,14 @@ final class RefreshTokenService
         $this->store->revokeAllForUser($idAuthy);
     }
 
-    /** Resolve a DateTime-string OR integer-seconds TTL to a unix timestamp. */
-    private function ts($expr, int $now): int
+    /** Resolve a DateTime-string OR integer-seconds TTL to a unix timestamp, anchored to $now. */
+    private function ts(string|int $expr, int $now): int
     {
         if (is_int($expr) || (is_string($expr) && ctype_digit($expr))) {
             return $now + (int) $expr;
         }
-        return (new \DateTime((string) $expr))->getTimestamp();
+        $ts = strtotime((string) $expr, $now);
+        return $ts !== false ? $ts : $now;
     }
 
     /** @return array{0:string,1:string} [raw, sha256hash] */
