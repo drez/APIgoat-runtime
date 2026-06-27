@@ -3,15 +3,16 @@
 namespace ApiGoat\Views;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
+use ApiGoat\Utility\RowCount;
 //use ApiGoat\Views\View;
 
 class WelcomeView
 {
-    
+
     public $request;
     public $args;
     public $model_name;
-   
+
 
 
 
@@ -27,22 +28,26 @@ class WelcomeView
         $this->args = $args;
         $this->model_name = 'WelcomeView';
         $this->virtualClassName = 'WelcomeView';
-       
+
     }
 
-    // New structure (post-2026-05-23 restyle):
+    // Tabbed dashboard (2026-06-27 redesign):
     // .proto-screen.welcome-screen
     //   .welcome-greeting (h1 + .welcome-date)
     //   .welcome-stack
-    //     .sw-drawer.proto-form (App state card, always first when present)
-    //       .sw-header > .form-nav > .nav-title : "App state"
-    //       .sw-body > .form-row : checkbox form
-    //     .sw-drawer.proto-form (one per Config Category)
-    //       .sw-header > .form-nav > .nav-title : category name
-    //       .sw-body > .form-row × N : label + Value input + IdConfig hidden + .explain
-    //     .sw-drawer.proto-form (API security, only when $hasAPI)
-    //       .sw-header > .form-nav > .nav-title : "API security"
-    //       .sw-body > .form-row : info text + ul of doc links
+    //     .sw-drawer.proto-form.welcome-tabbed-card
+    //       .welcome-tabnav  : [ Overview ] [ Settings ] [ API security ]
+    //       .welcome-tab-panes
+    //         #welTab_overview  — status pill + stat-card grid + quick links
+    //         #welTab_settings  — Config categories, stacked sub-sections
+    //         #welTab_apisec    — API doc links (only when $hasAPI)
+    //
+    // Overview is data-agnostic: the stat cards come from the project's own
+    // menu map (config/menus.php) gated by the same ACL check the sidebar uses
+    // (group Admin or AuthySession::hasMenu), counted via RowCount::forModel
+    // (per-request memo, tenant-scoped — identical numbers to the sidebar
+    // chips). Config editing is unchanged (same ag_save='Config' contract),
+    // only relocated into the Settings tab.
     public function dashboard()
     {
 
@@ -72,7 +77,7 @@ class WelcomeView
             "class='welcome-greeting'"
         );
 
-        // --- Collect Config rows by category ---
+        // --- Collect Config rows by category, isolate app_status, detect API ---
         $categoryBuckets = [];
         $appStatusRow    = null;
         $appStatusId     = null;
@@ -90,58 +95,97 @@ class WelcomeView
             $categoryBuckets[$Config->getCategory()][] = $Config;
         }
 
-        $cards = '';
-
-        // App state card — always rendered on top, never inside the tabs.
-        if ($appStatusRow) {
-            $checked = ($appStatusRow->getValue() === 'prod') ? 'checked=true' : '';
-            $cards .= div(
-                div(
-                    div(div(_('App state'), '', "class='nav-title'"), '', "class='form-nav'"),
-                    '', "class='sw-header'"
-                ) . div(
-                    div(
-                        form(
-                            label(_('Current state of the App.'))
-                                . input('checkbox', 'config', 'app_status', $checked . " config='app_status' ag_save='Config'")
-                                . label(_('Development / Production'), "for='config'")
-                                . input('hidden', 'IdConfig', $appStatusId, "ag_save='Config'")
-                                . input('hidden', 'Value', '', "ag_save='Config'")
-                                . div(_('Developement version will be slower. It will produce logs and allow unknowned API access.'), '', "class='explain'"),
-                            "id='form_app_status'"
-                        ),
-                        '', "class='form-row'"
-                    ),
-                    '', "class='sw-body'"
-                ),
-                '', "class='sw-drawer proto-form'"
-            );
-        }
-
-        // Everything else (per-Category Config blocks + optional API
-        // security block) goes into a single tabbed card. Tabs share the
-        // same data-tab/.is-active/[hidden] contract used by Form.php +
-        // drawer.js so once the JS bundle catches up they're handled by
-        // the same vanilla logic; the inline <script> below covers the
-        // pre-rebuild window.
-        $tabButtons = '';
-        $tabPanes = '';
-        $firstTab = true;
         $slug = function ($s) {
             return 'welTab_' . preg_replace('/[^a-zA-Z0-9]+/', '_', (string) $s);
         };
 
+        // =========================================================
+        // Overview pane — app-status pill + stat cards + quick links
+        // =========================================================
+        $overview = '';
+
+        // App-status pill: wraps the SAME checkbox + hidden Value/IdConfig +
+        // ag_save handler the old "App state" card used, so the save contract
+        // (POST Config/update/{id}, ui:'tabsContain') is unchanged. Only the
+        // surrounding markup/styling moved.
+        if ($appStatusRow) {
+            $isProd     = ($appStatusRow->getValue() === 'prod');
+            $checked    = $isProd ? 'checked=true' : '';
+            $stateCls   = $isProd ? 'is-prod' : 'is-dev';
+            $stateLabel = $isProd ? _('Production') : _('Development');
+            $overview .= div(
+                form(
+                    "<span class='welcome-status-dot' aria-hidden='true'></span>"
+                        . "<span class='welcome-status-text'>" . $stateLabel . "</span>"
+                        . input('checkbox', 'config', 'app_status', $checked . " config='app_status' ag_save='Config'")
+                        . label('', "for='config' class='welcome-status-toggle' title='" . _('Toggle Development / Production') . "'")
+                        . input('hidden', 'IdConfig', $appStatusId, "ag_save='Config'")
+                        . input('hidden', 'Value', '', "ag_save='Config'"),
+                    "id='form_app_status'"
+                ),
+                '', "class='welcome-status-pill " . $stateCls . "'"
+            );
+        }
+
+        // Stat cards: accessible top entities from the menu map, deduped,
+        // counted, capped. ACL + count source identical to the sidebar.
+        $statCards = '';
+        $menuFile  = _BASE_DIR . 'config/menus.php';
+        if (is_file($menuFile)) {
+            $menus = require $menuFile;
+            if (is_array($menus)) {
+                $seen  = [];
+                $auth  = $_SESSION[_AUTH_VAR] ?? null;
+                $isAdmin = $auth && method_exists($auth, 'get') && $auth->get('group') === 'Admin';
+                foreach ($menus as $item) {
+                    if (count($seen) >= 8) {
+                        break;
+                    }
+                    $name  = $item['name'] ?? '';
+                    $route = $item['route'] ?? null;
+                    // Skip the hardcoded Settings entry (route '/') and blanks.
+                    if ($name === '' || $route === '/' || isset($seen[$name])) {
+                        continue;
+                    }
+                    // Same ACL gate as Menu::addUnder.
+                    if (!$isAdmin && !($auth && method_exists($auth, 'hasMenu') && $auth->hasMenu($name))) {
+                        continue;
+                    }
+                    $count = RowCount::forModel($name);
+                    if ($count === null) {
+                        continue; // not a real countable model
+                    }
+                    $seen[$name] = true;
+                    $desc = $item['desc'] ?? $name;
+                    $icon = !empty($item['icon'])
+                        ? "<i class='" . htmlspecialchars($item['icon']) . "' aria-hidden='true'></i> "
+                        : '';
+                    $statCards .= "<a class='welcome-stat-card' href='" . _SITE_URL . htmlspecialchars($name) . "'>"
+                        . "<span class='welcome-stat-count'>" . (int) $count . "</span>"
+                        . "<span class='welcome-stat-label'>" . $icon . htmlspecialchars($desc) . "</span>"
+                        . "</a>";
+                }
+            }
+        }
+        if ($statCards !== '') {
+            $overview .= "<div class='welcome-stat-grid'>" . $statCards . "</div>";
+        }
+
+        // Quick links: a small static set (data-agnostic).
+        $overview .= "<div class='welcome-quicklinks'>"
+            . "<a class='welcome-quicklink' target='_doc' href='https://apigoat.com/docs/'>" . _('Documentation') . "</a>"
+            . "<a class='welcome-quicklink' target='_doc' href='https://apigoat.com/docs/api/rest-api-basics/'>" . _('API basics') . "</a>"
+            . "<a class='welcome-quicklink' href='" . _SITE_URL . "Account'>" . _('Account') . "</a>"
+            . "</div>";
+
+        // =========================================================
+        // Settings pane — Config categories as stacked sub-sections
+        // =========================================================
+        $settings = '';
         foreach ($categoryBuckets as $category => $rows) {
-            $tabId = $slug($category);
-            $activeCls = $firstTab ? ' is-active' : '';
-            $selected = $firstTab ? 'true' : 'false';
-            $hiddenAttr = $firstTab ? '' : ' hidden';
-
-            $tabButtons .= "<button type='button' class='welcome-tab-btn" . $activeCls . "' role='tab' data-tab='" . $tabId . "' aria-selected='" . $selected . "'>" . htmlspecialchars($category) . "</button>";
-
-            $paneBody = '';
+            $groupRows = '';
             foreach ($rows as $Config) {
-                $paneBody .= div(
+                $groupRows .= div(
                     form(
                         label($Config->getConfig())
                             . input('text', 'Value', htmlentities($Config->getValue()), "config='" . $Config->getConfig() . "' ag_save='Config'")
@@ -152,88 +196,111 @@ class WelcomeView
                     '', "class='form-row'"
                 );
             }
-            $tabPanes .= "<div id='" . $tabId . "' class='welcome-tab-pane" . $activeCls . "' role='tabpanel' data-tab='" . $tabId . "'" . $hiddenAttr . ">" . $paneBody . "</div>";
-            $firstTab = false;
-        }
-
-        if ($hasAPI) {
-            $tabId = $slug('apisec');
-            $activeCls = $firstTab ? ' is-active' : '';
-            $selected = $firstTab ? 'true' : 'false';
-            $hiddenAttr = $firstTab ? '' : ' hidden';
-
-            $tabButtons .= "<button type='button' class='welcome-tab-btn" . $activeCls . "' role='tab' data-tab='" . $tabId . "' aria-selected='" . $selected . "'>" . _('API security') . "</button>";
-
-            $tabPanes .= "<div id='" . $tabId . "' class='welcome-tab-pane" . $activeCls . "' role='tabpanel' data-tab='" . $tabId . "'" . $hiddenAttr . ">"
-                . div(
-                    div(_("Before using the API, please make yourself familiar with:"))
-                        . ul(
-                            li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/api-acl/'>" . _("Rule Based Access List") . "</a>")
-                                . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/permissions/'>" . _("App Permissions") . "</a>")
-                                . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/api/rest-api-basics/'>" . _("Overall query/response dynamic") . "</a>")
-                        ),
-                    '', "class='form-row'"
-                )
+            $settings .= "<div class='welcome-settings-group'>"
+                . "<div class='welcome-settings-grouphdr'>" . htmlspecialchars($category) . "</div>"
+                . $groupRows
                 . "</div>";
-            $firstTab = false;
         }
 
-        if ($tabButtons !== '') {
-            $cards .= div(
-                "<div class='welcome-tabnav' role='tablist'>" . $tabButtons . "</div>"
-                . "<div class='welcome-tab-panes sw-body'>" . $tabPanes . "</div>",
-                '', "class='sw-drawer proto-form welcome-tabbed-card'"
+        // =========================================================
+        // API security pane (only when the project exposes the API)
+        // =========================================================
+        $apisec = '';
+        if ($hasAPI) {
+            $apisec = div(
+                div(_("Before using the API, please make yourself familiar with:"))
+                    . ul(
+                        li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/api-acl/'>" . _("Rule Based Access List") . "</a>")
+                            . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/your-app/permissions/'>" . _("App Permissions") . "</a>")
+                            . li(_("the ") . "<a target='_doc' href='https://apigoat.com/docs/api/rest-api-basics/'>" . _("Overall query/response dynamic") . "</a>")
+                    ),
+                '', "class='form-row'"
             );
         }
 
-        // Self-contained baseline so the welcome screen looks right
-        // even before _welcomev2.scss / _formv2.scss are compiled into
-        // main.css (which only happens on `gc build` followed by an
-        // asset-pipeline cache miss). Scoped to .welcome-screen so it
-        // never bleeds into other views; compiled SCSS will override
-        // anything where the cascade prefers it.
+        // --- Assemble the tabbed card. Overview is the default tab. ---
+        $tabDefs = [
+            [$slug('overview'), _('Overview'), $overview],
+            [$slug('settings'), _('Settings'), $settings],
+        ];
+        if ($hasAPI) {
+            $tabDefs[] = [$slug('apisec'), _('API security'), $apisec];
+        }
+
+        $tabButtons = '';
+        $tabPanes   = '';
+        $first      = true;
+        foreach ($tabDefs as [$tabId, $tabLabel, $paneBody]) {
+            $activeCls  = $first ? ' is-active' : '';
+            $selected   = $first ? 'true' : 'false';
+            $hiddenAttr = $first ? '' : ' hidden';
+            $tabButtons .= "<button type='button' class='welcome-tab-btn" . $activeCls . "' role='tab' data-tab='" . $tabId . "' aria-selected='" . $selected . "'>" . htmlspecialchars($tabLabel) . "</button>";
+            $tabPanes   .= "<div id='" . $tabId . "' class='welcome-tab-pane" . $activeCls . "' role='tabpanel' data-tab='" . $tabId . "'" . $hiddenAttr . ">" . $paneBody . "</div>";
+            $first = false;
+        }
+
+        $cards = div(
+            "<div class='welcome-tabnav' role='tablist'>" . $tabButtons . "</div>"
+                . "<div class='welcome-tab-panes sw-body'>" . $tabPanes . "</div>",
+            '', "class='sw-drawer proto-form welcome-tabbed-card'"
+        );
+
+        // Self-contained baseline so the welcome screen looks right even before
+        // _welcomev2.scss is compiled into main.css. Scoped to .welcome-screen
+        // so it never bleeds into other views; compiled SCSS overrides it.
         $welcomeBaseline = <<<'CSS'
-.welcome-screen { padding: 24px; max-width: 760px; margin: 0 auto; box-sizing: border-box; }
+.welcome-screen { padding: 24px; max-width: 860px; margin: 0 auto; box-sizing: border-box; --surface: #ffffff; --colorLight: #ffffff; --line: #e3e8ee; --line-hard: #cdd5df; }
 .welcome-screen .welcome-greeting { margin-bottom: 20px; }
 .welcome-screen .welcome-greeting h1 { margin: 0 0 4px; font-size: 24px; font-weight: 600; color: #0a2540; }
 .welcome-screen .welcome-date { color: rgba(0,0,0,0.55); font-size: 13px; }
 .welcome-screen .welcome-stack { display: flex; flex-direction: column; gap: 16px; }
 .welcome-screen .sw-drawer.proto-form { background: #fff; border: 1px solid #e3e8ee; border-radius: 12px; box-shadow: 0 1px 3px rgba(10,37,64,0.06); overflow: hidden; }
-.welcome-screen .sw-header { padding: 12px 18px; border-bottom: 1px solid #eef1f5; background: #fafbfd; }
-.welcome-screen .form-nav { display: flex; align-items: center; }
-.welcome-screen .nav-title { font-size: 14px; font-weight: 600; color: #0a2540; letter-spacing: -0.005em; }
-.welcome-screen .sw-body { padding: 6px 0; }
-.welcome-screen .form-row { padding: 12px 18px; border-bottom: 1px solid #eef1f5; }
-.welcome-screen .form-row:last-child { border-bottom: none; }
-.welcome-screen .form-row form { margin: 0; }
-.welcome-screen .form-row label { display: inline-block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8898aa; margin-bottom: 6px; }
-.welcome-screen .form-row label[for] { font-weight: 500; text-transform: none; letter-spacing: 0; color: #0a2540; margin-left: 6px; font-size: 13px; vertical-align: middle; }
-.welcome-screen .form-row input[type="text"] { width: 100%; height: 38px; padding: 0 12px; border: 1px solid #e3e8ee; border-radius: 8px; font-size: 14px; background: #fff; color: #0a2540; box-sizing: border-box; }
-.welcome-screen .form-row input[type="text"]:focus { outline: none; border-color: #0a2540; box-shadow: 0 0 0 3px rgba(10,37,64,0.08); }
-.welcome-screen .form-row input[type="checkbox"] { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.welcome-screen .form-row input[type="checkbox"] + label[for] { position: relative; display: inline-block; min-height: 25px; padding-right: 50px; vertical-align: middle; cursor: pointer; }
-.welcome-screen .form-row input[type="checkbox"] + label[for]::before { content: ""; position: absolute; right: 0; top: 0; width: 42px; height: 25px; border-radius: 13px; background: #e3e8ee; transition: background .18s ease; }
-.welcome-screen .form-row input[type="checkbox"] + label[for]::after { content: ""; position: absolute; right: 19px; top: 2px; width: 21px; height: 21px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(10,37,64,0.16); transition: right .18s cubic-bezier(0.32,0.72,0.32,1); }
-.welcome-screen .form-row input[type="checkbox"]:checked + label[for]::before { background: #00d1b2; }
-.welcome-screen .form-row input[type="checkbox"]:checked + label[for]::after { right: 2px; }
-.welcome-screen .form-row input[type="checkbox"]:focus + label[for]::before { box-shadow: 0 0 0 3px #d4f3ed; }
-.welcome-screen .form-row .explain { margin-top: 6px; font-size: 12px; color: #8898aa; line-height: 1.45; }
-.welcome-screen .form-row ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: #0a2540; }
-.welcome-screen .form-row a { color: #0a2540; text-decoration: underline; }
-.welcome-screen .form-row a:hover { color: #df1b41; }
 .welcome-screen .welcome-tabnav { display: flex; gap: 4px; padding: 6px 10px 0; border-bottom: 1px solid #eef1f5; background: #fafbfd; overflow-x: auto; }
-.welcome-screen .welcome-tab-btn { appearance: none; background: transparent; border: none; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #8898aa; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; letter-spacing: -0.005em; }
+.welcome-screen .welcome-tab-btn { appearance: none; background: transparent; border: none; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #8898aa; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
 .welcome-screen .welcome-tab-btn:hover { color: #0a2540; }
-.welcome-screen .welcome-tab-btn.is-active { color: #0a2540; border-bottom-color: #0a2540; }
+.welcome-screen .welcome-tab-btn.is-active { color: #0a2540; border-bottom-color: #00d1b2; }
 .welcome-screen .welcome-tab-btn:focus { outline: none; }
 .welcome-screen .welcome-tab-btn:focus-visible { box-shadow: 0 0 0 3px rgba(10,37,64,0.12); border-radius: 4px; }
-.welcome-screen .welcome-tab-panes { padding: 6px 0; }
+.welcome-screen .welcome-tab-panes { padding: 16px; }
 .welcome-screen .welcome-tab-pane[hidden] { display: none; }
+.welcome-screen .welcome-status-pill { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px; border: 1px solid #e3e8ee; background: #f7fafc; margin-bottom: 16px; }
+.welcome-screen .welcome-status-pill form { margin: 0; display: inline-flex; align-items: center; gap: 10px; }
+.welcome-screen .welcome-status-dot { width: 9px; height: 9px; border-radius: 50%; background: #8898aa; }
+.welcome-screen .welcome-status-pill.is-prod .welcome-status-dot { background: #00d1b2; }
+.welcome-screen .welcome-status-pill.is-dev .welcome-status-dot { background: #f5a623; }
+.welcome-screen .welcome-status-text { font-size: 13px; font-weight: 600; color: #0a2540; }
+.welcome-screen .welcome-status-pill input[type="checkbox"] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.welcome-screen .welcome-status-toggle { position: relative; display: inline-block; width: 42px; height: 24px; cursor: pointer; }
+.welcome-screen .welcome-status-toggle::before { content: ""; position: absolute; inset: 0; border-radius: 12px; background: #e3e8ee; transition: background .18s ease; }
+.welcome-screen .welcome-status-toggle::after { content: ""; position: absolute; left: 2px; top: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(10,37,64,0.16); transition: left .18s cubic-bezier(0.32,0.72,0.32,1); }
+.welcome-screen .welcome-status-pill input[type="checkbox"]:checked + .welcome-status-toggle::before { background: #00d1b2; }
+.welcome-screen .welcome-status-pill input[type="checkbox"]:checked + .welcome-status-toggle::after { left: 20px; }
+.welcome-screen .welcome-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.welcome-screen .welcome-stat-card { display: flex; flex-direction: column; gap: 4px; padding: 16px; border: 1px solid #e3e8ee; border-radius: 12px; background: #fff; text-decoration: none; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.welcome-screen .welcome-stat-card:hover { border-color: #00d1b2; box-shadow: 0 2px 10px rgba(10,37,64,0.08); transform: translateY(-1px); }
+.welcome-screen .welcome-stat-count { font-size: 26px; font-weight: 700; color: #0a2540; line-height: 1; }
+.welcome-screen .welcome-stat-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8898aa; }
+.welcome-screen .welcome-quicklinks { display: flex; flex-wrap: wrap; gap: 8px; }
+.welcome-screen .welcome-quicklink { display: inline-block; padding: 7px 14px; border-radius: 999px; border: 1px solid #e3e8ee; background: #fff; font-size: 13px; font-weight: 600; color: #0a2540; text-decoration: none; transition: border-color .15s ease, color .15s ease; }
+.welcome-screen .welcome-quicklink:hover { border-color: #00d1b2; color: #009b82; }
+.welcome-screen .welcome-settings-group { margin-bottom: 18px; }
+.welcome-screen .welcome-settings-group:last-child { margin-bottom: 0; }
+.welcome-screen .welcome-settings-grouphdr { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #8898aa; padding: 0 0 8px; margin-bottom: 8px; border-bottom: 1px solid #eef1f5; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row { padding: 10px 0; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row form { margin: 0; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row > form > label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8898aa; margin-bottom: 6px; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row input[type="text"] { width: 100%; height: 38px; padding: 0 12px; border: 1px solid #e3e8ee; border-radius: 8px; font-size: 14px; background: #fff; color: #0a2540; box-sizing: border-box; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row input[type="text"]:focus { outline: none; border-color: #00d1b2; box-shadow: 0 0 0 3px rgba(0,209,178,0.12); }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row .explain { margin-top: 6px; font-size: 12px; color: #8898aa; line-height: 1.45; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: #0a2540; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row a { color: #0a2540; text-decoration: underline; }
+.proto-screen.welcome-screen .welcome-tab-pane .form-row a:hover { color: #00d1b2; }
 CSS;
-        // Self-contained tab toggle so the new welcome tabs work even
-        // when the cached JS bundle predates drawer.js's .sw-tabnav
-        // handler. Document-level delegation; window-flag guard prevents
-        // double-binding once drawer.js does load.
+
+        // Self-contained tab toggle so the welcome tabs work even when the
+        // cached JS bundle predates drawer.js's handler. Document-level
+        // delegation; window-flag guard prevents double-binding once
+        // drawer.js loads.
         $tabScript = <<<'JS'
 (function(){
   if (window.__gcWelcomeTabsInline) return;
@@ -277,6 +344,14 @@ JS;
                 }
                 var __valEl = this.parentElement.querySelector('#Value');
                 if (__valEl) { __valEl.value = value; }
+                // Live-reflect the pill state without waiting for a reload.
+                var __pill = this.closest('.welcome-status-pill');
+                if (__pill) {
+                    __pill.classList.toggle('is-prod', value === 'prod');
+                    __pill.classList.toggle('is-dev', value !== 'prod');
+                    var __txt = __pill.querySelector('.welcome-status-text');
+                    if (__txt) { __txt.textContent = (value === 'prod') ? '" . addslashes(_('Production')) . "' : '" . addslashes(_('Development')) . "'; }
+                }
             }
             var __idEl = this.parentElement.querySelector('#IdConfig');
             var id = __idEl ? __idEl.value : '';
@@ -302,6 +377,12 @@ JS;
             __body.set('d', __ser.toString());
             __body.set('ui', 'tabsContain');
             __body.set('jet', 'swWarn');
+            // Config saveUpdate() unconditionally urldecode()s the ip/pc request
+            // params; this custom save omitted them, so on PHP 8.x urldecode(null)
+            // is a fatal TypeError. Send them empty (matching the standard save
+            // contract) so a plain Config edit can't 500.
+            __body.set('ip', '');
+            __body.set('pc', '');
             fetch(_SITE_URL + 'Config/update/' + id, {
                 method: 'POST',
                 credentials: 'same-origin',
