@@ -7,7 +7,7 @@ namespace ApiGoat\Auth;
 /**
  * Propel-backed RefreshTokenStore. Operates on the generated
  * \App\AuthyRefreshToken model; throttle attempts are logged to authy_log
- * (event='refresh') mirroring AuthyService login throttling.
+ * (result='refresh') mirroring AuthyService login throttling.
  */
 final class PropelRefreshTokenStore implements RefreshTokenStore
 {
@@ -56,7 +56,7 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
         \App\AuthyRefreshTokenQuery::create()
             ->filterByFamilyId($familyId)
             ->filterByRevoked('No')
-            ->update(['Revoked' => 'Yes']);
+            ->update(['Revoked' => 1]);  // 1 = 'Yes' in tinyint ENUM; 'Yes' string silently becomes 0 via MySQL cast
     }
 
     public function revokeAllForUser(int $idAuthy): void
@@ -64,14 +64,18 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
         \App\AuthyRefreshTokenQuery::create()
             ->filterByIdAuthy($idAuthy)
             ->filterByRevoked('No')
-            ->update(['Revoked' => 'Yes']);
+            ->update(['Revoked' => 1]);  // 1 = 'Yes' in tinyint ENUM
     }
 
     public function recentAttemptCount(string $ip, string $familyId, int $since): int
     {
+        // authy_log is the core GoatCheese audit table: no `event` column, and
+        // `timestamp` is a TIMESTAMP/datetime (not a unix int). Tag refresh
+        // attempts with result='refresh' so they never collide with the login
+        // throttle, which counts result='w' rows.
         $q = \App\AuthyLogQuery::create()
-            ->filterByEvent('refresh')
-            ->filterByTimestamp($since, \Criteria::GREATER_EQUAL);
+            ->filterByResult('refresh')
+            ->filterByTimestamp((new \DateTime())->setTimestamp($since), \Criteria::GREATER_EQUAL);
         $q->condition('byIp', \App\AuthyLogPeer::IP . ' = ?', $ip);
         if ($familyId !== '') {
             $q->condition('byFam', \App\AuthyLogPeer::LOGIN . ' = ?', $familyId);
@@ -86,13 +90,10 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
     public function recordAttempt(string $ip, string $familyId, int $at): void
     {
         $log = new \App\AuthyLog();
-        $log->setEvent('refresh');
+        $log->setResult('refresh');
         $log->setIp($ip);
         $log->setLogin($familyId);
-        $log->setTimestamp($at);
-        if (method_exists($log, 'setCreatedAt')) {
-            $log->setCreatedAt(new \DateTime());
-        }
+        $log->setTimestamp((new \DateTime())->setTimestamp($at));
         $log->save();
     }
 }
