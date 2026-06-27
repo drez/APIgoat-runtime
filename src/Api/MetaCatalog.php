@@ -58,14 +58,18 @@ final class MetaCatalog
             try {
                 $map = ($this->mapResolver)($name);
                 if (!$map instanceof \TableMap) {
-                    continue; // service-only routes (e.g. DriveBrowser) have no Peer
+                    // service-only routes (no Peer) OR a peer whose load FAILS (dangling classmap entry,
+                    // e.g. DriveBrowser) — resolver returns null / the per-entity catch below absorbs a failed require
+                    continue;
                 }
                 if (!$this->permitted($name, 'r')) {
                     continue; // hide entities the user has no read right on
                 }
                 $entities[$name] = $this->describe($name, $map);
             } catch (\Throwable $e) {
-                continue; // one bad TableMap must not 500 the whole catalog
+                // catches \Error from a failed require (dangling classmap entry, e.g. DriveBrowserPeer)
+                // as well as any exception from getTableMap() — one bad peer must not 500 the whole catalog
+                continue;
             }
         }
 
