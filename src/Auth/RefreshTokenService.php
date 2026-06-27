@@ -91,6 +91,14 @@ final class RefreshTokenService
             return $this->err('expired');
         }
 
+        // Mint the access token BEFORE mutating any state. If the minter fails
+        // (e.g. the Authy row was deleted), we return an error without revoking
+        // or rotating — the client still holds a usable refresh token.
+        $jwt = $mintAccessToken($row['id_authy']);
+        if (($jwt['status'] ?? '') !== 'success' || empty($jwt['token'])) {
+            return $this->err('invalid_token');
+        }
+
         // rotate
         $this->store->markRevoked($row['id'], $now);
         [$raw2, $hash2] = $this->generate();
@@ -106,7 +114,6 @@ final class RefreshTokenService
             'family_expires' => $row['family_expires'],
         ]);
 
-        $jwt = $mintAccessToken($row['id_authy']);
         return [
             'status'        => 'success',
             'token'         => $jwt['token'],

@@ -131,6 +131,25 @@ final class RefreshTokenServiceTest extends TestCase
         $this->assertSame('rate_limited', $out['message']);
     }
 
+    public function testMintFailureBeforeRotateReturnsErrorWithNoStateChange(): void
+    {
+        $store = new ArrayRefreshTokenStore();
+        $svc   = $this->svc($store);
+        $raw   = $svc->mintForLogin(7);
+        $family = array_values($store->rows)[0]['family_id'];
+
+        $failMinter = fn (int $id) => ['status' => 'failure'];  // simulates deleted Authy row
+        $out = $svc->redeem($raw, '1.2.3.4', $failMinter);
+
+        $this->assertSame('error', $out['status'], 'minter failure must return error');
+        $this->assertSame('invalid_token', $out['message']);
+        // Original token must NOT be revoked — client can retry
+        $row = $store->findByHash(hash('sha256', $raw));
+        $this->assertSame('No', $row['revoked'], 'token must remain live when mint fails');
+        // No sibling should have been inserted
+        $this->assertSame(1, $store->liveCountForFamily($family), 'no sibling should be created on mint failure');
+    }
+
     public function testRevokeAllForUser(): void
     {
         $store = new ArrayRefreshTokenStore();

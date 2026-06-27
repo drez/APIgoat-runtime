@@ -69,13 +69,13 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
 
     public function recentAttemptCount(string $ip, string $familyId, int $since): int
     {
-        // authy_log is the core GoatCheese audit table: no `event` column, and
-        // `timestamp` is a TIMESTAMP/datetime (not a unix int). Tag refresh
-        // attempts with result='refresh' so they never collide with the login
-        // throttle, which counts result='w' rows.
+        // authy_log columns used here:
+        //   event   varchar(64) — tagged 'refresh' to isolate from login throttle (result='w')
+        //   timestamp integer() — unix int (NOT a datetime column)
+        //   ip / login — address and family id respectively
         $q = \App\AuthyLogQuery::create()
-            ->filterByResult('refresh')
-            ->filterByTimestamp((new \DateTime())->setTimestamp($since), \Criteria::GREATER_EQUAL);
+            ->filterByEvent('refresh')
+            ->filterByTimestamp($since, \Criteria::GREATER_EQUAL);
         if ($familyId !== '') {
             $q->condition('byIp', \App\AuthyLogPeer::IP . ' = ?', $ip)
               ->condition('byFam', \App\AuthyLogPeer::LOGIN . ' = ?', $familyId)
@@ -89,10 +89,10 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
     public function recordAttempt(string $ip, string $familyId, int $at): void
     {
         $log = new \App\AuthyLog();
-        $log->setResult('refresh');
+        $log->setEvent('refresh');   // varchar(64) — fits; result is varchar(1) and must not be used
         $log->setIp($ip);
         $log->setLogin($familyId);
-        $log->setTimestamp((new \DateTime())->setTimestamp($at));
+        $log->setTimestamp($at);     // integer() column — raw unix int, not a DateTime
         $log->save();
     }
 }
