@@ -171,6 +171,7 @@ class RbacMiddleware implements MiddlewareInterface
             $ApiRbac->setRule($default_rule);
             $ApiRbac->setBody(((\is_null($body)) ? null : \json_encode(\json_decode($body, true), \JSON_PRETTY_PRINT)));
             $ApiRbac->setCount(1);
+            $ApiRbac->setScope($this->isExcludedRoute() ? 'Public' : 'Private');
             $this->rbac_id = $this->saveBookkeeping($ApiRbac);
             $this->rbac_rule = $default_rule;
             $this->rbac_role = null;
@@ -368,6 +369,28 @@ class RbacMiddleware implements MiddlewareInterface
         } else {
             return false;
         }
+    }
+
+    /** True when the current route is in the auth exclude list (a known-public endpoint). */
+    private function isExcludedRoute(): bool
+    {
+        static $exclude = null;
+        if ($exclude === null) {
+            $map = @(require _BASE_DIR . 'config/privileges.map.php');
+            $exclude = (is_array($map) && isset($map['exclude']) && is_array($map['exclude'])) ? $map['exclude'] : [];
+        }
+        $model  = $this->args['model'] ?? '';
+        $action = $this->args['action'] ?? '';
+        $route  = $this->args['route'] ?? ($model . '/' . $action);
+        foreach ($exclude as $entry) {
+            if ($route === $entry
+                || strpos($route, $entry . '/') === 0
+                || $model === $entry
+                || ($model . '/' . $action) === $entry) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
