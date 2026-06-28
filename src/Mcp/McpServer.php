@@ -36,6 +36,10 @@ class McpServer
                     }
                     return $this->err($id, -32601, "Method not found: {$method}");
             }
+        } catch (\League\OAuth2\Server\Exception\OAuthServerException $e) {
+            // Auth errors must propagate to McpEndpoint for a 401, not be
+            // swallowed into a -32603 JSON-RPC internal error.
+            throw $e;
         } catch (\Throwable $e) {
             return $this->err($id, -32603, 'Internal error');
         }
