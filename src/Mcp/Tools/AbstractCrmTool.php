@@ -113,6 +113,50 @@ abstract class AbstractCrmTool implements McpTool
             : ['status' => 'failure', 'errors' => ['Unreadable service response']];
     }
 
+    /** Common synthetic-request fields every verb needs. RouteHelper-equivalent shape. */
+    protected static function baseRequest(string $entity, string $method): array
+    {
+        return [
+            'method' => $method,
+            'p' => $entity,
+            'routeName' => $entity,
+            'isApiCall' => true,
+            'a' => '',
+            'i' => '',
+            'rbac_public' => '',   // anything != 'passed' so Api::authorize() runs
+            'ui' => '',
+        ];
+    }
+
+    /** Reject non-writable keys and bad enum values up front (mirrors Api::isWritableColumn + crm_describe). */
+    protected function assertWritable(array $catalog, string $entity, array $data): void
+    {
+        $fields = $catalog['entities'][$entity]['fields'] ?? [];
+        $writable = [];
+        foreach ($fields as $name => $def) {
+            if (!empty($def['writable'])) {
+                $writable[] = $name;
+            }
+        }
+        foreach ($data as $key => $value) {
+            if (!isset($fields[$key]) || empty($fields[$key]['writable'])) {
+                throw new ToolError(
+                    "Field '{$key}' is not writable on {$entity}.",
+                    ['Writable fields: ' . implode(', ', $writable)],
+                    'validation'
+                );
+            }
+            $def = $fields[$key];
+            if (($def['type'] ?? '') === 'enum' && isset($def['enum']) && is_array($def['enum'])
+                && $value !== null && !in_array($value, $def['enum'], true)) {
+                throw new ToolError(
+                    "Invalid value for '{$key}': must be one of " . implode(', ', $def['enum']) . '.',
+                    [], 'validation'
+                );
+            }
+        }
+    }
+
     /** \App\{Entity}ServiceWrapper → \App\{Entity}Service, both ($request,$response,$args). */
     protected static function resolveService(string $entity, array $args)
     {
