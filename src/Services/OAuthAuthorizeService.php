@@ -186,7 +186,10 @@ class OAuthAuthorizeService extends Service
         if ($session && method_exists($session, 'getCsrf')) {
             $token = (string) $session->getCsrf();
             if ($token === '' && method_exists($session, 'setCsrf')) {
-                $token = md5(uniqid('GoAt') . uniqid('', true));
+                // Cryptographically random CSRF token (NOT md5(uniqid()) — uniqid
+                // is microtime-based and predictable; this token gates the OAuth
+                // consent/login POST, so it must be unguessable).
+                $token = bin2hex(random_bytes(32));
                 $session->setCsrf($token);
             }
             return $token;

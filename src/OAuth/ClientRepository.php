@@ -49,7 +49,7 @@ class ClientRepository implements ClientRepositoryInterface
             throw new \InvalidArgumentException('redirect_uris required');
         }
         foreach ($redirects as $uri) {
-            if (!is_string($uri) || !filter_var($uri, FILTER_VALIDATE_URL)) {
+            if (!is_string($uri) || !self::isValidRedirectUri($uri)) {
                 throw new \InvalidArgumentException('invalid redirect_uri');
             }
         }
@@ -93,5 +93,28 @@ class ClientRepository implements ClientRepositoryInterface
             $resp['client_secret'] = $secret;
         }
         return $resp;
+    }
+
+    /**
+     * OAuth redirect URIs must be absolute https URLs with no fragment.
+     * http is permitted only for loopback hosts (native/dev clients).
+     * (FILTER_VALIDATE_URL alone accepts plaintext http and fragment-bearing
+     * URIs, which are unsafe redirect targets for token delivery.)
+     */
+    private static function isValidRedirectUri(string $uri): bool
+    {
+        if (!filter_var($uri, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+        $parts = parse_url($uri);
+        if ($parts === false || !isset($parts['scheme'], $parts['host']) || isset($parts['fragment'])) {
+            return false;
+        }
+        $scheme = strtolower($parts['scheme']);
+        $host = strtolower($parts['host']);
+        if ($scheme === 'https') {
+            return true;
+        }
+        return $scheme === 'http' && in_array($host, ['localhost', '127.0.0.1', '::1'], true);
     }
 }
