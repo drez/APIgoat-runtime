@@ -49,7 +49,7 @@ class OAuthRegisterService extends Service
 
         try {
             $reg = (new ClientRepository())->register($body);
-            $this->recordRegistration($ip);
+            try { $this->recordRegistration($ip); } catch (\Throwable $e) { /* logging failure must not fail a valid registration */ }
             return $this->jsonResponse($reg, 201);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse([

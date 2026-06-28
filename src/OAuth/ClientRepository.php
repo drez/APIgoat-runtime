@@ -54,6 +54,9 @@ class ClientRepository implements ClientRepositoryInterface
             }
         }
         $grants = $meta['grant_types'] ?? ['authorization_code', 'refresh_token'];
+        if (!is_array($grants)) {
+            throw new \InvalidArgumentException('grant_types must be an array');
+        }
         $allowed = ['authorization_code', 'refresh_token'];
         if (array_diff($grants, $allowed) !== []) {
             throw new \InvalidArgumentException('unsupported grant_types');

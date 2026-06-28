@@ -15,11 +15,14 @@ class RefreshTokenRepository implements RefreshTokenRepositoryInterface
     public function persistNewRefreshToken(RefreshTokenEntityInterface $rt): void
     {
         $access = $rt->getAccessToken();
+        if ($access === null) {
+            throw new \LogicException('RefreshTokenEntity must have an access token before persisting');
+        }
         $this->persistNewRefreshTokenForUser(
             $rt,
-            $access !== null ? (string) $access->getIdentifier() : '',
-            $access !== null ? (int) $access->getUserIdentifier() : 0,
-            $access !== null ? (string) $access->getClient()->getIdentifier() : ''
+            (string) $access->getIdentifier(),
+            (int) $access->getUserIdentifier(),
+            (string) $access->getClient()->getIdentifier()
         );
     }
 

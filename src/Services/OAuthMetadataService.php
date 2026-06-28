@@ -2,11 +2,22 @@
 namespace ApiGoat\Services;
 
 use ApiGoat\Services\Service;
-use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
 
 class OAuthMetadataService extends Service
 {
     private const SCOPES = ['crm:read', 'crm:write', 'offline_access'];
+
+    /**
+     * Bypass the parent BuilderLayout/BuilderMenus initialization — OAuth
+     * metadata endpoints return raw JSON responses and never use the HTML rendering layer.
+     */
+    public function __construct(Request $request, \Psr\Http\Message\ResponseInterface $response, array $args)
+    {
+        $this->request  = $request;
+        $this->response = $response;
+        $this->args     = $args;
+    }
 
     public static function authorizationServerMetadata(string $issuer): array
     {

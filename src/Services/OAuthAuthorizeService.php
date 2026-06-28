@@ -197,7 +197,7 @@ class OAuthAuthorizeService extends Service
     /** Build the access_denied redirect back to the client (no code issued). */
     private function denyRedirect(AuthorizationRequest $authRequest, array $params): ResponseInterface
     {
-        $redirect = (string) ($authRequest->getRedirectUri() ?: ($params['redirect_uri'] ?? ''));
+        $redirect = (string) $authRequest->getRedirectUri();
         $query    = ['error' => 'access_denied'];
         $state    = $authRequest->getState();
         if ($state !== null && $state !== '') {
