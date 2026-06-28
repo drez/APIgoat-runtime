@@ -51,6 +51,8 @@ class JsonErrorRenderer implements ErrorRendererInterface
             $errorMessage = '404 Not Found';
         } elseif ($exception instanceof HttpMethodNotAllowedException) {
             $errorMessage = '405 Method Not Allowed';
+        } elseif ($exception instanceof \JimTools\JwtAuth\Exceptions\AuthorizationException) {
+            $errorMessage = '401 Unauthorized';
         } else if (get_class($exception) == 'HJSON\HJSONException') {
             $errorMessage = "Schema parsing error";
         }else{

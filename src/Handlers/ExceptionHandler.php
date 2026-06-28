@@ -170,6 +170,11 @@ class ExceptionHandler implements ErrorHandlerInterface
         if ($this->contentType === null) {
             $this->contentType = $this->determineContentType($request);
         }
+        // A JWT auth failure is always an API/token context — answer with JSON so
+        // callers get a machine-readable 401 envelope rather than the HTML error page.
+        if ($this->exception instanceof \JimTools\JwtAuth\Exceptions\AuthorizationException) {
+            $this->contentType = 'application/json';
+        }
 
         if ($logErrors) {
             $this->writeToErrorLog();
@@ -199,6 +204,14 @@ class ExceptionHandler implements ErrorHandlerInterface
 
         if ($this->exception instanceof HttpException) {
             return $this->exception->getCode();
+        }
+
+        // JimTools JWT auth failures (token missing / expired / bad signature — all
+        // extend AuthorizationException) are a client auth error, not a server fault:
+        // render 401, not the default 500 Slim would otherwise produce. instanceof on
+        // an absent class is simply false, so this is safe even without jimtools.
+        if ($this->exception instanceof \JimTools\JwtAuth\Exceptions\AuthorizationException) {
+            return 401;
         }
 
         if (get_class($this->exception) == 'HJSON\HJSONException') {
