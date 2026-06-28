@@ -81,7 +81,10 @@ class QueryBuilder
 
     public function setDebug($debug)
     {
-        if ($debug) {
+        // SECURITY (review R2): a client-supplied debug flag echoes the rendered
+        // SQL (including the id_tenant value) back in the response. Only honor it
+        // when the app is in dev mode; ignore it in prod (fail-closed).
+        if ($debug && \defined('app_status') && \app_status === 'dev') {
             $this->debug = true;
         }
     }

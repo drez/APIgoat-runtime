@@ -20,7 +20,28 @@ class GoogleIdToken
 
     public function __construct(?string $cacheFile = null)
     {
-        $this->cacheFile = $cacheFile ?: sys_get_temp_dir() . '/gc-google-jwks.json';
+        // SECURITY (review R4): per-uid cache path so a co-tenant can't collide
+        // on a shared, predictable filename. The real defense is cacheFileIsSafe()
+        // below, which refuses to trust a file we don't own / is world-writable.
+        $uid = \function_exists('posix_geteuid') ? posix_geteuid() : 'x';
+        $this->cacheFile = $cacheFile ?: sys_get_temp_dir() . '/gc-google-jwks-' . $uid . '.json';
+    }
+
+    /**
+     * The JWKS cache is key material — never trust a cache file that we don't
+     * own or that is group/world-writable (a local attacker could plant forged
+     * keys and impersonate any Google identity). Returns false → refetch.
+     */
+    private function cacheFileIsSafe(string $f): bool
+    {
+        $stat = @stat($f);
+        if ($stat === false) {
+            return false;
+        }
+        if (\function_exists('posix_geteuid') && $stat['uid'] !== posix_geteuid()) {
+            return false;
+        }
+        return ($stat['mode'] & 0022) === 0; // not group- or world-writable
     }
 
     /**
@@ -57,7 +78,7 @@ class GoogleIdToken
     private function keys(): array
     {
         $f = $this->cacheFile;
-        if (is_file($f) && (time() - filemtime($f)) < self::CACHE_TTL) {
+        if (is_file($f) && $this->cacheFileIsSafe($f) && (time() - filemtime($f)) < self::CACHE_TTL) {
             $cached = json_decode((string) file_get_contents($f), true);
             if (!empty($cached['keys'])) {
                 return $cached;
@@ -67,8 +88,9 @@ class GoogleIdToken
         $raw  = @file_get_contents(self::JWKS_URL, false, $ctx);
         $json = $raw ? json_decode($raw, true) : null;
         if (empty($json['keys'])) {
-            // Stale cache beats hard-down, but never beats nothing.
-            if (is_file($f)) {
+            // Stale cache beats hard-down, but never beats nothing — and only a
+            // cache file we trust (owner + perms, review R4).
+            if (is_file($f) && $this->cacheFileIsSafe($f)) {
                 $stale = json_decode((string) file_get_contents($f), true);
                 if (!empty($stale['keys'])) {
                     return $stale;

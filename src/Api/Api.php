@@ -58,6 +58,41 @@ class Api
     ];
 
     /**
+     * Columns that must never appear in a generic-API JSON response, regardless
+     * of the caller's `select` or read rights (review M1). Credential hashes and
+     * single-use tokens — a user with mere `:r` on Authy could otherwise read
+     * every account's password hash / reset token. Matched case-insensitively,
+     * underscores ignored (covers both PhpName and snake_case keys).
+     *
+     * @var array
+     */
+    protected $outputDenyColumns = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
+
+    /**
+     * Strip outputDenyColumns from an API result set (array of row arrays, or a
+     * single row array). Defense in depth — independent of RBAC / select.
+     */
+    protected function stripSensitiveOutput($rows)
+    {
+        if (!is_array($rows)) {
+            return $rows;
+        }
+        $isSingle = !isset($rows[0]) || !is_array($rows[0]);
+        $list = $isSingle ? [$rows] : $rows;
+        foreach ($list as $i => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            foreach (array_keys($row) as $k) {
+                if (in_array(strtolower(str_replace('_', '', (string) $k)), $this->outputDenyColumns, true)) {
+                    unset($list[$i][$k]);
+                }
+            }
+        }
+        return $isSingle ? $list[0] : $list;
+    }
+
+    /**
      * Set the basic variables
      *
      * @param string $tablename
@@ -296,7 +331,7 @@ class Api
             } elseif (is_array($Data)) {
                 $ret['status'] = 'success';
                 // if select is set, lower case field name is ok
-                $ret['data'] = $Data;
+                $ret['data'] = $this->stripSensitiveOutput($Data); // review M1
                 $ret['count'] = count($Data);
             } else {
                 $ret['status'] = 'failure';
@@ -344,7 +379,7 @@ class Api
                 $ret['data'] = [];
             } else {
                 $ret['status'] = 'data';
-                $ret['data'] = $obj->toArray();
+                $ret['data'] = $this->stripSensitiveOutput($obj->toArray()); // review M1
             }
             return $ret;
         } catch (\Exception $x) {
