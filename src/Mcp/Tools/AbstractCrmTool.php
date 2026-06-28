@@ -52,6 +52,11 @@ abstract class AbstractCrmTool implements McpTool
         $isError = !in_array($status, ['success', 'data'], true);
 
         if ($isError) {
+            // For partial deletes, surface which ids were successfully removed so
+            // the batch caller can see partial progress.
+            if ($status === 'mixed' && is_array($data) && isset($data['deleted'])) {
+                $messages[] = 'Deleted: ' . implode(',', (array) $data['deleted']);
+            }
             $text = self::failureText($errors, $messages);
             return ['content' => [['type' => 'text', 'text' => $text]], 'isError' => true];
         }

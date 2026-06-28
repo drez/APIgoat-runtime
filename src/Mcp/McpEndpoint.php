@@ -57,12 +57,16 @@ class McpEndpoint
         // 3. Parse JSON-RPC, dispatch. Stash request/response for in-process service dispatch.
         $GLOBALS['__mcp_request'] = $this->request;
         $GLOBALS['__mcp_response'] = $this->response;
-        $message = json_decode((string) $this->request->getBody(), true);
-        if (!is_array($message)) {
-            return $this->json(['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32700, 'message' => 'Parse error']], 200);
+        try {
+            $message = json_decode((string) $this->request->getBody(), true);
+            if (!is_array($message)) {
+                return $this->json(['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32700, 'message' => 'Parse error']], 200);
+            }
+            $server = new McpServer(new ToolRegistry());
+            $result = $server->handle($message, $_SESSION[_AUTH_VAR]);
+        } finally {
+            unset($GLOBALS['__mcp_request'], $GLOBALS['__mcp_response']);
         }
-        $server = new McpServer(new ToolRegistry());
-        $result = $server->handle($message, $_SESSION[_AUTH_VAR]);
 
         // notification → 202 no body
         if ($result === null) {

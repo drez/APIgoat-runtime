@@ -1,7 +1,6 @@
 <?php
 namespace ApiGoat\Mcp\Tools;
 
-use ApiGoat\Mcp\ToolError;
 use ApiGoat\Sessions\AuthySession;
 
 class CrmList extends AbstractCrmTool

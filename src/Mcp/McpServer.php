@@ -47,9 +47,9 @@ class McpServer
 
     private function initialize(array $params): array
     {
-        $client = $params['protocolVersion'] ?? self::PROTOCOL;
         return [
-            'protocolVersion' => $client === self::PROTOCOL ? self::PROTOCOL : self::PROTOCOL,
+            // TODO: negotiate against $params['protocolVersion'] when we support multiple versions
+            'protocolVersion' => self::PROTOCOL,
             'capabilities' => ['tools' => ['listChanged' => false]],
             'serverInfo' => ['name' => 'apicrm-mcp', 'version' => '1'],
         ];
