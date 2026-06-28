@@ -51,7 +51,8 @@ class ToolRegistry
         if (defined('_BASE_DIR')) {
             foreach (glob(_BASE_DIR . 'src/App/Mcp/Tools/*Tool.php') ?: [] as $file) {
                 $class = '\\App\\Mcp\\Tools\\' . basename($file, '.php');
-                if (class_exists($class) && is_subclass_of($class, McpTool::class)) {
+                if (class_exists($class) && is_subclass_of($class, McpTool::class)
+                    && !(new \ReflectionClass($class))->isAbstract()) {
                     $found[] = new $class();
                 }
             }
@@ -59,7 +60,8 @@ class ToolRegistry
             if (is_file($manifest)) {
                 $cfg = require $manifest;
                 foreach (($cfg['tools'] ?? []) as $class) {
-                    if (class_exists($class) && is_subclass_of($class, McpTool::class)) {
+                    if (class_exists($class) && is_subclass_of($class, McpTool::class)
+                        && !(new \ReflectionClass($class))->isAbstract()) {
                         $found[] = new $class();
                     }
                 }
