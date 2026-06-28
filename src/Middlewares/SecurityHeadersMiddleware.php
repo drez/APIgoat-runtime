@@ -46,6 +46,14 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
             }
         }
 
+        // HSTS — only on HTTPS responses. Over plain HTTP it is ignored and risks
+        // locking out an HTTP-only dev host, so gate on the request scheme
+        // (honouring X-Forwarded-Proto, as the session-cookie Secure flag does).
+        // hasHeader-guarded so a project can override (e.g. add preload).
+        if (!$response->hasHeader('Strict-Transport-Security') && $this->isHttps($request)) {
+            $response = $response->withHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+        }
+
         // eval is gone (#22) and every inline/external <script> is nonced, so the
         // strict script policy enforces cleanly; the gcScreens re-exec'd scripts
         // ride on 'strict-dynamic' (created by the nonced index.js). style-src
@@ -63,6 +71,16 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         }
 
         return $response;
+    }
+
+    /** True when the request reached us over HTTPS (directly or via a TLS-terminating proxy). */
+    private function isHttps(ServerRequestInterface $request): bool
+    {
+        if (strtolower($request->getUri()->getScheme()) === 'https') {
+            return true;
+        }
+        $proto = $request->getHeaderLine('X-Forwarded-Proto');
+        return strtolower(trim(explode(',', $proto)[0])) === 'https';
     }
 
     private function cspMode(): string

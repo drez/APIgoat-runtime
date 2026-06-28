@@ -219,8 +219,12 @@ Content-Disposition: attachment" . $eol . $eol;
         $multipartEmail .= chunk_split(base64_encode($attachment['data'])) . $eol . $eol . "--" . $Email_boundaryMixed . "--";
     }
     $add_header = "";
-    if ($from) {
-        $add_header = "-f " . $from;
+    // SECURITY: the 5th arg of mail() is passed to sendmail; a $from carrying
+    // spaces or extra "-X" options is a classic sendmail argument-injection
+    // (e.g. -OQueueDirectory / -X<logfile> RCE). Only set -f for a clean,
+    // validated address; reject anything else.
+    if ($from && filter_var($from, FILTER_VALIDATE_EMAIL) && !preg_match('/\s/', $from)) {
+        $add_header = "-f" . $from;
     }
     if (strstr($to, ";")) {
         $recipient = explode(";", $to);

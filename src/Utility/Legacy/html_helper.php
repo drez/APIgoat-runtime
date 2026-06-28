@@ -615,7 +615,11 @@ function gcNonceAttr(): string
 
 function message($message)
 {
-    return "<script" . gcNonceAttr() . ">(function(){function r(){message('" . $message . "');}if(document.readyState!='loading'){r();}else{document.addEventListener('DOMContentLoaded',r);}})();</script>";
+    // SECURITY: $message lands inside an inline <script>; build the JS argument
+    // with json_encode (HEX flags) so quotes, </script> and tags can't break out
+    // of the string or the script element. Replaces the old raw single-quote splice.
+    $js = json_encode((string) $message, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE);
+    return "<script" . gcNonceAttr() . ">(function(){function r(){message(" . $js . ");}if(document.readyState!='loading'){r();}else{document.addEventListener('DOMContentLoaded',r);}})();</script>";
 }
 
 function script($data, $option = "")
