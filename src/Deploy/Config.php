@@ -272,7 +272,6 @@ EOS;
   ),
   'generator_version' => '1.7.3-dev',
 );
-\$conf['classmap'] = include(dirname(__FILE__) . DIRECTORY_SEPARATOR . 'classmap.php');
 return \$conf;
 EOS;
 
