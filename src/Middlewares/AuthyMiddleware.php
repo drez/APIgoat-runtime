@@ -139,7 +139,12 @@ class AuthyMiddleware implements MiddlewareInterface
     private function checkCsrf(ServerRequestInterface $request): ?ResponseInterface
     {
         $method = strtoupper($request->getMethod());
-        if ($this->args['is_api']
+        // SECURITY (review R5): exempt only genuine Bearer-token requests (no
+        // ambient cookie credential to forge), NOT every is_api route. A
+        // cookie-authenticated write to an API route must still carry the CSRF
+        // token — the first-party client already attaches it to all non-GET.
+        $hasBearerAuth = stripos($request->getHeaderLine('Authorization'), 'Bearer ') === 0;
+        if ($hasBearerAuth
             || ! in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)
             || $_SESSION[_AUTH_VAR]->get('connected') != 'YES'
             || $this->checkExclude($this->args['route'])) {
@@ -240,9 +245,14 @@ class AuthyMiddleware implements MiddlewareInterface
 
         $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
         if ($requiredPrivileges === false) {
-            // custom privileges
-            $model              = $this->args['model']; // . '-' . $this->args['action'];
-            $requiredPrivileges = 'r';
+            // Custom (non-CRUD) action, not in the privilege map. Infer the
+            // required right from the HTTP method (review R3): a mutating verb
+            // needs write, so a state-changing custom action can no longer be
+            // invoked with read-only rights. A read action reached via POST must
+            // be granted explicitly (add it to the privilege map / api_rbac).
+            $model   = $this->args['model'];
+            $reqMethod = strtoupper($request->getMethod());
+            $requiredPrivileges = in_array($reqMethod, ['POST', 'PUT', 'PATCH', 'DELETE'], true) ? 'w' : 'r';
         } else {
             $model = $this->args['model'];
         }

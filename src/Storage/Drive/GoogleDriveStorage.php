@@ -194,9 +194,15 @@ class GoogleDriveStorage implements FileStorageInterface
     public function share(string $id, string $level): string
     {
         $role = 'reader';
-        $type = 'anyone';
+        // SECURITY (review R6): never silently world-publish on an unrecognized
+        // level. 'domain' = same-workspace; 'public'/'anyone' = anyone-with-link
+        // (explicit opt-in only); anything else is a caller error, not public.
         if ($level === 'domain') {
             $type = 'domain';
+        } elseif ($level === 'public' || $level === 'anyone') {
+            $type = 'anyone';
+        } else {
+            throw new \InvalidArgumentException("share(): unknown level '{$level}' (use 'domain' or 'public')");
         }
         $this->google->post(
             self::FILES_URL . '/' . rawurlencode($id) . '/permissions',
