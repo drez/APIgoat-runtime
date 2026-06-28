@@ -24,7 +24,6 @@ class RbacMiddleware implements MiddlewareInterface
     private $rbac_id;
     private $config;
     private $rbac_rule;
-    private $rbac_role;
     private $response;
     private $raw_parameters;
     # Declared explicitly so PHP 8.4 doesn't emit a dynamic-property deprecation.
@@ -105,7 +104,11 @@ class RbacMiddleware implements MiddlewareInterface
         $idAuthy = null;
         if ($_SESSION[_AUTH_VAR]->get('connected') == 'YES') {
             $idAuthy = $_SESSION[_AUTH_VAR]->getIdAuthy();
-            if ((!empty($this->rbac_role) && $this->rbac_role != $_SESSION[_AUTH_VAR]->SessVar['IdRole']) || $this->rbac_rule == 'Deny') {
+            // RBAC enforcement is Scope (Public/Private) + Rule (Allow/Deny).
+            // (Removed a dead role check here: $rbac_role was only ever null and
+            // the comparison read a non-existent SessVar['IdRole'] — there is no
+            // role column in api_rbac nor an IdRole session key. See review.)
+            if ($this->rbac_rule == 'Deny') {
                 $this->logApi($rbac_id, $idAuthy);
                 return ['Route denied. Check your API access control.'];
             }
@@ -184,7 +187,6 @@ class RbacMiddleware implements MiddlewareInterface
             $ApiRbac->setScope($this->isExcludedRoute() ? 'Public' : 'Private');
             $this->rbac_id = $this->saveBookkeeping($ApiRbac);
             $this->rbac_rule = $default_rule;
-            $this->rbac_role = null;
             $this->rbac_is_new = true;
             $this->logApi($this->rbac_id);
             if (\defined('app_status') && \app_status == 'dev') {
@@ -200,7 +202,6 @@ class RbacMiddleware implements MiddlewareInterface
         } else {
             // failed
             $this->rbac_rule = $ApiRbac->getRule();
-            $this->rbac_role = null;
             $this->rbac_id = $ApiRbac->getPrimaryKey();
             if (\defined('app_status') && \app_status == 'dev') {
                 $ApiRbac->setCount($ApiRbac->getCount() + 1);
