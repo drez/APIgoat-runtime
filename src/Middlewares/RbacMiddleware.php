@@ -52,7 +52,17 @@ class RbacMiddleware implements MiddlewareInterface
                 ? $this->raw_parameters . '&body=' . rawurlencode($rawBody)
                 : $rawBody;
         }
-        if (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
+        // The MCP endpoint (api/v[0-9]/mcp) authenticates via the OAuth bearer (resource-server
+        // check in McpEndpoint) + per-tool Api::authorize(); it is also jwt-ignored. Its JSON-RPC
+        // body varies per call, which defeats api_rbac's body-pattern matching (every shape would
+        // auto-create a Deny row in prod). Mark it a passed public route so AuthyMiddleware lets
+        // it reach McpEndpoint, and skip api_rbac entirely.
+        $isMcp = (bool) preg_match('#/api/v[0-9]+/mcp(/|$)#', $request->getUri()->getPath());
+        if ($isMcp) {
+            $request = $request->withAttribute('rbac_public', 'passed')
+                               ->withAttribute('rbac_complete', 'yes');
+            $this->args['rbac_public'] = 'passed';
+        } elseif (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
 
             if ($request->getAttribute('rbac_public') === 'failed') {
                 // second pass for private route

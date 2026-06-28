@@ -166,7 +166,10 @@ abstract class AbstractCrmTool implements McpTool
     protected static function resolveService(string $entity, array $args)
     {
         $request  = $GLOBALS['__mcp_request']  ?? null;   // set by McpEndpoint for the in-process call
-        $response = $GLOBALS['__mcp_response'] ?? null;
+        // FRESH response for the in-process service — it writes its Api envelope to this
+        // body, which we read back and discard. Reusing McpEndpoint's response would
+        // concatenate the envelope with the JSON-RPC result, corrupting the HTTP body.
+        $response = new \Slim\Psr7\Response();
         $wrapper  = "\\App\\{$entity}ServiceWrapper";
         $bare     = "\\App\\{$entity}Service";
         if (class_exists($wrapper)) {

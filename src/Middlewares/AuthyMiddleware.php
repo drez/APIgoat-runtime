@@ -33,6 +33,12 @@ class AuthyMiddleware implements MiddlewareInterface
     {
         $this->args = $request->getAttribute('parsed_args');
 
+        // OAuth discovery documents (RFC 8414 / 9728) are inherently public — they
+        // must be reachable without a CRM session so an MCP client can bootstrap.
+        if (strpos($request->getUri()->getPath(), '/.well-known/') !== false) {
+            return $handler->handle($request);
+        }
+
         // public API route
         if ($request->getAttribute('rbac_public') == 'passed') {
             $response = $handler->handle($request);
