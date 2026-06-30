@@ -249,6 +249,22 @@ class AuthyMiddleware implements MiddlewareInterface
             return false;
         }
 
+        // Self-service account routes (`/Account` page + `/api/v1/Account/...`):
+        // any authenticated user manages their OWN account. AccountService /
+        // AccountServiceWrapper only ever read/write $_SESSION[_AUTH_VAR]'s own
+        // row (id from the session, never a client-supplied id), so there is no
+        // row to scope and no privilege to require beyond being logged in —
+        // which is already enforced above (connected != 'YES' -> return true).
+        // "Account" here is the URL path segment, NOT a real RBAC model (the
+        // model is BankAccount, whose display label happens to be "Account"), so
+        // authorize('Account', ...) can never succeed and can never be granted
+        // via the rights matrix — locking every non-admin user out of their own
+        // account page. Exempt it from the model-RBAC check, mirroring the way
+        // the `oauth` route is special-cased elsewhere in this middleware.
+        if (strtolower((string) $this->args['model']) === 'account') {
+            return false;
+        }
+
         $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
         if ($requiredPrivileges === false) {
             // Custom (non-CRUD) action, not in the privilege map. Infer the
