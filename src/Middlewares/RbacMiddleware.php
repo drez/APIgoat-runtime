@@ -28,12 +28,20 @@ class RbacMiddleware implements MiddlewareInterface
     private $raw_parameters;
     # Declared explicitly so PHP 8.4 doesn't emit a dynamic-property deprecation.
     private $prettyBody;
+    private $rbacHitCounter;
+    private $rbacAuditLog;
 
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
     {
         $Configuration = new Configuration(require _BASE_DIR . 'config/settings.php');
         $this->config = $Configuration->getArray('rbac');
+        // Per-request RBAC bookkeeping writes (a hit-count UPDATE and an api_log
+        // INSERT on every API call) are non-essential metrics/audit. High-traffic
+        // deployments can shed them via config. Default true = unchanged behavior;
+        // projects that haven't synced the new keys keep logging + counting.
+        $this->rbacHitCounter = ($this->config['hit_counter'] ?? true) !== false;
+        $this->rbacAuditLog   = ($this->config['audit_log'] ?? true) !== false;
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -169,12 +177,16 @@ class RbacMiddleware implements MiddlewareInterface
             return ['Route denied, private route require authentication.'];
         }
 
-        $ApiRbac = ApiRbacQuery::create()->findPk($rbac_id);
-        if ($ApiRbac) {
-            $ApiRbac->setCount($ApiRbac->getCount() + 1);
-            $this->saveBookkeeping($ApiRbac);
-            $this->logApi($rbac_id, $idAuthy);
+        // The findPk load exists only to bump the hit counter; skip both the
+        // SELECT and the UPDATE when the counter is disabled.
+        if ($this->rbacHitCounter) {
+            $ApiRbac = ApiRbacQuery::create()->findPk($rbac_id);
+            if ($ApiRbac) {
+                $ApiRbac->setCount($ApiRbac->getCount() + 1);
+                $this->saveBookkeeping($ApiRbac);
+            }
         }
+        $this->logApi($rbac_id, $idAuthy);
 
 
         return false;
@@ -247,8 +259,11 @@ class RbacMiddleware implements MiddlewareInterface
             return true;
         } elseif ($ApiRbac->getScope() == 'Public' && $ApiRbac->getRule() != 'Deny') {
             // pass public route
-            $ApiRbac->setCount($ApiRbac->getCount() + 1);
-            $this->rbac_id = $this->saveBookkeeping($ApiRbac);
+            $this->rbac_id = $ApiRbac->getPrimaryKey();
+            if ($this->rbacHitCounter) {
+                $ApiRbac->setCount($ApiRbac->getCount() + 1);
+                $this->saveBookkeeping($ApiRbac);
+            }
             $this->logApi($this->rbac_id);
             return false;
         } else {
@@ -256,8 +271,10 @@ class RbacMiddleware implements MiddlewareInterface
             $this->rbac_rule = $ApiRbac->getRule();
             $this->rbac_id = $ApiRbac->getPrimaryKey();
             if (\defined('app_status') && \app_status == 'dev') {
-                $ApiRbac->setCount($ApiRbac->getCount() + 1);
-                $this->saveBookkeeping($ApiRbac);
+                if ($this->rbacHitCounter) {
+                    $ApiRbac->setCount($ApiRbac->getCount() + 1);
+                    $this->saveBookkeeping($ApiRbac);
+                }
                 // Keep private routes on the private-auth pass in dev mode too.
                 return true;
             }
@@ -267,6 +284,9 @@ class RbacMiddleware implements MiddlewareInterface
 
     private function logApi($IdApiRbac, $IdAuthy = null)
     {
+        if (!$this->rbacAuditLog) {
+            return;
+        }
         $ApiLog = new \App\ApiLog();
         $ApiLog->setIdApiRbac($IdApiRbac);
         $ApiLog->setIdAuthy($IdAuthy);
