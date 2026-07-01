@@ -63,7 +63,24 @@ class RbacMiddleware implements MiddlewareInterface
             $this->args['rbac_public'] = 'passed';
         } elseif (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
 
-            if ($request->getAttribute('rbac_public') === 'failed') {
+            // Self-service Account endpoint (`/api/v*/Account[/...]`): "Account"
+            // is a URL path segment, NOT a real RBAC model (the model is
+            // BankAccount). AuthyMiddleware already gates it — requires a
+            // connected session and scopes every read/write to the caller's OWN
+            // authy row (id from $_SESSION, never a client id). api_rbac matches
+            // on the request BODY shape, so each distinct self-service field
+            // ({theme}, {email}, {language}, {google_credential}, …) becomes its
+            // own auto-discovered rule that fails closed (Deny) on prod
+            // (app_status != dev). That silently locked out Google account
+            // linking — and every other not-yet-seeded field — with a "Hard
+            // Deny". Mirror AuthyMiddleware's exemption: skip api_rbac for this
+            // route and let authentication be the sole gate. Mark the pass
+            // complete so neither this pass nor the post-auth pass body-matches
+            // it, but do NOT set rbac_public='passed' — that would make
+            // AuthyMiddleware skip the auth check entirely.
+            if ($this->isAccountSelfService()) {
+                $request = $request->withAttribute('rbac_complete', 'yes');
+            } elseif ($request->getAttribute('rbac_public') === 'failed') {
                 // second pass for private route
                 $this->rbac_rule = $request->getAttribute('rbac_rule');
                 $error = $this->authorizePrivateRequest($request->getAttribute('rbac_id'));
@@ -91,12 +108,47 @@ class RbacMiddleware implements MiddlewareInterface
         }
 
         if ($error) {
+            // An authenticated user who hits a Deny is Forbidden (403), not
+            // Unauthenticated (401). Returning 401 here made the browser
+            // client's fetch wrapper treat an RBAC route-denial as an expired
+            // session and pop a misleading "Session expired" re-auth loop.
+            // Reserve 401 for the genuinely unauthenticated case (a private
+            // route reached with no session).
             $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => $error]);
-            return $ApiResponse->setStatus(401)->getResponse();
+            return $ApiResponse->setStatus($this->denialStatus())->getResponse();
         }
 
         $response = $handler->handle($request);
         return $response;
+    }
+
+    /**
+     * The self-service Account route (`/api/v{N}/Account/...`) is exempt from
+     * api_rbac body-matching. "Account" is a URL path segment, not a real RBAC
+     * model (the model is BankAccount), and AuthyMiddleware already enforces a
+     * connected session and scopes every read/write to the caller's own authy
+     * row. Without this, each distinct PATCH body shape (theme, email,
+     * language, google_credential, …) becomes its own auto-discovered rule that
+     * fails closed (Deny) on prod. See process().
+     */
+    private function isAccountSelfService(): bool
+    {
+        return strtolower((string) ($this->args['model'] ?? '')) === 'account';
+    }
+
+    /**
+     * HTTP status for an RBAC denial: 403 (Forbidden) when the caller holds an
+     * authenticated session — it is a route denial, not an expired session —
+     * otherwise 401 (a private route reached with no session). Returning 401 for
+     * an authenticated user made the browser client mistake the denial for an
+     * expired session and loop on the "Session expired" re-auth dialog.
+     */
+    private function denialStatus(): int
+    {
+        $connected = isset($_SESSION[_AUTH_VAR]) && is_object($_SESSION[_AUTH_VAR])
+            && method_exists($_SESSION[_AUTH_VAR], 'get')
+            && $_SESSION[_AUTH_VAR]->get('connected') === 'YES';
+        return $connected ? 403 : 401;
     }
 
     private function authorizePrivateRequest($rbac_id = null)
