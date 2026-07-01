@@ -221,7 +221,13 @@ class QueryBuilder
             if ($this->request['page']) {
                 $this->request['max_page'] = ($this->request['max_page']) ? $this->request['max_page'] : 50;
                 $pmpo = $this->Query->paginate($this->request['page'], $this->request['max_page']);
-                $this->Data = $pmpo->getResults();
+                // Symmetry with the find() branch below: expose the result collection via
+                // DataObj too. Api::getJson() gates data extraction on getDataObj(), so
+                // without this every paginated list fell through to a "failure" response
+                // (getDataObj() was empty for paginated queries). correctData() then
+                // processes $this->Data as usual.
+                $this->DataObj = $pmpo->getResults();
+                $this->Data = $this->DataObj;
             } else {
                 $this->DataObj = $this->Query->find();
                 if (!is_array($this->DataObj)) {
