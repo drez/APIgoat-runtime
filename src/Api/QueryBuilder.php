@@ -540,7 +540,14 @@ class QueryBuilder
             $this->Data = $data;
             $collection = true;
         } elseif (!is_array($this->Data)) {
-            $this->Data = $this->Data->toArray(\BasePeer::TYPE_FIELDNAME);
+            // A non-array result object here is a multi-row collection (e.g. a
+            // paginated select => PropelArrayCollection). Use the default toArray()
+            // (row list) — toArray(TYPE_FIELDNAME) on a PropelArrayCollection collapses
+            // every row into one keyed by '' (last-row-wins). Flag it as a collection
+            // so the select logic below uses the per-row path; without this it took
+            // the single-row branch and unset every row, yielding an empty result.
+            $this->Data = $this->Data->toArray();
+            $collection = true;
         } elseif (!empty($this->Data[0])) {
             $collection = true;
         }
