@@ -497,6 +497,36 @@ class QueryBuilder
     {
         $collection = false;
 
+        // Fast path — paginated, no-select: $this->Data is a PropelObjectCollection.
+        // Build the final field-name-keyed rows in ONE pass over the hydrated objects.
+        // This (a) fixes the prior all-null result (the collection branch keyed rows by
+        // TYPE_FIELDNAME while the remap read them by PhpName), and (b) skips the
+        // toArray()+re-map second pass. getter values equal the toArray() values used
+        // by the legacy remap, so output is identical to the (now-correct) find() path.
+        if (!$this->selectSet && !$this->primaryKey
+            && is_object($this->Data) && $this->Data instanceof \PropelObjectCollection) {
+            $cols = $this->Query->getTableMap()->getColumns();
+            $enumVal = [];
+            $rows = [];
+            foreach ($this->Data as $obj) {
+                $row = [];
+                foreach ($cols as $Column) {
+                    $getter = 'get' . $Column->getPhpName();
+                    if ($Column->getType() == 'ENUM') {
+                        if (!isset($enumVal[$Column->getName()])) {
+                            $enumVal[$Column->getName()] = $Column->getValueSet();
+                        }
+                        $row[$Column->getName()] = $enumVal[$Column->getName()][$obj->$getter()];
+                    } else {
+                        $row[$Column->getName()] = $obj->$getter();
+                    }
+                }
+                $rows[] = $row;
+            }
+            $this->Data = $rows;
+            return;
+        }
+
         if (is_object($this->Data) && get_class($this->Data) == 'PropelObjectCollection') {
             foreach ($this->Data as $obj) {
                 $data[] = $obj->toArray(\BasePeer::TYPE_FIELDNAME);
