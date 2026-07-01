@@ -19,39 +19,17 @@ class McpEndpoint
 
     public function handle(): Response
     {
-        // 1. OAuth bearer validation (SP3 resource server)
-        $factory = \ApiGoat\OAuth\OAuthServerFactory::forProject();
-        if ($factory === null) {
-            return $this->json(['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32000, 'message' => 'OAuth not configured']], 503);
-        }
-        try {
-            $validated = $factory->resourceServer()->validateAuthenticatedRequest($this->request);
-        } catch (\League\OAuth2\Server\Exception\OAuthServerException $e) {
+        // 1+2. OAuth bearer validation + session hydration (shared helper).
+        $status = \ApiGoat\OAuth\BearerSessionAuthenticator::authenticate($this->request);
+        if ($status === \ApiGoat\OAuth\BearerSessionAuthenticator::NOT_OAUTH) {
+            // Preserve prior behavior: MCP requires OAuth; distinguish not-configured vs bad token.
+            if (\ApiGoat\OAuth\OAuthServerFactory::forProject() === null) {
+                return $this->json(['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32000, 'message' => 'OAuth not configured']], 503);
+            }
             return $this->unauthorized();
         }
-        $authyId = (int) $validated->getAttribute('oauth_user_id');
-        if ($authyId <= 0) {
+        if ($status !== \ApiGoat\OAuth\BearerSessionAuthenticator::AUTHENTICATED) {
             return $this->unauthorized();
-        }
-
-        // 2. Hydrate the CRM session exactly like JwtBeforeHandler
-        if ($_SESSION[_AUTH_VAR]->get('connected') !== 'YES') {
-            $authy = \App\AuthyQuery::create()->findPk($authyId);
-            if (!$authy) {
-                return $this->unauthorized();
-            }
-            try {
-                // Bypass the AuthyService constructor (BuilderLayout / web-only helpers)
-                // exactly as OAuthAuthorizeService does — setSession needs none of
-                // the constructor-wired state.
-                $svc = (new \ReflectionClass(\App\AuthyService::class))->newInstanceWithoutConstructor();
-                $svc->setSession($authy);
-            } catch (\Throwable $e) {
-                error_log('[mcp] setSession failed: ' . $e->getMessage());
-            }
-            if ($_SESSION[_AUTH_VAR]->get('connected') !== 'YES') {
-                return $this->unauthorized();
-            }
         }
 
         // 3. Parse JSON-RPC, dispatch. Stash request/response for in-process service dispatch.
