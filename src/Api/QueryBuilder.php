@@ -360,6 +360,12 @@ class QueryBuilder
 
             if (empty($useQuery) || method_exists($this->Query, $useQuery)) {
 
+                // GET path: PHP delivers filter[Model] as a JSON string; decode it.
+                if (is_string($filters)) {
+                    $decoded = json_decode($filters, true);
+                    $filters = is_array($decoded) ? $decoded : [];
+                }
+
                 if (!is_array($filters[0])) {
                     $filters = [$filters];
                 }
@@ -404,6 +410,27 @@ class QueryBuilder
                                 break;
                             case 'or':
                                 $addOr = true;
+                                break;
+                            case 'like':
+                                $criteria = Criteria::LIKE;
+                                break;
+                            case 'in':
+                                $criteria = Criteria::IN;
+                                if (is_string($filter[1])) {
+                                    $filter[1] = explode(',', $filter[1]);
+                                }
+                                break;
+                            case 'not_in':
+                                $criteria = Criteria::NOT_IN;
+                                if (is_string($filter[1])) {
+                                    $filter[1] = explode(',', $filter[1]);
+                                }
+                                break;
+                            case '>=':
+                                $criteria = Criteria::GREATER_EQUAL;
+                                break;
+                            case '<=':
+                                $criteria = Criteria::LESS_EQUAL;
                                 break;
                         }
 
