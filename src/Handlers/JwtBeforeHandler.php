@@ -72,6 +72,12 @@ class JwtBeforeHandler implements BeforeHandlerInterface
         if (!is_array($decoded)) {
             $decoded = [];
         }
+        // OAuth 2.1 access tokens carry the authy id in the standard `sub` claim
+        // (league AccessTokenTrait), not the app's custom `authyId` claim. Normalize
+        // it so the same hydrate path serves app HS256 tokens and OAuth RS256 tokens.
+        if (empty($decoded['authyId']) && isset($decoded['sub']) && ctype_digit((string) $decoded['sub'])) {
+            $decoded['authyId'] = (int) $decoded['sub'];
+        }
         $this->container->set('token', $decoded);
         $request = $request->withAttribute('jwt_claims', $decoded);
         $routeArgs = ['decoded' => $decoded, 'token' => (string) ($arguments['token'] ?? '')];
