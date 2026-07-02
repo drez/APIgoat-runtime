@@ -45,6 +45,14 @@ class McpServer
         }
     }
 
+    /** Generic guidance when the project manifest sets no 'instructions'. */
+    private const DEFAULT_INSTRUCTIONS =
+        'Start with crm_describe (no arguments) to learn which entities you may access; '
+        . 'pass an entity name for its fields before writing. Search with crm_list — filter: '
+        . '{"Entity": [["col", value, "ne|lt|gt|or"?]]}, "%" in a value means LIKE; order: '
+        . '[["col","asc|desc"]]. Read one record with crm_get, write with crm_create/crm_update. '
+        . 'Prefer this server\'s custom (non-crm_) tools whenever one matches the task.';
+
     private function initialize(array $params): array
     {
         return [
@@ -52,6 +60,7 @@ class McpServer
             'protocolVersion' => self::PROTOCOL,
             'capabilities' => ['tools' => ['listChanged' => false]],
             'serverInfo' => ['name' => 'apicrm-mcp', 'version' => '1'],
+            'instructions' => $this->registry->instructions() ?? self::DEFAULT_INSTRUCTIONS,
         ];
     }
 

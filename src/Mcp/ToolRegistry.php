@@ -14,11 +14,40 @@ class ToolRegistry
         foreach ($this->builtins() as $t) {
             $this->tools[$t->name()] = $t;
         }
+        $manifest = $this->manifest();
+        $this->disabled = (array) ($manifest['disabled'] ?? []);
+        $instructions = $manifest['instructions'] ?? null;
+        $this->instructions = (is_string($instructions) && trim($instructions) !== '') ? $instructions : null;
         $custom = $extraTools ?? $this->discover();
         foreach ($custom as $t) {
             $this->add($t);
         }
     }
+
+    private ?array $manifestCache = null;
+
+    /** config/mcp.php manifest contents ([] when absent). */
+    private function manifest(): array
+    {
+        if ($this->manifestCache === null) {
+            $this->manifestCache = [];
+            if (defined('_BASE_DIR') && is_file(_BASE_DIR . 'config/mcp.php')) {
+                $cfg = require _BASE_DIR . 'config/mcp.php';
+                if (is_array($cfg)) {
+                    $this->manifestCache = $cfg;
+                }
+            }
+        }
+        return $this->manifestCache;
+    }
+
+    /** Project-authored model guidance from config/mcp.php 'instructions' (null = none). */
+    public function instructions(): ?string
+    {
+        return $this->instructions;
+    }
+
+    private ?string $instructions = null;
 
     /** @return McpTool[] */
     private function builtins(): array
@@ -56,16 +85,11 @@ class ToolRegistry
                     $found[] = new $class();
                 }
             }
-            $manifest = _BASE_DIR . 'config/mcp.php';
-            if (is_file($manifest)) {
-                $cfg = require $manifest;
-                foreach (($cfg['tools'] ?? []) as $class) {
-                    if (class_exists($class) && is_subclass_of($class, McpTool::class)
-                        && !(new \ReflectionClass($class))->isAbstract()) {
-                        $found[] = new $class();
-                    }
+            foreach (($this->manifest()['tools'] ?? []) as $class) {
+                if (class_exists($class) && is_subclass_of($class, McpTool::class)
+                    && !(new \ReflectionClass($class))->isAbstract()) {
+                    $found[] = new $class();
                 }
-                $this->disabled = (array) ($cfg['disabled'] ?? []);
             }
         }
         return $found;
