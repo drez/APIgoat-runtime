@@ -31,21 +31,64 @@ class GoogleDriveStorage implements FileStorageInterface
     private GoogleClientFactory $google;
     private string $userEmail;
 
+    /**
+     * Shared Drive id, or '' for classic per-user My Drive mode. When set, the
+     * folder tree is anchored at this Shared Drive (org-owned, visible to every
+     * drive member) instead of each impersonated user's private My Drive root,
+     * and every request carries the Shared-Drive opt-in params Drive v3 requires.
+     */
+    private string $driveId;
+
     /** path → folderId, in-process cache. */
     private array $folderCache = [];
 
-    public function __construct(GoogleClientFactory $google, string $userEmail)
+    public function __construct(GoogleClientFactory $google, string $userEmail, string $driveId = '')
     {
         if ($userEmail === '') {
             throw new AuthFailed('GoogleDriveStorage requires a non-empty userEmail (DWD subject)');
         }
         $this->google = $google;
         $this->userEmail = $userEmail;
+        $this->driveId = trim($driveId);
     }
 
     public static function forUser(string $userEmail): self
     {
-        return new self(GoogleClientFactory::fromEnv(), $userEmail);
+        return new self(
+            GoogleClientFactory::fromEnv(),
+            $userEmail,
+            GoogleClientFactory::sharedDriveIdFromEnv()
+        );
+    }
+
+    /**
+     * Root folder id for path resolution: the Shared Drive id when configured
+     * (a Shared Drive's id doubles as its root folder id), else 'root' — the
+     * impersonated user's My Drive root.
+     */
+    private function rootId(): string
+    {
+        return $this->driveId !== '' ? $this->driveId : 'root';
+    }
+
+    /**
+     * Append the Shared-Drive opt-in query params Drive v3 requires. No-op in
+     * My Drive mode ($driveId === ''), so existing projects are byte-unchanged.
+     * $isSearch adds the corpora/driveId/includeItemsFromAllDrives trio that
+     * files.list needs to actually traverse the Shared Drive.
+     */
+    private function withDriveParams(string $url, bool $isSearch = false): string
+    {
+        if ($this->driveId === '') {
+            return $url;
+        }
+        $sep = strpos($url, '?') === false ? '?' : '&';
+        $params = 'supportsAllDrives=true';
+        if ($isSearch) {
+            $params .= '&includeItemsFromAllDrives=true'
+                . '&corpora=drive&driveId=' . rawurlencode($this->driveId);
+        }
+        return $url . $sep . $params;
     }
 
     public function list(string $scope, array $filters = []): array
@@ -82,7 +125,7 @@ class GoogleDriveStorage implements FileStorageInterface
             $url .= '&pageToken=' . rawurlencode((string) $filters['page_token']);
         }
 
-        $resp = $this->google->get($url, self::SCOPES, $this->userEmail);
+        $resp = $this->google->get($this->withDriveParams($url, /*search*/ true), self::SCOPES, $this->userEmail);
         $files = $resp['files'] ?? [];
 
         // Post-filter for true name prefix when requested.
@@ -101,7 +144,7 @@ class GoogleDriveStorage implements FileStorageInterface
     public function get(string $id): array
     {
         $resp = $this->google->get(
-            self::FILES_URL . '/' . rawurlencode($id) . '?fields=' . rawurlencode($this->fieldsList()),
+            $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?fields=' . rawurlencode($this->fieldsList())),
             self::SCOPES,
             $this->userEmail
         );
@@ -118,7 +161,7 @@ class GoogleDriveStorage implements FileStorageInterface
         }
 
         $resp = $this->google->uploadMultipart(
-            self::UPLOAD_URL,
+            $this->withDriveParams(self::UPLOAD_URL),
             $metadata,
             $bytes,
             $mimeType !== '' ? $mimeType : 'application/octet-stream',
@@ -145,7 +188,7 @@ class GoogleDriveStorage implements FileStorageInterface
         }
         $parentId = $this->resolveScope($scope, /*create*/ true);
         $created = $this->google->post(
-            self::FILES_URL . '?fields=' . rawurlencode(self::META_FIELDS),
+            $this->withDriveParams(self::FILES_URL . '?fields=' . rawurlencode(self::META_FIELDS)),
             ['name' => $name, 'mimeType' => self::FOLDER_MIME, 'parents' => [$parentId]],
             self::SCOPES,
             $this->userEmail
@@ -174,7 +217,7 @@ class GoogleDriveStorage implements FileStorageInterface
             return $this->get($id);
         }
         $resp = $this->google->patch(
-            self::FILES_URL . '/' . rawurlencode($id) . '?fields=' . rawurlencode($this->fieldsList()),
+            $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?fields=' . rawurlencode($this->fieldsList())),
             $payload,
             self::SCOPES,
             $this->userEmail
@@ -185,7 +228,7 @@ class GoogleDriveStorage implements FileStorageInterface
     public function delete(string $id): bool
     {
         return $this->google->delete(
-            self::FILES_URL . '/' . rawurlencode($id),
+            $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id)),
             self::SCOPES,
             $this->userEmail
         );
@@ -205,13 +248,13 @@ class GoogleDriveStorage implements FileStorageInterface
             throw new \InvalidArgumentException("share(): unknown level '{$level}' (use 'domain' or 'public')");
         }
         $this->google->post(
-            self::FILES_URL . '/' . rawurlencode($id) . '/permissions',
+            $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '/permissions'),
             ['role' => $role, 'type' => $type],
             self::SCOPES,
             $this->userEmail
         );
         $meta = $this->google->get(
-            self::FILES_URL . '/' . rawurlencode($id) . '?fields=webViewLink',
+            $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?fields=webViewLink'),
             self::SCOPES,
             $this->userEmail
         );
@@ -230,13 +273,13 @@ class GoogleDriveStorage implements FileStorageInterface
     {
         $scope = trim($scope, '/');
         if ($scope === '') {
-            return 'root';
+            return $this->rootId();
         }
         if (isset($this->folderCache[$scope])) {
             return $this->folderCache[$scope];
         }
 
-        $parent = 'root';
+        $parent = $this->rootId();
         $accumPath = '';
         foreach (explode('/', $scope) as $segment) {
             if ($segment === '') { continue; }
@@ -253,7 +296,7 @@ class GoogleDriveStorage implements FileStorageInterface
                 $parent
             );
             $resp = $this->google->get(
-                self::FILES_URL . '?q=' . rawurlencode($q) . '&fields=files(id,name)&pageSize=1',
+                $this->withDriveParams(self::FILES_URL . '?q=' . rawurlencode($q) . '&fields=files(id,name)&pageSize=1', /*search*/ true),
                 self::SCOPES,
                 $this->userEmail
             );
@@ -267,7 +310,7 @@ class GoogleDriveStorage implements FileStorageInterface
                 return null;
             }
             $created = $this->google->post(
-                self::FILES_URL . '?fields=id',
+                $this->withDriveParams(self::FILES_URL . '?fields=id'),
                 ['name' => $segment, 'mimeType' => self::FOLDER_MIME, 'parents' => [$parent]],
                 self::SCOPES,
                 $this->userEmail

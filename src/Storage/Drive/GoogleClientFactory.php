@@ -83,6 +83,31 @@ class GoogleClientFactory
         return new self(JwtSigner::fromKeyFile($email, $path));
     }
 
+    /**
+     * Shared Drive id for the is_drive_backed storage, or '' when unset.
+     *
+     * When configured, {@see GoogleDriveStorage} anchors its folder tree at
+     * this org-owned Shared Drive (visible to every drive member) instead of
+     * each impersonated user's private My Drive. Empty = classic per-user My
+     * Drive mode, so existing projects are unaffected. Honors the same TEST_
+     * prefix override as {@see fromEnv} when VERSION=dev.
+     */
+    public static function sharedDriveIdFromEnv(): string
+    {
+        self::loadAdminEnv();
+
+        $version = strtolower(trim((string) (
+            $_ENV['VERSION'] ?? getenv('VERSION') ?: 'production'
+        )));
+        $prefix = ($version === 'dev') ? 'TEST_' : '';
+
+        return trim((string) (
+            $_ENV[$prefix . 'GDRIVE_SHARED_DRIVE_ID']
+            ?? getenv($prefix . 'GDRIVE_SHARED_DRIVE_ID')
+            ?: ''
+        ));
+    }
+
     private static function loadAdminEnv(): void
     {
         static $loaded = false;
