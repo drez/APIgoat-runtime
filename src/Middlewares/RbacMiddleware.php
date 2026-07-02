@@ -65,10 +65,20 @@ class RbacMiddleware implements MiddlewareInterface
         // auto-create a Deny row in prod). Mark it a passed public route so AuthyMiddleware lets
         // it reach McpEndpoint, and skip api_rbac entirely.
         $isMcp = (bool) preg_match('#/api/v[0-9]+/mcp(/|$)#', $request->getUri()->getPath());
+        // _meta is a fixed, read-only introspection catalog (entity + menu metadata)
+        // consumed by the mobile and MCP clients to build their UI. Like /mcp it has
+        // no per-entity request body, so api_rbac's body-pattern matching would
+        // auto-create a fail-closed Deny row on prod (app_status != dev) and lock the
+        // endpoint out with a "Hard Deny". Skip api_rbac for it — but, UNLIKE /mcp,
+        // keep authentication as the gate (do NOT set rbac_public='passed'): a valid
+        // bearer/session is still required, mirroring the Account self-service exemption.
+        $isMeta = (bool) preg_match('#/api/v[0-9]+/_meta(/|$)#', $request->getUri()->getPath());
         if ($isMcp) {
             $request = $request->withAttribute('rbac_public', 'passed')
                                ->withAttribute('rbac_complete', 'yes');
             $this->args['rbac_public'] = 'passed';
+        } elseif ($isMeta) {
+            $request = $request->withAttribute('rbac_complete', 'yes');
         } elseif (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
 
             // Self-service Account endpoint (`/api/v*/Account[/...]`): "Account"
