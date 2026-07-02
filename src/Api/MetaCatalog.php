@@ -136,8 +136,9 @@ final class MetaCatalog
                 'update' => $this->permitted($name, 'w'),
                 'delete' => $this->permitted($name, 'd'),
             ],
-            'fields'    => $fields,
-            'relations' => $this->describeRelations($map),
+            'fields'          => $fields,
+            'relations'       => $this->describeRelations($map),
+            'display_columns' => $this->resolveDisplayColumns($map),
         ];
     }
 
@@ -187,6 +188,32 @@ final class MetaCatalog
             ];
         }
         return $out;
+    }
+
+    /** Snake_case column names composing a row's display label. */
+    private function resolveDisplayColumns(\TableMap $map): array
+    {
+        $behaviors = method_exists($map, 'getBehaviors') ? $map->getBehaviors() : [];
+        $json = $behaviors['GoatCheese']['set_main_label'] ?? null;
+        $mainLabel = is_string($json) ? json_decode($json, true) : (is_array($json) ? $json : null);
+
+        $fallback = [];
+        foreach ($map->getColumns() as $col) {
+            if (!$col->isPrimaryKey()
+                && in_array($col->getType(), ['VARCHAR', 'CHAR', 'LONGVARCHAR'], true)) {
+                $fallback[] = $col->getName();
+            }
+        }
+        return self::displayColumnsFrom(is_array($mainLabel) ? $mainLabel : null, $fallback);
+    }
+
+    /** Pure: main-label columns if any, else the first fallback string column, else []. */
+    public static function displayColumnsFrom(?array $mainLabel, array $fallbackStringCols): array
+    {
+        if (is_array($mainLabel) && $mainLabel !== []) {
+            return array_values($mainLabel);
+        }
+        return $fallbackStringCols !== [] ? [$fallbackStringCols[0]] : [];
     }
 
     /** "bank_account" => "BankAccount" (dependency-free, no global camelize). */
