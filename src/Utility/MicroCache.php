@@ -51,6 +51,42 @@ final class MicroCache
         unset(self::$store[$key]);
     }
 
+    /**
+     * Return the cached value for $key, or null on a miss (without running any
+     * callable). Complements put() for callers that need a check-then-act pattern
+     * without the null-placeholder awkwardness of using remember().
+     */
+    public static function get(string $key): mixed
+    {
+        if (self::apcuUsable()) {
+            $hit = apcu_fetch($key, $ok);
+            return $ok ? unserialize($hit) : null;
+        }
+        $now   = time();
+        $entry = self::$store[$key] ?? null;
+        if ($entry !== null && $entry[0] > $now) {
+            return unserialize($entry[1]);
+        }
+        return null;
+    }
+
+    /**
+     * Store $val under $key for $ttl seconds. No-op when $ttl <= 0.
+     * Returned value from a subsequent get() is always a fresh copy (unserialize
+     * round-trip), identical to the guarantee remember() and APCu provide.
+     */
+    public static function put(string $key, int $ttl, mixed $val): void
+    {
+        if ($ttl <= 0) {
+            return;
+        }
+        if (self::apcuUsable()) {
+            apcu_store($key, serialize($val), $ttl);
+            return;
+        }
+        self::$store[$key] = [time() + $ttl, serialize($val)];
+    }
+
     /** Test helper: clear the per-process fallback store. */
     public static function flushLocal(): void
     {
