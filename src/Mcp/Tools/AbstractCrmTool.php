@@ -177,6 +177,27 @@ abstract class AbstractCrmTool implements McpTool
         }
     }
 
+    /** Reject a create missing required writable fields (mirrors crm_describe's 'required' flag). */
+    protected function assertRequired(array $catalog, string $entity, array $data): void
+    {
+        $fields = $catalog['entities'][$entity]['fields'] ?? [];
+        $required = [];
+        foreach ($fields as $name => $def) {
+            if (!empty($def['required']) && !empty($def['writable'])) {
+                $required[] = $name;
+            }
+        }
+        $missing = array_values(array_filter($required, fn ($name) => !isset($data[$name]) || $data[$name] === ''));
+        if ($missing) {
+            throw new ToolError(
+                "Missing required field(s) for {$entity}: " . implode(', ', $missing)
+                . '. Ask the user for these values — never invent them.',
+                ['Required fields: ' . implode(', ', $required)],
+                'validation'
+            );
+        }
+    }
+
     /** \App\{Entity}ServiceWrapper → \App\{Entity}Service, both ($request,$response,$args). */
     protected static function resolveService(string $entity, array $args)
     {

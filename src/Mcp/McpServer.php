@@ -51,6 +51,9 @@ class McpServer
         . 'pass an entity name for its fields before writing. Search with crm_list — filter: '
         . '{"Entity": [["col", value, "ne|lt|gt|or"?]]}, "%" in a value means LIKE; order: '
         . '[["col","asc|desc"]]. Read one record with crm_get, write with crm_create/crm_update. '
+        . 'crm_create validates required fields (a rejected create lists the missing ones — ask '
+        . 'the user for values, never invent them) and executes only with confirm:true: show the '
+        . 'user the pending record and get their approval first. '
         . 'Prefer this server\'s custom (non-crm_) tools whenever one matches the task.';
 
     private function initialize(array $params): array
