@@ -16,10 +16,26 @@ namespace ApiGoat\Utility;
 class BuilderMenus
 {
     private $Menu;
+    private $args;
+    private $built = false;
 
 
     public function __construct($args)
     {
+        // Menu construction is deferred: every generated service constructs a
+        // BuilderMenus, but API/MCP/XHR responses never render menus. build()
+        // runs on first getMenus()/getRequested() call (full-page renders only).
+        $this->args = $args;
+    }
+
+    private function build(): void
+    {
+        if ($this->built) {
+            return;
+        }
+        $this->built = true;
+        $args = $this->args;
+
         $parents = [];
         $folded = $groupIcon = $groupColor = $groupDashboard = [];
         require _BASE_DIR . "config/menus.php";
@@ -58,11 +74,13 @@ class BuilderMenus
 
     public function getMenus()
     {
+        $this->build();
         return $this->Menu->getMenu();
     }
 
     public function getRequested()
     {
+        $this->build();
         return $this->Menu->getRequested();
     }
 }
