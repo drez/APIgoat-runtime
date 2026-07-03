@@ -78,12 +78,27 @@ abstract class AbstractCrmTool implements McpTool
         return $joined !== '' ? $joined : 'Operation failed.';
     }
 
+    /**
+     * Per-request catalog memo, keyed weakly by session so a fresh session
+     * (new rights) never sees another session's catalog and entries die with
+     * their session. Shared across tool instances: composite tools (crmx_find,
+     * crmx_my_day) hit catalog() once per entity they touch, and the full
+     * MetaCatalog build (every Peer/TableMap + 5 RBAC checks per entity) is
+     * the single most expensive step of each hit.
+     * @var \WeakMap<AuthySession, array>|null
+     */
+    private static ?\WeakMap $catalogMemo = null;
+
     /** Build the RBAC-filtered entity/field catalog (override in tests). */
     protected function catalog(AuthySession $session): array
     {
-        $routes = require _BASE_DIR . 'config/Built/settings.routes.php';
-        $entityNames = array_keys($routes['json']['GET'] ?? []);
-        return (new \ApiGoat\Api\MetaCatalog($session))->build($entityNames);
+        self::$catalogMemo ??= new \WeakMap();
+        if (!isset(self::$catalogMemo[$session])) {
+            $routes = require _BASE_DIR . 'config/Built/settings.routes.php';
+            $entityNames = array_keys($routes['json']['GET'] ?? []);
+            self::$catalogMemo[$session] = (new \ApiGoat\Api\MetaCatalog($session))->build($entityNames);
+        }
+        return self::$catalogMemo[$session];
     }
 
     /** Throw ToolError unless $entity is in the catalog and $op (read/create/update/delete) is permitted. */
