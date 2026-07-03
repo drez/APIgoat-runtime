@@ -92,10 +92,10 @@ class QueryBuilder
     public function setRequest(array $request)
     {
         # validate and sanitize
-        if (is_array($request['normalized_query'])) {
+        if (is_array($request['normalized_query'] ?? null)) {
             $this->request = $request['normalized_query'];
         } else {
-            $this->request = $request['query'];
+            $this->request = $request['query'] ?? [];
         }
     }
 
@@ -148,7 +148,7 @@ class QueryBuilder
     public function buildQuery()
     {
 
-        if ($this->request['info']) {
+        if (!empty($this->request['info'])) {
             if ($this->setInfo()) {
                 return true;
             }
@@ -159,13 +159,13 @@ class QueryBuilder
             return false;
         }
 
-        if ($this->request['join']) {
+        if (!empty($this->request['join'])) {
             if ($this->setJoins($this->request['join'])) {
                 return true;
             }
         }
 
-        if ($this->request['select']) {
+        if (!empty($this->request['select'])) {
             if ($this->setSelect($this->request['select'])) {
                 return true;
             }
@@ -175,17 +175,17 @@ class QueryBuilder
             $this->Query->filterByPrimaryKey($this->primaryKey);
         }
 
-        if ($this->request['filter']) {
+        if (!empty($this->request['filter'])) {
             $this->setFilters($this->request['filter']);
         }
 
-        if ($this->request['groupby']) {
+        if (!empty($this->request['groupby'])) {
             if ($this->setGroupby($this->request['groupby'])) {
                 return true;
             }
         }
 
-        if ($this->request['order']) {
+        if (!empty($this->request['order'])) {
             foreach ($this->request['order'] as $order) {
                 if ($order[1]) {
                     if (strpos($order[0], '.') !== false) {
@@ -200,10 +200,10 @@ class QueryBuilder
             $this->info['query'] = $this->Query->toString();
         }
 
-        $this->request['limit'] = $this->validateLimit($this->request['limit']);
+        $this->request['limit'] = $this->validateLimit($this->request['limit'] ?? null);
         $this->Query->limit($this->request['limit']);
 
-        if ($this->request['dontrun']) {
+        if (!empty($this->request['dontrun'])) {
             return true;
         }
 
@@ -218,8 +218,8 @@ class QueryBuilder
     private function runQuery()
     {
         if (!$this->isInfo()) {
-            if ($this->request['page']) {
-                $this->request['max_page'] = ($this->request['max_page']) ? $this->request['max_page'] : 50;
+            if (!empty($this->request['page'])) {
+                $this->request['max_page'] = !empty($this->request['max_page']) ? $this->request['max_page'] : 50;
                 $pmpo = $this->Query->paginate($this->request['page'], $this->request['max_page']);
                 // Symmetry with the find() branch below: expose the result collection via
                 // DataObj too. Api::getJson() gates data extraction on getDataObj(), so
@@ -356,6 +356,8 @@ class QueryBuilder
             $Table = \camelize($table, true);
             $Class = "App\\" . $Table;
 
+            $useQuery = null;
+            $lastUseQuery = null;
             //$useQueryDefault = $this->getUseClause($Class, $Table, $table);
 
             if (empty($useQuery) || method_exists($this->Query, $useQuery)) {
@@ -392,7 +394,7 @@ class QueryBuilder
                     }
 
                     if (method_exists($this->Query, $filterStr) || !empty($useQuery)) {
-                        switch ($filter[2]) {
+                        switch ($filter[2] ?? null) {
                             case 'ne':
                                 $criteria = Criteria::NOT_EQUAL;
                                 if (is_array($filter[1])) {
@@ -580,7 +582,7 @@ class QueryBuilder
         }
 
         if ($this->primaryKey) {
-            $this->Data = $this->Data[0];
+            $this->Data = $this->Data[0] ?? [];
             $collection = false;
         }
 
@@ -610,7 +612,7 @@ class QueryBuilder
                             $value = $enumVal[$key][$value];
                         }
 
-                        if ($this->selectKeyMap[$key]) {
+                        if (!empty($this->selectKeyMap[$key])) {
                             $row[$this->selectKeyMap[$key]] = $row[$key];
                             unset($row[$key]);
                             $this->selectKey[] = $this->selectKeyMap[$key];
@@ -627,7 +629,7 @@ class QueryBuilder
                         $value = $enumVal[$key][$value];
                     }
 
-                    if ($this->selectKeyMap[$key]) {
+                    if (!empty($this->selectKeyMap[$key])) {
                         $this->Data[$this->selectKeyMap[$key]] = $this->Data[$key];
                         unset($this->Data[$key]);
                         $this->selectKey[] = $this->selectKeyMap[$key];
@@ -641,19 +643,19 @@ class QueryBuilder
 
                     foreach ($tableMap as $Column) {
                         if ($Column->getType() == 'ENUM') {
-                            if (!is_array($enumVal[$Column->getName()])) {
+                            if (!is_array($enumVal[$Column->getName()] ?? null)) {
                                 $enumVal[$Column->getName()] = $Column->getValueSet();
                             }
-                            $data[$i][$Column->getName()] = $enumVal[$Column->getName()][$record[$Column->getPhpName()]];
+                            $data[$i][$Column->getName()] = $enumVal[$Column->getName()][$record[$Column->getPhpName()] ?? null] ?? ($record[$Column->getPhpName()] ?? null);
                         } else {
-                            $data[$i][$Column->getName()] = $record[$Column->getPhpName()];
+                            $data[$i][$Column->getName()] = $record[$Column->getPhpName()] ?? null;
                         }
                     }
                     $i++;
                 }
             } else {
                 foreach ($tableMap as $Column) {
-                    $data[$Column->getName()] = $this->Data[$Column->getPhpName()];
+                    $data[$Column->getName()] = $this->Data[$Column->getPhpName()] ?? null;
                 }
             }
             $this->Data = $data;

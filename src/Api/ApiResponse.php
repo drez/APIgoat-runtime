@@ -73,13 +73,13 @@ class ApiResponse
         if ($status) {
             $this->status = $status;
         } else {
-            if ($this->body['status'] == 'success') {
-                if ($this->args['action'] == 'list') {
+            if (($this->body['status'] ?? null) == 'success') {
+                if (($this->args['action'] ?? null) == 'list') {
                     $this->args['method'] = 'GET';
                 }
-                $this->status = $this->statusCode[$this->body['status']][$this->args['method']];
+                $this->status = $this->statusCode[$this->body['status']][$this->args['method'] ?? ''] ?? null;
             } else {
-                $this->status = $this->statusCode[$this->body['status']]['Unknown'];
+                $this->status = $this->statusCode[$this->body['status'] ?? '']['Unknown'] ?? null;
             }
 
             if (empty($this->status)) {

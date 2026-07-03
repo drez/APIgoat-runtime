@@ -219,7 +219,7 @@ class Api
         }
 
         if ($request['rbac_public'] != 'passed') {
-            if ($request["action"] == 'update' || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])))) {
+            if ($request["action"] == 'update' || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'] ?? null)))) {
                 $acl = $this->authorize($this->tablename, 'w');
             } else {
                 $acl = $this->authorize($this->tablename, 'a');
@@ -233,13 +233,15 @@ class Api
             return $this->response;
         }
 
-        if ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'])) || $request["action"] == 'update') {
-            if ($request['data']['query']['select']) {
+        $DataObj = null;
+        if ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'] ?? null)) || $request["action"] == 'update') {
+            if (!empty($request['data']['query']['select'])) {
                 $this->response['error'] = "Do not use 'select' when updating";
                 return $this->response;
             }
             // Use Query Builder
-            $ModelQuery = $this->setAclFilter($this->queryObjName::create());
+            $ModelQuery = $this->queryObjName::create();
+            $ModelQuery = $this->setAclFilter($ModelQuery);
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $request);
             $DataObj = $QueryBuilder->getDataObj();
             if ($QueryBuilder->getMessages()) {
@@ -306,7 +308,8 @@ class Api
         }
 
         if ($QueryBuilder === null) {
-            $ModelQuery = $this->setAclFilter($this->queryObjName::create());
+            $ModelQuery = $this->queryObjName::create();
+            $ModelQuery = $this->setAclFilter($ModelQuery);
             $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $data);
         }
 
@@ -417,7 +420,8 @@ class Api
 
         try {
             if ($QueryBuilder === null) {
-                $ModelQuery = $this->setAclFilter($this->queryObjName::create());
+                $ModelQuery = $this->queryObjName::create();
+                $ModelQuery = $this->setAclFilter($ModelQuery);
                 $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $data);
             }
             $obj = $QueryBuilder->getDataObj();
@@ -544,7 +548,7 @@ class Api
              */
             if (\method_exists($this->ServiceWrapper, 'afterSave')) {
                 $dataAr = [];
-                $this->ServiceWrapper->afterSave($obj, $dataAr, $isNew, $error, $data, $this->response['messages']);
+                $this->ServiceWrapper->afterSave($obj, $dataAr, $isNew, $error, $data, $this->response['messages'] ?? null);
             }
         } else {
             $this->response['error'] = "Entry not found";
