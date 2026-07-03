@@ -43,7 +43,10 @@ final class BearerSessionAuthenticator
         if ($key !== '' && $ttl > 0) {
             $blob = \ApiGoat\Utility\MicroCache::get($key);
             if (\is_string($blob) && $blob !== '') {
-                $restored = @\unserialize($blob);
+                // allowed_classes: defense-in-depth — the blob is server-produced
+                // (stored below after a full authentication), and AuthySession
+                // carries only scalars/arrays, so nothing else may instantiate.
+                $restored = @\unserialize($blob, ['allowed_classes' => [\ApiGoat\Sessions\AuthySession::class]]);
                 if ($restored instanceof \ApiGoat\Sessions\AuthySession
                     && $restored->get('connected') === 'YES') {
                     $_SESSION[\_AUTH_VAR] = $restored;
