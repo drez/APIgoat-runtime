@@ -13,11 +13,15 @@ use ApiGoat\Middlewares\OAuthResourceMiddleware;
 
 function assertTrue($c, string $m): void { if (!$c) { fwrite(STDERR, "FAIL: $m\n"); exit(1); } }
 
-// shouldAttempt(isApi, alreadyConnected, hasBearer)
+// shouldAttempt(isApi, alreadyConnected, hasBearer, isFileAction=false)
 assertTrue(OAuthResourceMiddleware::shouldAttempt(true,  false, true)  === true,  'api + not-connected + bearer => attempt');
-assertTrue(OAuthResourceMiddleware::shouldAttempt(false, false, true)  === false, 'non-api => skip');
+assertTrue(OAuthResourceMiddleware::shouldAttempt(false, false, true)  === false, 'non-api (not file action) => skip');
 assertTrue(OAuthResourceMiddleware::shouldAttempt(true,  true,  true)  === false, 'already connected => skip');
 assertTrue(OAuthResourceMiddleware::shouldAttempt(true,  false, false) === false, 'no bearer => skip');
+// File actions (upload/open/file) are served by the legacy is_api=false route — hydrate there too.
+assertTrue(OAuthResourceMiddleware::shouldAttempt(false, false, true,  true)  === true,  'non-api + file action + bearer => attempt');
+assertTrue(OAuthResourceMiddleware::shouldAttempt(false, false, false, true)  === false, 'file action but no bearer => skip');
+assertTrue(OAuthResourceMiddleware::shouldAttempt(false, true,  true,  true)  === false, 'file action but already connected => skip');
 
 echo "PASS: OAuthResourceMiddleware::shouldAttempt OK\n"; exit(0);
 
