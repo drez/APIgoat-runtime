@@ -17,10 +17,31 @@ class BuilderLayout
     private $htmlHeader;
     private $settings;
     private $js;
+    private $headerBuilt = false;
     public $showLeftPannel = true;
 
     function __construct(BuilderMenus $BuilderMenus)
     {
+        // Header construction is deferred to initHeader(): every generated
+        // service constructs a BuilderLayout, but API/MCP/XHR responses never
+        // use the HTML header — building it eagerly cost an assets.php include,
+        // a settings parse and a theme DB lookup on paths that only emit JSON.
+        $this->builderMenus = $BuilderMenus;
+    }
+
+    /**
+     * Build the full-page HTML header state (assets, settings, theme, PWA
+     * meta). Called lazily by the consumers that render full documents —
+     * render(), renderLogin(), decorate(), getTopNav() — and skipped
+     * entirely on the renderXHR()/API path.
+     */
+    private function initHeader()
+    {
+        if ($this->headerBuilt) {
+            return;
+        }
+        $this->headerBuilt = true;
+
         include _BASE_DIR . 'config/assets.php';
         $Config             = new Configuration(require _BASE_DIR . 'config/settings.php');
         $this->settings     = $Config->getArray('admin_panel');
@@ -28,7 +49,6 @@ class BuilderLayout
         $siteKeywords       = '';
         $favicon            = '';
         $headAuthor         = '';
-        $this->builderMenus = $BuilderMenus;
 
         $this->incCss = $Assets->css() . $AssetsAdmin->css();
         if (defined('_TITLE_PREFIX')) {
@@ -212,6 +232,7 @@ class BuilderLayout
 
     public function renderLogin($content)
     {
+        $this->initHeader();
         $print =
         docType()
         . htmlTag(
@@ -251,6 +272,7 @@ class BuilderLayout
      */
     public function render($content)
     {
+        $this->initHeader();
         header('Cache-Control: no-store');
 
         if (empty($content['html'])) {
@@ -427,6 +449,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
      */
     public function getTopNav()
     {
+        $this->initHeader();
 
         $menus    = ['profil', 'support', 'dashboard'];
         $items    = '';
@@ -603,6 +626,7 @@ JS;
 
     public function decorate(string $content, array $options)
     {
+        $this->initHeader();
         switch ($options['type']) {
             case 'warning':
                 $head         = div(h3('Warning'), '', "class='box-header'");
