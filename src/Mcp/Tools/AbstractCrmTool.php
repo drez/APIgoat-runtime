@@ -94,11 +94,44 @@ abstract class AbstractCrmTool implements McpTool
     {
         self::$catalogMemo ??= new \WeakMap();
         if (!isset(self::$catalogMemo[$session])) {
-            $routes = require _BASE_DIR . 'config/Built/settings.routes.php';
-            $entityNames = array_keys($routes['json']['GET'] ?? []);
-            self::$catalogMemo[$session] = (new \ApiGoat\Api\MetaCatalog($session))->build($entityNames);
+            self::$catalogMemo[$session] = $this->catalogCrossRequest($session);
         }
         return self::$catalogMemo[$session];
+    }
+
+    /**
+     * Cross-request layer: the catalog is a pure function of (schema, rights).
+     * Keyed by the routes file mtime (changes on every rebuild/deploy) + user
+     * identity. Rights edits appear within GC_CATALOG_CACHE_TTL (default 300s,
+     * 0 disables); real per-op RBAC is enforced downstream regardless — this
+     * only shapes what crm_describe advertises.
+     */
+    private function catalogCrossRequest(AuthySession $session): array
+    {
+        $routesFile = _BASE_DIR . 'config/Built/settings.routes.php';
+        $build = function () use ($routesFile, $session): array {
+            $routes = require $routesFile;
+            $entityNames = array_keys($routes['json']['GET'] ?? []);
+            return (new \ApiGoat\Api\MetaCatalog($session))->build($entityNames);
+        };
+
+        $ttl = self::catalogTtl();
+        if ($ttl <= 0) {
+            return $build();
+        }
+        $key = 'gc:catalog:' . \md5(
+            $routesFile . ':' . (string) @\filemtime($routesFile)
+            . ':u' . (int) ($session->get('id') ?? 0)
+            . ':a' . (int) (bool) $session->isAdmin()
+        );
+        return \ApiGoat\Utility\MicroCache::remember($key, $ttl, $build);
+    }
+
+    /** GC_CATALOG_CACHE_TTL seconds; default 300; 0 disables. */
+    private static function catalogTtl(): int
+    {
+        $v = \function_exists('env') ? env('GC_CATALOG_CACHE_TTL') : \getenv('GC_CATALOG_CACHE_TTL');
+        return ($v === false || $v === null || $v === '') ? 300 : \max(0, (int) $v);
     }
 
     /** Throw ToolError unless $entity is in the catalog and $op (read/create/update/delete) is permitted. */
@@ -174,6 +207,27 @@ abstract class AbstractCrmTool implements McpTool
                     [], 'validation'
                 );
             }
+        }
+    }
+
+    /** Reject a create missing required writable fields (mirrors crm_describe's 'required' flag). */
+    protected function assertRequired(array $catalog, string $entity, array $data): void
+    {
+        $fields = $catalog['entities'][$entity]['fields'] ?? [];
+        $required = [];
+        foreach ($fields as $name => $def) {
+            if (!empty($def['required']) && !empty($def['writable'])) {
+                $required[] = $name;
+            }
+        }
+        $missing = array_values(array_filter($required, fn ($name) => !isset($data[$name]) || $data[$name] === ''));
+        if ($missing) {
+            throw new ToolError(
+                "Missing required field(s) for {$entity}: " . implode(', ', $missing)
+                . '. Ask the user for these values — never invent them.',
+                ['Required fields: ' . implode(', ', $required)],
+                'validation'
+            );
         }
     }
 

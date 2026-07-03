@@ -24,19 +24,19 @@ use Slim\Psr7\Response;
  */
 class OAuthResourceMiddleware implements MiddlewareInterface
 {
-    /** File-upload/download actions served by the legacy (is_api=false) {Model}/{action} route. */
-    private const FILE_ACTIONS = ['upload', 'open', 'file'];
+    /** Legacy (is_api=false) actions that still need bearer identity: file upload/download and mass actions. */
+    private const LEGACY_BEARER_ACTIONS = ['upload', 'open', 'file', 'mass'];
 
     /**
      * Pure routing predicate (unit-tested). Bearer identity is hydrated for API routes
-     * AND for the file-upload/download actions (upload/open/file) — those are dispatched
-     * only by the legacy is_api=false route, so without this the mobile bearer client
-     * cannot reach them. Hydration is identity-only; RbacMiddleware (api_rbac) + Authy +
+     * AND for legacy is_api=false actions (upload/open/file/mass) — those are dispatched
+     * only by the legacy route, so without this the mobile bearer client cannot reach them.
+     * Hydration is identity-only; RbacMiddleware (api_rbac) + Authy +
      * Api::authorize + ACL still gate the request identically to a browser session.
      */
-    public static function shouldAttempt(bool $isApi, bool $alreadyConnected, bool $hasBearer, bool $isFileAction = false): bool
+    public static function shouldAttempt(bool $isApi, bool $alreadyConnected, bool $hasBearer, bool $isLegacyBearerAction = false): bool
     {
-        return ($isApi || $isFileAction) && !$alreadyConnected && $hasBearer;
+        return ($isApi || $isLegacyBearerAction) && !$alreadyConnected && $hasBearer;
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -44,7 +44,7 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         $parsed = $request->getAttribute('parsed_args');
         $isApi = is_array($parsed) && (($parsed['is_api'] ?? false) == true);
         $action = is_array($parsed) ? (string) ($parsed['action'] ?? '') : '';
-        $isFileAction = in_array($action, self::FILE_ACTIONS, true);
+        $isLegacyBearerAction = in_array($action, self::LEGACY_BEARER_ACTIONS, true);
 
         $connected = isset($_SESSION[\_AUTH_VAR]) && $_SESSION[\_AUTH_VAR]->get('connected') === 'YES';
 
@@ -54,7 +54,7 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         }
         $hasBearer = (bool) preg_match('/Bearer\s+\S/i', $authLine);
 
-        if (!self::shouldAttempt($isApi, $connected, $hasBearer, $isFileAction)) {
+        if (!self::shouldAttempt($isApi, $connected, $hasBearer, $isLegacyBearerAction)) {
             return $handler->handle($request);
         }
 
