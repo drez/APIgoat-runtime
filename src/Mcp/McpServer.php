@@ -53,7 +53,8 @@ class McpServer
         . '[["col","asc|desc"]]. Read one record with crm_get, write with crm_create/crm_update. '
         . 'crm_create validates required fields (a rejected create lists the missing ones — ask '
         . 'the user for values, never invent them) and executes only with confirm:true: show the '
-        . 'user the pending record and get their approval first. '
+        . 'user the pending record and get their approval first. crm_delete is gated the same way '
+        . '— never delete without the user\'s explicit approval of that specific delete. '
         . 'Prefer this server\'s custom (non-crm_) tools whenever one matches the task.';
 
     private function initialize(array $params): array
