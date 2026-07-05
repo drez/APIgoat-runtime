@@ -50,7 +50,36 @@ class MetaService extends Service
         $visibleEntities = array_keys($catalog['entities'] ?? []);
         $catalog['menu'] = $this->filterMenuAgainstEntities($menu, $entityNames, $visibleEntities);
 
+        $catalog['theme'] = self::resolveTheme($session, self::allowedThemes());
+
         return $catalog;
+    }
+
+    /** Resolve the signed-in user's theme name (validated), defaulting to 'mint'. */
+    public static function resolveTheme($sess, array $allowed): string
+    {
+        if (!is_object($sess)) { return 'mint'; }
+        $cached = isset($sess->sessVar['Theme']) ? $sess->sessVar['Theme'] : null;
+        if (is_string($cached) && in_array($cached, $allowed, true)) { return $cached; }
+        $userId = (int) ($sess->get('id') ?? 0);
+        if ($userId && class_exists('\App\AuthyQuery')) {
+            $authy = \App\AuthyQuery::create()->findPk($userId);
+            if ($authy && method_exists($authy, 'getTheme')) {
+                $t = (string) $authy->getTheme();
+                if (in_array($t, $allowed, true)) { return $t; }
+            }
+        }
+        return 'mint';
+    }
+
+    /** Valid theme names — from the authy.theme ENUM valueSet when present, else the base five. */
+    private static function allowedThemes(): array
+    {
+        if (class_exists('\App\AuthyPeer') && defined('\App\AuthyPeer::THEME')) {
+            $vs = \App\AuthyPeer::getValueSet(\App\AuthyPeer::THEME);
+            if (is_array($vs) && !empty($vs)) { return array_values($vs); }
+        }
+        return ['mint', 'ink', 'indigo', 'terracotta', 'graphite'];
     }
 
     /**
