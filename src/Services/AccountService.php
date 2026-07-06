@@ -37,7 +37,12 @@ class AccountService extends Service
                     ->findPk($_SESSION[\_AUTH_VAR]->get('id'));
                 if ($Authy) {
                     $Authy = $Authy->toArray(\BasePeer::TYPE_FIELDNAME);
-                    $systemColumns = ['validation_key', 'passwd_hash', 'passwd', 'root', 'deactivate', 'rights_all', 'rights_owner', 'rights_group', 'onglet'];
+                    // Never cross the API boundary. Mirrors Api::$outputDenyColumns
+                    // (passwdhash/resettokenhash/validationkey/googlesub) — kept in
+                    // TYPE_FIELDNAME form here — plus the non-self-service columns.
+                    // reset_token_hash/_expires + google_sub/_email were missing and
+                    // leaked the caller's own single-use reset-token hash + Google id.
+                    $systemColumns = ['validation_key', 'passwd_hash', 'passwd', 'root', 'deactivate', 'rights_all', 'rights_owner', 'rights_group', 'onglet', 'reset_token_hash', 'reset_token_expires', 'google_sub', 'google_email'];
                     foreach ($Authy as $column => $value) {
                         if (!in_array($column, $systemColumns)) {
                             $data[$column] = $value;

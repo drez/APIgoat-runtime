@@ -303,7 +303,7 @@ class AuthyMiddleware implements MiddlewareInterface
 
         if (! empty($requiredPrivileges)) {
             if (! $this->authorize($model, $requiredPrivileges) && $requiredPrivileges != 'none') {
-                return new InvalidSessionRenderer($this->args['is_api'], "You do not have permissions to perform this action. [" . $model . ", " . $requiredPrivileges . "]");
+                return new InvalidSessionRenderer($this->args['is_api'], "You do not have permissions to perform this action. [" . htmlspecialchars((string) $model, ENT_QUOTES) . ", " . htmlspecialchars((string) $requiredPrivileges, ENT_QUOTES) . "]");
             } else {
                 return false;
             }

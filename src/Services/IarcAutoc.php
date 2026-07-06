@@ -49,9 +49,6 @@ class IarcAutoc
                 'count' => 0,
                 'data' => [],
                 '_why' => 'csrf_mismatch',
-                '_session_csrf_len' => strlen($sessionCsrf),
-                '_submitted_csrf_len' => strlen($submittedCsrf),
-                '_request_keys' => array_keys($request),
             ];
         }
 
@@ -69,9 +66,6 @@ class IarcAutoc
                 'count' => 0,
                 'data' => [],
                 '_why' => 'term_too_short',
-                '_term' => $term,
-                '_request_keys' => array_keys($request),
-                '_data_keys' => isset($request['data']) && is_array($request['data']) ? array_keys($request['data']) : null,
             ];
         }
 
