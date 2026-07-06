@@ -56,6 +56,21 @@ class QueryBuilder
     {
         $this->modelName = \str_replace("Query", '', \get_class($query));
         $this->primaryKey = $request['i'];
+        // Composite primary key (M2M cross-ref tables): the REST id segment
+        // carries the pk parts either as a JSON array ([2,1]) or comma-joined
+        // (2,1 — URL-benign: encoded brackets never reach PHP behind
+        // mod_proxy_fcgi). Decode so filterByPrimaryKey() receives the array
+        // Propel expects; a scalar id keeps its original string form.
+        if (\is_string($this->primaryKey) && $this->primaryKey !== '') {
+            if ($this->primaryKey[0] === '[') {
+                $decoded = \json_decode($this->primaryKey, true);
+                if (\is_array($decoded)) {
+                    $this->primaryKey = $decoded;
+                }
+            } elseif (\strpos($this->primaryKey, ',') !== false) {
+                $this->primaryKey = \explode(',', $this->primaryKey);
+            }
+        }
         $this->setRequest($request);
 
         if (isset($request['data']['debug'])) {
