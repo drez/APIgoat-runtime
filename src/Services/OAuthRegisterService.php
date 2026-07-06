@@ -70,10 +70,17 @@ class OAuthRegisterService extends Service
     /**
      * Count DCR registrations from this IP in the last hour via authy_log
      * (event='dcr'). Returns false if the authy_log table is unavailable.
+     *
+     * The `event` column isolating throttle namespaces is declared per-project
+     * (with_mcp injects it); on a schema built before that, filterByEvent()
+     * resolves through ModelCriteria::__call and throws "Unknown column Event",
+     * which 500'd EVERY dynamic client registration — Claude Desktop could
+     * never connect. A missing column means no throttle data either way, so
+     * degrade to "not throttled" instead of failing the endpoint.
      */
     private function tooManyRegistrations(string $ip): bool
     {
-        if (!class_exists('\App\AuthyLog')) {
+        if (!class_exists('\App\AuthyLog') || !method_exists('\App\AuthyLog', 'setEvent')) {
             return false;
         }
         $since = time() - 3600;
@@ -88,8 +95,8 @@ class OAuthRegisterService extends Service
     /** Record a successful DCR registration in authy_log for rate-limit tracking. */
     private function recordRegistration(string $ip): void
     {
-        if (!class_exists('\App\AuthyLog')) {
-            return;
+        if (!class_exists('\App\AuthyLog') || !method_exists('\App\AuthyLog', 'setEvent')) {
+            return; // no event column on this schema — nothing to key the throttle on
         }
         $log = new \App\AuthyLog();
         $log->setEvent('dcr');
