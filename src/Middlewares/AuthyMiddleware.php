@@ -275,7 +275,11 @@ class AuthyMiddleware implements MiddlewareInterface
         // filters entities/screens/menu to the calling user's rights (that
         // per-user filter IS the authorization boundary), so any authenticated
         // user may read their own filtered view of it.
-        if (in_array(strtolower((string) $this->args['model']), ['account', 'oauth', '_meta'], true)) {
+        //
+        // "push" (POST /api/v1/Push[/test]) registers the caller's OWN device
+        // token / sends a test to the caller's OWN devices — self-service, not
+        // an RBAC model.
+        if (in_array(strtolower((string) $this->args['model']), ['account', 'oauth', '_meta', 'push'], true)) {
             return false;
         }
 
