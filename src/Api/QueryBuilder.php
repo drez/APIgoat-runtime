@@ -181,7 +181,13 @@ class QueryBuilder
         }
 
         if (!empty($this->request['select'])) {
-            if ($this->setSelect($this->request['select'])) {
+            // From a query string the select arrives as its raw JSON text
+            // (only `filter` has a normalizer); body/tool callers pass arrays.
+            $select = $this->request['select'];
+            if (\is_string($select)) {
+                $select = \json_decode($select, true);
+            }
+            if (\is_array($select) && $this->setSelect($select)) {
                 return true;
             }
         }
