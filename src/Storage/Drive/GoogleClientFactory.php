@@ -24,6 +24,8 @@ class GoogleClientFactory
     public const SCOPE_GMAIL_READONLY  = 'https://www.googleapis.com/auth/gmail.readonly';
     public const SCOPE_CALENDAR        = 'https://www.googleapis.com/auth/calendar';
     public const SCOPE_DRIVE_FILE      = 'https://www.googleapis.com/auth/drive.file';
+    /** Full Drive scope — required for Shared Drive mode (drive.file cannot list a Shared Drive). */
+    public const SCOPE_DRIVE           = 'https://www.googleapis.com/auth/drive';
 
     private JwtSigner $signer;
 

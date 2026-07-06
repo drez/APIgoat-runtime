@@ -72,6 +72,19 @@ class GoogleDriveStorage implements FileStorageInterface
     }
 
     /**
+     * drive.file (per-file grants) in classic mode; the FULL drive scope in
+     * Shared Drive mode — a per-file grant cannot run parent-scoped queries
+     * inside a Shared Drive (files.list comes back empty), so the wider scope
+     * must also be in the SA's DWD grant when GDRIVE_SHARED_DRIVE_ID is set.
+     */
+    private function scopes(): array
+    {
+        return $this->driveId !== ''
+            ? [GoogleClientFactory::SCOPE_DRIVE]
+            : self::SCOPES;
+    }
+
+    /**
      * Append the Shared-Drive opt-in query params Drive v3 requires. No-op in
      * My Drive mode ($driveId === ''), so existing projects are byte-unchanged.
      * $isSearch adds the corpora/driveId/includeItemsFromAllDrives trio that
@@ -125,7 +138,7 @@ class GoogleDriveStorage implements FileStorageInterface
             $url .= '&pageToken=' . rawurlencode((string) $filters['page_token']);
         }
 
-        $resp = $this->google->get($this->withDriveParams($url, /*search*/ true), self::SCOPES, $this->userEmail);
+        $resp = $this->google->get($this->withDriveParams($url, /*search*/ true), $this->scopes(), $this->userEmail);
         $files = $resp['files'] ?? [];
 
         // Post-filter for true name prefix when requested.
@@ -145,7 +158,7 @@ class GoogleDriveStorage implements FileStorageInterface
     {
         $resp = $this->google->get(
             $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?fields=' . rawurlencode($this->fieldsList())),
-            self::SCOPES,
+            $this->scopes(),
             $this->userEmail
         );
         return $this->normalize($resp, null);
@@ -165,7 +178,7 @@ class GoogleDriveStorage implements FileStorageInterface
             $metadata,
             $bytes,
             $mimeType !== '' ? $mimeType : 'application/octet-stream',
-            self::SCOPES,
+            $this->scopes(),
             $this->userEmail
         );
 
@@ -190,7 +203,7 @@ class GoogleDriveStorage implements FileStorageInterface
         $created = $this->google->post(
             $this->withDriveParams(self::FILES_URL . '?fields=' . rawurlencode(self::META_FIELDS)),
             ['name' => $name, 'mimeType' => self::FOLDER_MIME, 'parents' => [$parentId]],
-            self::SCOPES,
+            $this->scopes(),
             $this->userEmail
         );
         if (empty($created['id'])) {
@@ -219,7 +232,7 @@ class GoogleDriveStorage implements FileStorageInterface
         $resp = $this->google->patch(
             $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?fields=' . rawurlencode($this->fieldsList())),
             $payload,
-            self::SCOPES,
+            $this->scopes(),
             $this->userEmail
         );
         return $this->normalize($resp, null);
@@ -229,7 +242,7 @@ class GoogleDriveStorage implements FileStorageInterface
     {
         return $this->google->delete(
             $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id)),
-            self::SCOPES,
+            $this->scopes(),
             $this->userEmail
         );
     }
@@ -250,12 +263,12 @@ class GoogleDriveStorage implements FileStorageInterface
         $this->google->post(
             $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '/permissions'),
             ['role' => $role, 'type' => $type],
-            self::SCOPES,
+            $this->scopes(),
             $this->userEmail
         );
         $meta = $this->google->get(
             $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?fields=webViewLink'),
-            self::SCOPES,
+            $this->scopes(),
             $this->userEmail
         );
         if (empty($meta['webViewLink'])) {
@@ -297,7 +310,7 @@ class GoogleDriveStorage implements FileStorageInterface
             );
             $resp = $this->google->get(
                 $this->withDriveParams(self::FILES_URL . '?q=' . rawurlencode($q) . '&fields=files(id,name)&pageSize=1', /*search*/ true),
-                self::SCOPES,
+                $this->scopes(),
                 $this->userEmail
             );
             $found = $resp['files'][0]['id'] ?? null;
@@ -312,7 +325,7 @@ class GoogleDriveStorage implements FileStorageInterface
             $created = $this->google->post(
                 $this->withDriveParams(self::FILES_URL . '?fields=id'),
                 ['name' => $segment, 'mimeType' => self::FOLDER_MIME, 'parents' => [$parent]],
-                self::SCOPES,
+                $this->scopes(),
                 $this->userEmail
             );
             if (empty($created['id'])) {
