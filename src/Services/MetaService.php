@@ -73,7 +73,7 @@ class MetaService extends Service
     }
 
     /** Valid theme names — from the authy.theme ENUM valueSet when present, else the base five. */
-    private static function allowedThemes(): array
+    public static function allowedThemes(): array
     {
         if (class_exists('\App\AuthyPeer') && defined('\App\AuthyPeer::THEME')) {
             $vs = \App\AuthyPeer::getValueSet(\App\AuthyPeer::THEME);
