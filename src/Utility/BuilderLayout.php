@@ -227,6 +227,13 @@ class BuilderLayout
         if (isset($content['pk'])) {
             $env['pk'] = $content['pk'];
         }
+        // Structured mass-action outcome: the emitted mass handlers (massDelete,
+        // massBulkUpdate, custom actions) return an `affected` row count so
+        // envelope clients (the mobile app) don't have to scrape it out of the
+        // html fragment.
+        if (isset($content['affected'])) {
+            $env['affected'] = (int) $content['affected'];
+        }
         return $env;
     }
 
