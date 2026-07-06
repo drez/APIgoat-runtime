@@ -261,7 +261,21 @@ class AuthyMiddleware implements MiddlewareInterface
         // via the rights matrix — locking every non-admin user out of their own
         // account page. Exempt it from the model-RBAC check, mirroring the way
         // the `oauth` route is special-cased elsewhere in this middleware.
-        if (strtolower((string) $this->args['model']) === 'account') {
+        //
+        // "oauth" (GET/POST /oauth/authorize, the PKCE consent step) is the same
+        // situation: the segment is not an RBAC model, so authorize('oauth', ...)
+        // locked every non-Admin-group user out of the mobile app sign-in. The
+        // consent only covers the user's OWN identity; the issued bearer is
+        // authorized per-operation downstream (api_rbac + Api::authorize + ACL)
+        // exactly like a browser session, so being authenticated is the right
+        // bar here — and that is already enforced above.
+        //
+        // "_meta" (GET /api/v1/_meta) is the catalog endpoint the mobile app
+        // boots from. It is not an RBAC model either, and MetaService already
+        // filters entities/screens/menu to the calling user's rights (that
+        // per-user filter IS the authorization boundary), so any authenticated
+        // user may read their own filtered view of it.
+        if (in_array(strtolower((string) $this->args['model']), ['account', 'oauth', '_meta'], true)) {
             return false;
         }
 
