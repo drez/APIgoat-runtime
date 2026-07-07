@@ -73,11 +73,20 @@ class RbacMiddleware implements MiddlewareInterface
         // keep authentication as the gate (do NOT set rbac_public='passed'): a valid
         // bearer/session is still required, mirroring the Account self-service exemption.
         $isMeta = (bool) preg_match('#/api/v[0-9]+/_meta(/|$)#', $request->getUri()->getPath());
+        // /api/v1/ApiGoat/geocode + /reverseGeocode (bearer channel of the
+        // location-field Nominatim proxy, GeoService): the query string varies
+        // per keystroke (q=<free text>, lat/lng floats), so api_rbac's
+        // body/parameter-pattern matching would mint per-shape rules that fail
+        // closed (Deny) on prod (app_status != dev) and hard-lock the widget.
+        // Mirror the _meta exemption: skip api_rbac, but keep authentication as
+        // the gate (do NOT set rbac_public='passed' — AuthyMiddleware +
+        // GeoService still require a connected session/bearer identity).
+        $isGeo = (bool) preg_match('#/api/v[0-9]+/ApiGoat/(geocode|reverseGeocode)(/|$)#i', $request->getUri()->getPath());
         if ($isMcp) {
             $request = $request->withAttribute('rbac_public', 'passed')
                                ->withAttribute('rbac_complete', 'yes');
             $this->args['rbac_public'] = 'passed';
-        } elseif ($isMeta) {
+        } elseif ($isMeta || $isGeo) {
             $request = $request->withAttribute('rbac_complete', 'yes');
         } elseif (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
 

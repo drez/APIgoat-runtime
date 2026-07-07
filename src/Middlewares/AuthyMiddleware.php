@@ -283,6 +283,19 @@ class AuthyMiddleware implements MiddlewareInterface
             return false;
         }
 
+        // "ApiGoat/geocode" + "ApiGoat/reverseGeocode" (GET /ApiGoat/geocode…,
+        // also mounted at /api/v1/ApiGoat/… for bearer clients) proxy read-only
+        // Nominatim lookups for the location input widget. "ApiGoat" is a URL
+        // namespace, not an RBAC model, so authorize('ApiGoat', 'r') can never
+        // succeed for a non-root user and would lock the widget out. Being
+        // authenticated is the right bar (already enforced above: connected !=
+        // 'YES' -> return true). Deliberately scoped to these two actions ONLY —
+        // other ApiGoat/* routes (sendEmail, reset, account) keep their gates.
+        if (strtolower((string) $this->args['model']) === 'apigoat'
+            && in_array(strtolower((string) $this->args['action']), ['geocode', 'reversegeocode'], true)) {
+            return false;
+        }
+
         $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
         if ($requiredPrivileges === false) {
             // Custom (non-CRUD) action, not in the privilege map. Infer the
