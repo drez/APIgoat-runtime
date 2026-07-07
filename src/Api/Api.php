@@ -520,10 +520,24 @@ class Api
         if ($obj) {
 
             /**
-             * Hook method for ApiGoat
+             * Hook method for ApiGoat.
+             *
+             * Signature MUST match the generated service convention
+             * (see Built/{Model}Service::saveUpdate):
+             *   beforeSave($obj, &$data, $isNew, &$messages, &$extValidationErr, &$error)
+             * The API path used to pass only 5 args, so EVERY wrapper following
+             * the generated 6-param convention fataled with ArgumentCountError —
+             * surfacing as an opaque -32603 on all crm_update/crm_create MCP
+             * calls for entities with a beforeSave hook. $hookError is carried
+             * for signature parity; the API envelope reports errors through
+             * $extValidationError / exceptions, same as before.
              */
+            $hookError = null;
+            if (!isset($this->response['messages'])) {
+                $this->response['messages'] = null;
+            }
             if (\method_exists($this->ServiceWrapper, 'beforeSave')) {
-                $this->ServiceWrapper->beforeSave($obj, $data, $isNew, $this->response['messages'], $extValidationError);
+                $this->ServiceWrapper->beforeSave($obj, $data, $isNew, $this->response['messages'], $extValidationError, $hookError);
             }
 
             if (!$extValidationError) {
@@ -544,11 +558,15 @@ class Api
             }
 
             /**
-             * Hook method for ApiGoat
+             * Hook method for ApiGoat — same generated convention:
+             *   afterSave($obj, &$data, $isNew, &$messages, &$extValidationErr, &$error)
+             * The old call shuffled the tail args (error into the messages slot,
+             * the request data into extValidationErr, an always-empty array as
+             * $data), so wrappers reading $data in afterSave saw [] on the API
+             * path and messages/error never round-tripped.
              */
             if (\method_exists($this->ServiceWrapper, 'afterSave')) {
-                $dataAr = [];
-                $this->ServiceWrapper->afterSave($obj, $dataAr, $isNew, $error, $data, $this->response['messages'] ?? null);
+                $this->ServiceWrapper->afterSave($obj, $data, $isNew, $this->response['messages'], $extValidationError, $hookError);
             }
         } else {
             $this->response['error'] = "Entry not found";
