@@ -59,8 +59,18 @@ class Authy
             $allJson   = [];
             $ownerJson = [];
             $groupJson = [];
+            $groupsById = [];
+            if ($groupIds) {
+                $found = \App\AuthyGroupQuery::create()
+                    ->filterByIdAuthyGroup(array_keys($groupIds), \Criteria::IN)
+                    ->find();
+                foreach ($found as $group) {
+                    $groupsById[$group->getIdAuthyGroup()] = $group;
+                }
+            }
+            // Iterate the original id order so bucket merge order is unchanged.
             foreach (array_keys($groupIds) as $groupId) {
-                $group = \App\AuthyGroupQuery::create()->findPk($groupId);
+                $group = $groupsById[$groupId] ?? null;
                 if (!$group) {
                     continue;
                 }

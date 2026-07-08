@@ -168,7 +168,7 @@ class Assets
     public function __construct(array $options = [])
     {
 
-        $Config  = new Configuration(require _BASE_DIR . 'config/settings.php');
+        $Config  = new Configuration(\ApiGoat\Utility\Settings::load());
         $configs = $Config->getArray('assets');
         $this->config($configs);
 

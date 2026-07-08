@@ -43,7 +43,7 @@ class BuilderLayout
         $this->headerBuilt = true;
 
         include _BASE_DIR . 'config/assets.php';
-        $Config             = new Configuration(require _BASE_DIR . 'config/settings.php');
+        $Config             = new Configuration(\ApiGoat\Utility\Settings::load());
         $this->settings     = $Config->getArray('admin_panel');
         $siteDescription    = '';
         $siteKeywords       = '';

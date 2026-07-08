@@ -62,7 +62,7 @@ class OAuthServerFactory
         if (!class_exists('\App\OauthClient')) {
             return null;
         }
-        $settings = new \Selective\Config\Configuration(require _BASE_DIR . 'config/settings.php');
+        $settings = new \Selective\Config\Configuration(\ApiGoat\Utility\Settings::load());
         $cfg = $settings->getArray('oauth_server');
         return new self(
             new ClientRepository(),

@@ -34,7 +34,7 @@ class RbacMiddleware implements MiddlewareInterface
 
     public function __construct(ResponseFactoryInterface $responseFactory = null)
     {
-        $Configuration = new Configuration(require _BASE_DIR . 'config/settings.php');
+        $Configuration = new Configuration(\ApiGoat\Utility\Settings::load());
         $this->config = $Configuration->getArray('rbac');
         // Per-request RBAC bookkeeping writes (a hit-count UPDATE and an api_log
         // INSERT on every API call) are non-essential metrics/audit. High-traffic

@@ -61,12 +61,20 @@ class AuthyMiddleware implements MiddlewareInterface
             // user row is definitively gone, clear the session so the redirect
             // below sends them to re-login with a valid id. A DB error (query
             // throws) must NOT log anyone out — only a successful "no such row".
-            if ($_SESSION[_AUTH_VAR]->get('connected') == 'YES' && $_SESSION[_AUTH_VAR]->getIdAuthy()) {
+            // The SELECT only matters before a write (the FK stamp) — for reads a
+            // ghost session just renders a page. Run it on every state-changing
+            // request, but throttle it to one check per minute for GETs so page
+            // browsing doesn't pay a DB round-trip per request.
+            $gcStaleRecheck = $request->getMethod() !== 'GET'
+                || (time() - (int) $_SESSION[_AUTH_VAR]->get('stale_check_ts')) > 60;
+            if ($gcStaleRecheck && $_SESSION[_AUTH_VAR]->get('connected') == 'YES' && $_SESSION[_AUTH_VAR]->getIdAuthy()) {
                 try {
                     if (\App\AuthyQuery::create()->findPk($_SESSION[_AUTH_VAR]->getIdAuthy()) === null) {
                         unset($_SESSION[_AUTH_VAR]);
                         $_SESSION[_AUTH_VAR] = new AuthySession();
                         $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
+                    } else {
+                        $_SESSION[_AUTH_VAR]->set('stale_check_ts', time());
                     }
                 } catch (\Exception $e) { /* DB transient: keep the session, don't lock out */ }
             }

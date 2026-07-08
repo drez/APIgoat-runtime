@@ -40,7 +40,7 @@ final class RefreshTokenService
         if (!class_exists('\App\AuthyRefreshToken')) {
             return null;
         }
-        $settings = new \Selective\Config\Configuration(require _BASE_DIR . 'config/settings.php');
+        $settings = new \Selective\Config\Configuration(\ApiGoat\Utility\Settings::load());
         $jwt = $settings->getArray('jwt_middleware');
         return new self(new PropelRefreshTokenStore(), $jwt);
     }

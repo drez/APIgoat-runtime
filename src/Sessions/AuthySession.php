@@ -430,13 +430,19 @@ class AuthySession
             ->find();
 
         if ($rows) {
+            $memberIds = [];
             foreach ($rows as $row) {
-                $group = \App\AuthyGroupQuery::create()->findPk($row->getIdAuthyGroup());
-                if ($group) {
+                $memberIds[] = $row->getIdAuthyGroup();
+            }
+            if ($memberIds) {
+                $groups = \App\AuthyGroupQuery::create()
+                    ->filterByIdAuthyGroup($memberIds, \Criteria::IN)
+                    ->find();
+                foreach ($groups as $group) {
                     if ($group->getAdmin() === 'Yes') {
                         $this->group = 'Admin';
                     }
-                    $this->Groups[] = $row->getIdAuthyGroup();
+                    $this->Groups[] = $group->getIdAuthyGroup();
                 }
             }
         }

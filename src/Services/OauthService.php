@@ -26,7 +26,7 @@ class OauthService extends Service
     public function __construct(Request $request, Response $response, $args)
     {
         parent::__construct($request, $response, $args);
-        $Configuration = new Configuration(require _BASE_DIR . 'config/settings.php');
+        $Configuration = new Configuration(\ApiGoat\Utility\Settings::load());
         $this->config = $Configuration->getArray('oauth');
         $this->jwt_config = $Configuration->getArray('jwt_middleware');
     }

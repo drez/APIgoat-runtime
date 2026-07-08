@@ -251,7 +251,13 @@ class QueryBuilder
                 $this->Data = $this->DataObj;
             } else {
                 $this->DataObj = $this->Query->find();
-                if (!is_array($this->DataObj)) {
+                if (!$this->selectSet && !$this->primaryKey
+                    && $this->DataObj instanceof \PropelObjectCollection) {
+                    // Hand the hydrated collection straight to correctData()'s
+                    // single-pass fast path — toArray() here would collapse it to a
+                    // PhpName-keyed array and force the legacy remap second pass.
+                    $this->Data = $this->DataObj;
+                } elseif (!is_array($this->DataObj)) {
                     $this->Data = $this->DataObj->toArray();
                 }
             }
@@ -572,7 +578,7 @@ class QueryBuilder
                         if (!isset($enumVal[$Column->getName()])) {
                             $enumVal[$Column->getName()] = $Column->getValueSet();
                         }
-                        $row[$Column->getName()] = $enumVal[$Column->getName()][$obj->$getter()];
+                        $row[$Column->getName()] = $enumVal[$Column->getName()][$obj->$getter()] ?? $obj->$getter();
                     } else {
                         $row[$Column->getName()] = $obj->$getter();
                     }
