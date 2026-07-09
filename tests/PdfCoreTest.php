@@ -8,7 +8,9 @@
 require __DIR__ . '/../src/Pdf/PdfNaming.php';
 require __DIR__ . '/../src/Pdf/PdfStaleness.php';
 require __DIR__ . '/../src/Pdf/PdfManifest.php';
+require __DIR__ . '/../src/Pdf/PdfCurrency.php';
 
+use ApiGoat\Pdf\PdfCurrency;
 use ApiGoat\Pdf\PdfManifest;
 use ApiGoat\Pdf\PdfNaming;
 use ApiGoat\Pdf\PdfStaleness;
@@ -61,6 +63,21 @@ check('entry by table', PdfManifest::entry('billing')['entity'] ?? null, 'Billin
 check('entry by entity name', PdfManifest::entryFor('Billing')['table'] ?? null, 'billing');
 check('unknown entry null', PdfManifest::entry('nope'), null);
 unlink($dir . '/config/Built/pdf.php');
+
+// ── PdfCurrency: scalar column, FK path, fallback ──────────────────────────
+$scalar = new class { public function getCurrency() { return 'USD'; } };
+$fkObj  = new class { public function getName() { return 'EUR'; } };
+$fk     = new class($fkObj) {
+    public function __construct(public object $c) {}
+    public function getCurrency() { return $this->c; }
+};
+$empty  = new class { public function getCurrency() { return ''; } };
+$none   = new class {};
+check('no path → CAD fallback', PdfCurrency::resolve($scalar, []), 'CAD');
+check('scalar column path', PdfCurrency::resolve($scalar, ['currency' => 'Currency']), 'USD');
+check('FK getter-chain path', PdfCurrency::resolve($fk, ['currency' => 'Currency.Name']), 'EUR');
+check('empty value → fallback', PdfCurrency::resolve($empty, ['currency' => 'Currency']), 'CAD');
+check('missing getter → fallback', PdfCurrency::resolve($none, ['currency' => 'Nope']), 'CAD');
 
 echo $fail === 0 ? "\nALL OK\n" : "\n{$fail} FAILURES\n";
 exit($fail === 0 ? 0 : 1);

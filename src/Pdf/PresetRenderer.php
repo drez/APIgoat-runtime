@@ -48,12 +48,13 @@ final class PresetRenderer
 
         $tpl  = new TemplateRenderer($record, $entry, $templateId);
         $lang = $tpl->lang();
+        $ccy  = PdfCurrency::resolve($record, $entry);
 
         $sections = [
-            '{{items}}'   => self::itemsTable($record, $entry, $lang),
+            '{{items}}'   => self::itemsTable($record, $entry, $lang, $ccy),
             '{{details}}' => self::detailsSection($record, $entry, $lang),
-            '{{totals}}'  => self::totalsBlock($record, $entry, $lang),
-            '{{fields}}'  => self::fieldsTable($record, $entry, $lang),
+            '{{totals}}'  => self::totalsBlock($record, $entry, $lang, $ccy),
+            '{{fields}}'  => self::fieldsTable($record, $entry, $lang, $ccy),
         ];
 
         $override = $tpl->bodyOverride();
@@ -82,7 +83,7 @@ final class PresetRenderer
 
     // ── sections ───────────────────────────────────────────────────────────
 
-    private static function itemsTable(object $record, array $entry, string $lang): string
+    private static function itemsTable(object $record, array $entry, string $lang, string $ccy = PdfCurrency::FALLBACK): string
     {
         $lines = $entry['lines'] ?? null;
         if (!$lines) {
@@ -105,7 +106,7 @@ final class PresetRenderer
             foreach ($cols as $c) {
                 $getter = 'get' . $c['php'];
                 $num = in_array($c['kind'] ?? 'text', ['num', 'money'], true) ? ' class="num"' : '';
-                $body .= '<td' . $num . '>' . self::formatValue($row->$getter(), (string) ($c['kind'] ?? 'text'), $lang) . '</td>';
+                $body .= '<td' . $num . '>' . self::formatValue($row->$getter(), (string) ($c['kind'] ?? 'text'), $lang, $ccy) . '</td>';
             }
             $body .= '</tr>';
         }
@@ -133,7 +134,7 @@ final class PresetRenderer
         return $out === '' ? '' : '<table class="kv">' . $out . '</table>';
     }
 
-    private static function totalsBlock(object $record, array $entry, string $lang): string
+    private static function totalsBlock(object $record, array $entry, string $lang, string $ccy = PdfCurrency::FALLBACK): string
     {
         $totals = (array) ($entry['totals'] ?? []);
         if ($totals === []) {
@@ -145,17 +146,17 @@ final class PresetRenderer
             $getter = 'get' . $t['php'];
             $cls = $i === $last ? ' class="grand"' : '';
             $rows .= '<tr' . $cls . '><td>' . self::e($t['label'] ?? $t['php']) . '</td>'
-                . '<td class="num">' . self::formatValue($record->$getter(), (string) ($t['kind'] ?? 'money'), $lang) . '</td></tr>';
+                . '<td class="num">' . self::formatValue($record->$getter(), (string) ($t['kind'] ?? 'money'), $lang, $ccy) . '</td></tr>';
         }
         return '<table class="totals">' . $rows . '</table>';
     }
 
-    private static function fieldsTable(object $record, array $entry, string $lang): string
+    private static function fieldsTable(object $record, array $entry, string $lang, string $ccy = PdfCurrency::FALLBACK): string
     {
         $rows = '';
         foreach ((array) ($entry['columns'] ?? []) as $c) {
             $getter = 'get' . $c['php'];
-            $value = self::formatValue($record->$getter(), (string) ($c['kind'] ?? 'text'), $lang);
+            $value = self::formatValue($record->$getter(), (string) ($c['kind'] ?? 'text'), $lang, $ccy);
             if (trim($value) === '') {
                 continue;
             }
@@ -180,7 +181,7 @@ final class PresetRenderer
     // ── formatting ─────────────────────────────────────────────────────────
 
     /** Escape + kind-format a value (money/date via the shared Formatter). */
-    public static function formatValue(mixed $value, string $kind, string $lang): string
+    public static function formatValue(mixed $value, string $kind, string $lang, string $currency = PdfCurrency::FALLBACK): string
     {
         if ($value instanceof \DateTime) {
             $value = $value->format('Y-m-d');
@@ -190,7 +191,7 @@ final class PresetRenderer
             return '';
         }
         return match ($kind) {
-            'money' => self::e(Formatter::money($s, 'CAD', $lang)),
+            'money' => self::e(Formatter::money($s, $currency, $lang)),
             'date'  => self::e(Formatter::dateLong(substr($s, 0, 10), $lang)),
             default => self::e($s),
         };

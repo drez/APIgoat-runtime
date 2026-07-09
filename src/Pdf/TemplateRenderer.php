@@ -200,10 +200,12 @@ final class TemplateRenderer
             return $this->vars;
         }
         $lang = $this->lang();
+        $ccy  = PdfCurrency::resolve($this->record, $this->entry);
         $map = [
-            '{{title}}' => htmlspecialchars((string) ($this->entry['label'] ?? ''), ENT_QUOTES, 'UTF-8'),
-            '{{lang}}'  => $lang,
-            '{{date}}'  => \ApiGoat\I18n\Formatter::dateLong(date('Y-m-d'), $lang),
+            '{{title}}'    => htmlspecialchars((string) ($this->entry['label'] ?? ''), ENT_QUOTES, 'UTF-8'),
+            '{{lang}}'     => $lang,
+            '{{date}}'     => \ApiGoat\I18n\Formatter::dateLong(date('Y-m-d'), $lang),
+            '{{currency}}' => htmlspecialchars($ccy, ENT_QUOTES, 'UTF-8'),
         ];
         foreach ($this->colors() as $k => $v) {
             $map['{{' . $k . '}}'] = htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
@@ -213,7 +215,8 @@ final class TemplateRenderer
             $map['{{' . $col['snake'] . '}}'] = PresetRenderer::formatValue(
                 $this->record->$getter(),
                 (string) ($col['kind'] ?? 'text'),
-                $lang
+                $lang,
+                $ccy
             );
         }
         // {{config.<key>}} — resolved lazily from the config table.
