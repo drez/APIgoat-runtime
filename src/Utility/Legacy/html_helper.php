@@ -719,6 +719,7 @@ function assocToNumWidthNull($array, $addDefault = false)
 
 function assocToNum($array, $addDefault = false)
 {
+    $num = [];
     $arrValues = array_values($array);
     $len = count($arrValues);
     /* if($addDefault){
