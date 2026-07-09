@@ -219,47 +219,30 @@ class RbacMiddleware implements MiddlewareInterface
     private function authorizePublicRequest()
     {
         // process body
-        if ($this->args['data'] == '' || $this->args['data'] == null) {
-            $q = \App\ApiRbacQuery::create()
-                ->filterByModel($this->args['model'])
-                ->filterByAction($this->args['action'])
-                ->filterByMethod($this->args['method']);
-            $q->filterByBody('')->_or()->filterByBody(null)
-                ->orderBy('DateCreation', 'ASC');
-            $ApiRbac = $q->findOne();
-            $wildBody[0] = null;
-        } else {
+        $wildBody = [null];
+        $emptyBody = ($this->args['data'] == '' || $this->args['data'] == null);
+        if (!$emptyBody) {
             // check for some wildcard
             $this->normalizeFilter($this->args['data']);
             $this->excludeBody();
             // rbac excludes can clear the body; fall back to model/action/method + empty body match
-            if ($this->args['data'] === null || $this->args['data'] === '' || (is_array($this->args['data']) && $this->args['data'] === [])) {
-                $q = \App\ApiRbacQuery::create()
-                    ->filterByModel($this->args['model'])
-                    ->filterByAction($this->args['action'])
-                    ->filterByMethod($this->args['method']);
-                $q->filterByBody('')->_or()->filterByBody(null)
-                    ->orderBy('DateCreation', 'ASC');
-                $ApiRbac = $q->findOne();
-                $wildBody[0] = null;
-            } else {
-                $bestMatch = $this->findBestMatch();
-
-                if ($bestMatch) {
-                    $ApiRbac = \App\ApiRbacQuery::create()->findPk($bestMatch);
-                }
-                //get the wildcard rule
-                $bodyData = is_array($this->args['data'])
-                    ? $this->args['data']
-                    : (isset($this->args['raw']) ? json_decode($this->args['raw'], true) : null);
-                $wildBody = $this->getBodyWildcarded($bodyData);
-            }
+            $emptyBody = ($this->args['data'] === null || $this->args['data'] === ''
+                || (is_array($this->args['data']) && $this->args['data'] === []));
         }
 
-        if (!$ApiRbac) {
+        $rbacRow = $this->matchRule($emptyBody);
+        if (!$emptyBody) {
+            //get the wildcard rule
+            $bodyData = is_array($this->args['data'])
+                ? $this->args['data']
+                : (isset($this->args['raw']) ? json_decode($this->args['raw'], true) : null);
+            $wildBody = $this->getBodyWildcarded($bodyData) ?? [null];
+        }
+
+        if (!$rbacRow) {
             // add a new rule with default values
             $ApiRbac = new \App\ApiRbac();
-            $body = (isset($wildBody[2]) ? $wildBody[2] : (($wildBody[1]) ? $wildBody[1] : $wildBody[0]));
+            $body = (isset($wildBody[2]) ? $wildBody[2] : ((isset($wildBody[1]) && $wildBody[1]) ? $wildBody[1] : $wildBody[0]));
             $ApiRbac->setModel($this->args['model']);
             $ApiRbac->setAction($this->args['action']);
             $ApiRbac->setMethod($this->args['method']);
@@ -276,29 +259,167 @@ class RbacMiddleware implements MiddlewareInterface
                 return false;
             }
             return true;
-        } elseif ($ApiRbac->getScope() == 'Public' && $ApiRbac->getRule() != 'Deny') {
+        } elseif ($rbacRow['scope'] == 'Public' && $rbacRow['rule'] != 'Deny') {
             // pass public route
-            $this->rbac_id = $ApiRbac->getPrimaryKey();
+            $this->rbac_id = $rbacRow['id'];
             if ($this->rbacHitCounter) {
-                $ApiRbac->setCount($ApiRbac->getCount() + 1);
-                $this->saveBookkeeping($ApiRbac);
+                $this->bumpHitCounter($rbacRow['id']);
             }
             $this->logApi($this->rbac_id);
             return false;
         } else {
             // failed
-            $this->rbac_rule = $ApiRbac->getRule();
-            $this->rbac_id = $ApiRbac->getPrimaryKey();
+            $this->rbac_rule = $rbacRow['rule'];
+            $this->rbac_id = $rbacRow['id'];
             if (\defined('app_status') && \app_status == 'dev') {
                 if ($this->rbacHitCounter) {
-                    $ApiRbac->setCount($ApiRbac->getCount() + 1);
-                    $this->saveBookkeeping($ApiRbac);
+                    $this->bumpHitCounter($rbacRow['id']);
                 }
                 // Keep private routes on the private-auth pass in dev mode too.
                 return true;
             }
             return true;
         }
+    }
+
+    /**
+     * Resolve the matching api_rbac rule as a plain row (id/rule/scope/...).
+     *
+     * When GC_RBAC_CACHE_TTL > 0 the whole (small) ruleset is held in
+     * MicroCache — keyed on the api_rbac@rules TableVersion generation, which
+     * the ORM behavior bumps on rule-relevant writes — and matching runs in
+     * PHP (RbacRuleMatcher), replacing the per-request SELECT / JSON scan.
+     * TTL 0 (the default) keeps the exact SQL path. GC_RBAC_CACHE_VERIFY=1
+     * runs BOTH, logs any divergence, and trusts the SQL result — the
+     * rollout safety net for the PHP matcher.
+     *
+     * @return array{id: mixed, rule: ?string, scope: ?string}|null
+     */
+    private function matchRule(bool $emptyBody): ?array
+    {
+        $ttl = $this->rbacCacheTtl();
+        $cachedRow = null;
+        $cachedRan = false;
+        if ($ttl > 0) {
+            try {
+                $rules = $this->loadRuleset($ttl);
+                $cachedRow = $emptyBody
+                    ? RbacRuleMatcher::emptyBodyMatch($rules, (string) $this->args['model'], (string) $this->args['action'], (string) $this->args['method'])
+                    : RbacRuleMatcher::bestMatch($rules, (string) $this->args['model'], (string) $this->args['action'], (string) $this->args['method'], $this->args['data']);
+                $cachedRan = true;
+            } catch (\Throwable $e) {
+                \Propel::log('RBAC ruleset cache failed, falling back to SQL: ' . $e->getMessage(), \Propel::LOG_WARNING);
+            }
+            if ($cachedRan && !$this->rbacCacheVerify()) {
+                return $cachedRow;
+            }
+        }
+
+        $sqlRow = $emptyBody ? $this->sqlEmptyBodyMatch() : $this->sqlBestMatch();
+
+        if ($cachedRan && $this->rbacCacheVerify()) {
+            $same = (($cachedRow['id'] ?? null) == ($sqlRow['id'] ?? null))
+                && (($cachedRow['rule'] ?? null) == ($sqlRow['rule'] ?? null))
+                && (($cachedRow['scope'] ?? null) == ($sqlRow['scope'] ?? null));
+            if (!$same) {
+                \Propel::log(sprintf(
+                    'RBAC cache divergence for %s/%s %s: cached=%s sql=%s (SQL result used)',
+                    $this->args['model'],
+                    $this->args['action'],
+                    $this->args['method'],
+                    json_encode(['id' => $cachedRow['id'] ?? null, 'rule' => $cachedRow['rule'] ?? null, 'scope' => $cachedRow['scope'] ?? null]),
+                    json_encode(['id' => $sqlRow['id'] ?? null, 'rule' => $sqlRow['rule'] ?? null, 'scope' => $sqlRow['scope'] ?? null])
+                ), \Propel::LOG_WARNING);
+            }
+        }
+
+        return $sqlRow;
+    }
+
+    /** The original empty-body lookup, normalized to a row array. */
+    private function sqlEmptyBodyMatch(): ?array
+    {
+        $q = \App\ApiRbacQuery::create()
+            ->filterByModel($this->args['model'])
+            ->filterByAction($this->args['action'])
+            ->filterByMethod($this->args['method']);
+        $q->filterByBody('')->_or()->filterByBody(null)
+            ->orderBy('DateCreation', 'ASC');
+        return $this->toRuleRow($q->findOne());
+    }
+
+    /** The original findBestMatch()+findPk lookup, normalized to a row array. */
+    private function sqlBestMatch(): ?array
+    {
+        $bestMatch = $this->findBestMatch();
+        if (!$bestMatch) {
+            return null;
+        }
+        return $this->toRuleRow(\App\ApiRbacQuery::create()->findPk($bestMatch));
+    }
+
+    private function toRuleRow($ApiRbac): ?array
+    {
+        if (!$ApiRbac) {
+            return null;
+        }
+        return [
+            'id'    => $ApiRbac->getPrimaryKey(),
+            'rule'  => $ApiRbac->getRule(),
+            'scope' => $ApiRbac->getScope(),
+        ];
+    }
+
+    /**
+     * Full ruleset as plain rows (id ASC) for the PHP matcher, cached across
+     * requests. The generation token in the key is bumped by the behavior's
+     * flag-gated api_rbac hooks (rule-relevant column writes and deletes
+     * only — hit-counter saves do NOT invalidate).
+     */
+    private function loadRuleset(int $ttl): array
+    {
+        $key = 'gc:rbac:' . \ApiGoat\Utility\TableVersion::ns()
+            . ':' . \ApiGoat\Utility\TableVersion::get('api_rbac@rules');
+        return \ApiGoat\Utility\MicroCache::remember($key, $ttl, static function () {
+            $rows = [];
+            foreach (\App\ApiRbacQuery::create()->orderBy('IdApiRbac', 'ASC')->find() as $r) {
+                $rows[] = [
+                    'id'            => $r->getPrimaryKey(),
+                    'model'         => $r->getModel(),
+                    'action'        => $r->getAction(),
+                    'method'        => $r->getMethod(),
+                    'body'          => $r->getBody(),
+                    'rule'          => $r->getRule(),
+                    'scope'         => $r->getScope(),
+                    'date_creation' => $r->getDateCreation('Y-m-d H:i:s'),
+                ];
+            }
+            return $rows;
+        });
+    }
+
+    /** Re-load the rule by PK and bump its hit counter (bookkeeping only). */
+    private function bumpHitCounter($rbacId): void
+    {
+        $ApiRbac = \App\ApiRbacQuery::create()->findPk($rbacId);
+        if ($ApiRbac) {
+            $ApiRbac->setCount($ApiRbac->getCount() + 1);
+            $this->saveBookkeeping($ApiRbac);
+        }
+    }
+
+    /** GC_RBAC_CACHE_TTL seconds; default 0 (SQL path, current behavior). */
+    private function rbacCacheTtl(): int
+    {
+        $v = \function_exists('env') ? env('GC_RBAC_CACHE_TTL') : \getenv('GC_RBAC_CACHE_TTL');
+        return ($v === false || $v === null || $v === '') ? 0 : \max(0, (int) $v);
+    }
+
+    /** GC_RBAC_CACHE_VERIFY=1: dual-run PHP matcher + SQL, log divergence, trust SQL. */
+    private function rbacCacheVerify(): bool
+    {
+        $v = \function_exists('env') ? env('GC_RBAC_CACHE_VERIFY') : \getenv('GC_RBAC_CACHE_VERIFY');
+        return \filter_var((string) $v, \FILTER_VALIDATE_BOOL);
     }
 
     private function logApi($IdApiRbac, $IdAuthy = null)
