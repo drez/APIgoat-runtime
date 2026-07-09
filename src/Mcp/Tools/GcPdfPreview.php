@@ -21,10 +21,12 @@ class GcPdfPreview extends AbstractPdfTool
 
     public function description(): string
     {
-        return 'Preview the printable HTML of a PDF-enabled record before generating its PDF. '
-            . 'Returns the rendered document, the template rows used (edit them via the Template entity '
-            . 'to change the layout) and the placeholder values (edit the record to change the data). '
-            . 'Workflow: preview → make changes → preview again → gc_regenerate_pdf.';
+        return 'THE tool for viewing a quote, invoice or any PDF-enabled record: render the returned '
+            . '\'html\' (self-contained, inline styles) as an HTML artifact in the side panel — do NOT '
+            . 'generate a PDF just to show a document. Also returns the template rows used (edit them via '
+            . 'the Template entity to change the layout) and the placeholder values (edit the record via '
+            . 'crm_update to change the data). Iterate fast: edit → call again → update the same artifact. '
+            . 'Only call gc_regenerate_pdf when the user explicitly asks for a PDF.';
     }
 
     public function inputSchema(): array
