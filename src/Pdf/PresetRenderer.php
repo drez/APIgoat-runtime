@@ -116,7 +116,9 @@ final class PresetRenderer
     private static function detailsSection(object $record, array $entry, string $lang): string
     {
         $details = $entry['details'] ?? null;
-        if (!$details) {
+        // name/value may be null when the detail table i18n's them (staleness-only
+        // details entry) — the generic name/value section can't render then.
+        if (!$details || empty($details['name_php']) || empty($details['value_php'])) {
             return '';
         }
         $rows = self::childRows($record, $entry, $details);
