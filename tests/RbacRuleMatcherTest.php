@@ -62,6 +62,10 @@ check('emptyBody: date tie → lowest id',
 // Non-array data → SQL WHERE 1: any tuple-matching rule, table (id) order.
 check('bestMatch: non-array data matches first rule by id (even NULL body)',
     matchedId(RbacRuleMatcher::bestMatch([rule(2, null), rule(3, '{"a":1}')], 'Client', 'list', 'GET', 'rawstring')), 2);
+// A raw-string 'query' value (undecoded GET ?query=<json>) contributes no
+// clause — must match clause-free, not fatal (parity with the guarded SQL).
+check('bestMatch: string query value contributes no clause',
+    matchedId(RbacRuleMatcher::bestMatch([rule(2, null), rule(3, '{"a":1}')], 'Client', 'list', 'GET', ['query' => '{"filter":{"Client":[["name","x"]]}}'])), 2);
 check('bestMatch: method mismatch excluded',
     RbacRuleMatcher::bestMatch([rule(1, null, 'Allow', 'Private', null, 'Client', 'list', 'POST')], 'Client', 'list', 'GET', 'x'), null);
 

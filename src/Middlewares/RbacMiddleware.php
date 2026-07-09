@@ -514,6 +514,13 @@ class RbacMiddleware implements MiddlewareInterface
         $params = [];
         if (is_array($this->args['data'])) {
             foreach ($this->args['data'] as $key => $val) {
+                if ($key == 'query' && !is_array($val)) {
+                    // A raw-string query value (undecoded GET ?query=<json>)
+                    // fataled on string['filter'] under PHP 8. It carries no
+                    // matchable select/filter structure — contribute no
+                    // clause, exactly like RbacRuleMatcher::buildClauses.
+                    continue;
+                }
                 if ($key == 'query') {
                     if (!empty($this->args['data']['query']['select'])) {
                         $path = 'query.select';
