@@ -308,7 +308,7 @@ class RbacMiddleware implements MiddlewareInterface
                     : RbacRuleMatcher::bestMatch($rules, (string) $this->args['model'], (string) $this->args['action'], (string) $this->args['method'], $this->args['data']);
                 $cachedRan = true;
             } catch (\Throwable $e) {
-                \Propel::log('RBAC ruleset cache failed, falling back to SQL: ' . $e->getMessage(), \Propel::LOG_WARNING);
+                $this->logWarning('RBAC ruleset cache failed, falling back to SQL: ' . $e->getMessage());
             }
             if ($cachedRan && !$this->rbacCacheVerify()) {
                 return $cachedRow;
@@ -322,18 +322,33 @@ class RbacMiddleware implements MiddlewareInterface
                 && (($cachedRow['rule'] ?? null) == ($sqlRow['rule'] ?? null))
                 && (($cachedRow['scope'] ?? null) == ($sqlRow['scope'] ?? null));
             if (!$same) {
-                \Propel::log(sprintf(
+                $this->logWarning(sprintf(
                     'RBAC cache divergence for %s/%s %s: cached=%s sql=%s (SQL result used)',
                     $this->args['model'],
                     $this->args['action'],
                     $this->args['method'],
                     json_encode(['id' => $cachedRow['id'] ?? null, 'rule' => $cachedRow['rule'] ?? null, 'scope' => $cachedRow['scope'] ?? null]),
                     json_encode(['id' => $sqlRow['id'] ?? null, 'rule' => $sqlRow['rule'] ?? null, 'scope' => $sqlRow['scope'] ?? null])
-                ), \Propel::LOG_WARNING);
+                ));
             }
         }
 
         return $sqlRow;
+    }
+
+    /**
+     * Warn to an ALWAYS-observable sink. Propel::log() is a no-op unless the
+     * project wired a Propel logger (none do), which would silently swallow
+     * the GC_RBAC_CACHE_VERIFY divergence signal — the soak safety net. Send
+     * it to error_log() (FPM/apache error log) and additionally to Propel if a
+     * logger happens to be configured.
+     */
+    private function logWarning(string $message): void
+    {
+        \error_log('[gc-rbac] ' . $message);
+        if (\class_exists('\\Propel') && \method_exists('\\Propel', 'log')) {
+            \Propel::log($message, \Propel::LOG_WARNING);
+        }
     }
 
     /** The original empty-body lookup, normalized to a row array. */
