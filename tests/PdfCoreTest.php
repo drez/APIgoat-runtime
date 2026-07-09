@@ -1,8 +1,8 @@
 <?php
 // Run: php tests/PdfCoreTest.php   (from the runtime repo root)
 //
-// Pure-logic coverage for the with_pdf runtime core: PdfNaming (canonical +
-// _bak<N> backup naming), PdfStaleness::isCurrentGiven (url/timestamp rules)
+// Pure-logic coverage for the with_pdf runtime core: PdfNaming (canonical filename),
+// PdfStaleness::isCurrentGiven (url/timestamp rules)
 // and PdfManifest gating (drives ToolRegistry's conditional registration).
 
 require __DIR__ . '/../src/Pdf/PdfNaming.php';
@@ -33,14 +33,6 @@ check('filename falls back to contact', PdfNaming::filename('', 'John Doe', '7')
 check('filename all empty → document', PdfNaming::filename('', '', ''), 'document.pdf');
 check('fromTemplate slugs + ensures ext', PdfNaming::fromTemplate('Bill 334 Assemblage Expert'), 'Bill-334-Assemblage-Expert.pdf');
 check('fromTemplate strips existing .pdf', PdfNaming::fromTemplate('Bill-1.pdf'), 'Bill-1.pdf');
-
-// ── PdfNaming: backup naming (replace-in-place model) ─────────────────────
-check('first backup is _bak1', PdfNaming::nextBackupName('Bill-334.pdf', ['Bill-334.pdf']), 'Bill-334_bak1.pdf');
-check('backup increments past max', PdfNaming::nextBackupName('Bill-334.pdf', ['Bill-334.pdf', 'Bill-334_bak1.pdf', 'Bill-334_bak3.pdf']), 'Bill-334_bak4.pdf');
-check('other docs never collide', PdfNaming::nextBackupName('Bill-334.pdf', ['Bill-3340_bak9.pdf', 'Other_bak2.pdf']), 'Bill-334_bak1.pdf');
-check('isBackupOf matches', PdfNaming::isBackupOf('Bill-334.pdf', 'Bill-334_bak2.pdf'), true);
-check('isBackupOf rejects canonical', PdfNaming::isBackupOf('Bill-334.pdf', 'Bill-334.pdf'), false);
-check('isBackupOf rejects prefix collision', PdfNaming::isBackupOf('Bill-334.pdf', 'Bill-3340_bak2.pdf'), false);
 
 // ── PdfStaleness::isCurrentGiven matrix ────────────────────────────────────
 check('no stored url never current', PdfStaleness::isCurrentGiven('', null, null), false);

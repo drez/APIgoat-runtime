@@ -7,11 +7,10 @@ use ApiGoat\Pdf\PdfStaleness;
 use ApiGoat\Sessions\AuthySession;
 
 /**
- * gc_regenerate_pdf — regenerate a PDF-enabled record's CURRENT saved PDF
- * (replace-in-place across the configured stores; local child row and/or
- * Drive). backup:true first snapshots the current copy as "_bak<N>" (the only
- * way versions are kept); wipe:true deletes every _bak copy so only the
- * latest remains — destructive, so it requires confirm:true.
+ * gc_regenerate_pdf — regenerate a PDF-enabled record's saved PDF, overwriting
+ * the single stored copy in place (local child row and/or Drive). Use after
+ * editing the record so the stored copy is refreshed. Preview/adjust first
+ * with gc_pdf_preview.
  */
 class GcRegeneratePdf extends AbstractPdfTool
 {
@@ -19,10 +18,9 @@ class GcRegeneratePdf extends AbstractPdfTool
 
     public function description(): string
     {
-        return 'Regenerate the saved PDF of a PDF-enabled record (use after editing it — the stored copy '
-            . 'goes stale). Replaces the current copy in place. backup:true snapshots the current copy as '
-            . '_bak<N> first; wipe:true (with confirm:true) clears all previous _bak versions and keeps '
-            . 'only the latest. Preview/adjust first with gc_pdf_preview.';
+        return 'Regenerate the saved PDF of a PDF-enabled record — ONLY when the user explicitly asks for '
+            . 'a PDF (generate/refresh/send); to view or show a document use gc_pdf_preview instead. '
+            . 'Overwrites the single stored copy in place. Preview/adjust first with gc_pdf_preview.';
     }
 
     public function inputSchema(): array
@@ -31,9 +29,6 @@ class GcRegeneratePdf extends AbstractPdfTool
             'table'    => ['type' => 'string', 'description' => 'PDF-enabled table (e.g. billing) or its entity name'],
             'id'       => ['type' => 'integer', 'description' => 'Primary key of the record'],
             'template' => ['type' => 'integer', 'description' => 'Optional id_template header/footer variant'],
-            'backup'   => ['type' => 'boolean', 'description' => 'Snapshot the current copy as _bak<N> before regenerating'],
-            'wipe'     => ['type' => 'boolean', 'description' => 'Delete every _bak backup copy, keeping only the regenerated current. Deletes files — requires confirm:true.'],
-            'confirm'  => ['type' => 'boolean', 'description' => 'Required true when wipe:true (destructive).'],
         ]];
     }
 
@@ -47,16 +42,6 @@ class GcRegeneratePdf extends AbstractPdfTool
             throw new ToolError("'table' and a positive 'id' are required.", [], 'bad_request');
         }
 
-        $wipe = ($args['wipe'] ?? false) === true;
-        if ($wipe && ($args['confirm'] ?? false) !== true) {
-            throw new ToolError(
-                'wipe:true deletes every _bak backup copy of this document. Set confirm:true to proceed '
-                . '(or omit wipe to keep the backups).',
-                [],
-                'bad_request'
-            );
-        }
-
         $entry  = $this->entryFor($table);
         $record = $this->loadRecord($entry, $id, $session, 'w');
         $email  = $this->workspaceEmail($session);
@@ -66,22 +51,8 @@ class GcRegeneratePdf extends AbstractPdfTool
         $wasStale = !PdfStaleness::savedCopyIsCurrent($record, $entry);
 
         try {
-            $backedUp = null;
-            if (($args['backup'] ?? false) === true) {
-                try {
-                    $backedUp = PdfGenerator::backup($record, $entry, $email)['name'];
-                } catch (\RuntimeException $e) {
-                    $backedUp = null; // nothing to back up yet — proceed to generate
-                }
-            }
-
             $templateId = isset($args['template']) ? (int) $args['template'] : null;
             $res = PdfGenerator::generate($record, $entry, $templateId, $email);
-
-            $deleted = 0;
-            if ($wipe) {
-                $deleted = PdfGenerator::wipeBackups($record, $entry, $email)['deleted'];
-            }
         } catch (\RuntimeException $e) {
             throw new ToolError($e->getMessage(), [], 'bad_request');
         } catch (\Throwable $e) {
@@ -89,14 +60,12 @@ class GcRegeneratePdf extends AbstractPdfTool
         }
 
         return $this->ok([
-            'table'      => strtolower((string) $entry['table']),
-            'id'         => $id,
-            'name'       => $res['name'],
-            'url'        => $res['url'],
-            'lang'       => $res['lang'],
-            'backed_up'  => $backedUp,
-            'wiped'      => $deleted,
-            'was_stale'  => $wasStale,
+            'table'     => strtolower((string) $entry['table']),
+            'id'        => $id,
+            'name'      => $res['name'],
+            'url'       => $res['url'],
+            'lang'      => $res['lang'],
+            'was_stale' => $wasStale,
         ]);
     }
 }

@@ -5,19 +5,11 @@ namespace ApiGoat\Pdf;
 use ApiGoat\Storage\Drive\GoogleDriveStorage;
 
 /**
- * Storage orchestrator for with_pdf documents, implementing the
- * replace-in-place + explicit-backup model:
+ * Storage orchestrator for with_pdf documents. There is exactly ONE saved PDF
+ * per document (no versioning): generate() renders and OVERWRITES the current
+ * copy in every configured store, updating pdf_url/pdf_saved_at/pdf_lang.
  *
- *   generate()     — render → the CURRENT copy (canonical filename) is
- *                    overwritten in every configured store; parent
- *                    pdf_url/pdf_saved_at/pdf_lang updated.
- *   backup()       — rename the current copy to "<base>_bak<N>.pdf"
- *                    (local: the child row's display name; drive: the file)
- *                    and clear the parent's current-copy pointers. The next
- *                    generate creates a fresh current.
- *   wipeBackups()  — delete every _bak copy, keep the current one.
- *
- * Local store = rows in the table's file child (is_file_upload_table
+ * Local store = a row in the table's file child (is_file_upload_table
  * conventions: file at public/file/<ChildClass>/md5(childPk).pdf, display
  * name in the child's name column). Drive store = the canonical filename in
  * the resolved folder via the shared GoogleDriveStorage.
@@ -107,87 +99,6 @@ final class PdfGenerator
         // Drive-only (or missing local file): render fresh — always current.
         $res = self::generate($record, $entry, null, $workspaceEmail);
         return ['bytes' => $res['bytes'], 'name' => $res['name'], 'generated' => true];
-    }
-
-    /** @return array{name:string} the backup name the current copy now holds */
-    public static function backup(object $record, array $entry, string $workspaceEmail = ''): array
-    {
-        $canonical = self::canonicalName($record, $entry);
-        $existing  = self::allStoredNames($record, $entry, $workspaceEmail);
-        $bakName   = PdfNaming::nextBackupName($canonical, $existing);
-
-        $renamed = false;
-        if (self::hasLocal($entry)) {
-            $row = self::localCurrentRow($record, $entry, $canonical);
-            if ($row !== null) {
-                $nameSetter = 'set' . $entry['files']['name_php'];
-                $row->$nameSetter($bakName);
-                $row->save();
-                $renamed = true;
-            }
-        }
-        if (self::hasDrive($entry)) {
-            try {
-                $drive = self::driveFor($workspaceEmail);
-                $scope = self::folderScope($record, $entry);
-                foreach (self::driveMatches($drive, $scope, $canonical) as $f) {
-                    if (($f['name'] ?? '') === $canonical && !empty($f['id'])) {
-                        $drive->update((string) $f['id'], ['name' => $bakName]);
-                        $renamed = true;
-                    }
-                }
-            } catch (\Throwable $e) {
-                error_log('[with_pdf] drive backup failed: ' . $e->getMessage());
-            }
-        }
-
-        if (!$renamed) {
-            throw new \RuntimeException('No current PDF to back up — generate one first.');
-        }
-
-        // After a backup there is no current copy until the next generate.
-        $record->setPdfUrl(null);
-        $record->setPdfSavedAt(null);
-        $record->save();
-
-        return ['name' => $bakName];
-    }
-
-    /** @return array{deleted:int} */
-    public static function wipeBackups(object $record, array $entry, string $workspaceEmail = ''): array
-    {
-        $canonical = self::canonicalName($record, $entry);
-        $deleted   = 0;
-
-        if (self::hasLocal($entry)) {
-            foreach (self::localRows($record, $entry) as $row) {
-                $nameGetter = 'get' . $entry['files']['name_php'];
-                if (PdfNaming::isBackupOf($canonical, (string) $row->$nameGetter())) {
-                    $fileGetter = 'get' . $entry['files']['file_php'];
-                    $path = self::baseDir() . (string) $row->$fileGetter();
-                    if (is_file($path)) {
-                        @unlink($path);
-                    }
-                    $row->delete();
-                    $deleted++;
-                }
-            }
-        }
-        if (self::hasDrive($entry)) {
-            try {
-                $drive = self::driveFor($workspaceEmail);
-                $scope = self::folderScope($record, $entry);
-                foreach (self::driveMatches($drive, $scope, self::baseOf($canonical)) as $f) {
-                    if (PdfNaming::isBackupOf($canonical, (string) ($f['name'] ?? '')) && !empty($f['id'])) {
-                        $drive->delete((string) $f['id']);
-                        $deleted++;
-                    }
-                }
-            } catch (\Throwable $e) {
-                error_log('[with_pdf] drive wipe failed: ' . $e->getMessage());
-            }
-        }
-        return ['deleted' => $deleted];
     }
 
     /** Drive folder webViewLink for the "Open gDrive" menu item (null when unavailable). */
@@ -313,27 +224,6 @@ final class PdfGenerator
         return iterator_to_array($queryClass::create()->$filter($record->$pkGetter())->find(), false);
     }
 
-    /** Names across every store, for backup-number allocation. */
-    private static function allStoredNames(object $record, array $entry, string $workspaceEmail): array
-    {
-        $names = [];
-        foreach (self::localRows($record, $entry) as $row) {
-            $nameGetter = 'get' . $entry['files']['name_php'];
-            $names[] = (string) $row->$nameGetter();
-        }
-        if (self::hasDrive($entry)) {
-            try {
-                $drive = self::driveFor($workspaceEmail);
-                foreach (self::driveMatches($drive, self::folderScope($record, $entry), '') as $f) {
-                    $names[] = (string) ($f['name'] ?? '');
-                }
-            } catch (\Throwable $e) {
-                // best-effort; local names still allocate a safe number
-            }
-        }
-        return $names;
-    }
-
     /**
      * Mirror is_file_upload_table's directory hardening for direct writes:
      * no script execution inside upload dirs + a directory-listing guard.
@@ -387,10 +277,6 @@ final class PdfGenerator
         return (array) ($drive->list($scope, $filters)['items'] ?? []);
     }
 
-    private static function baseOf(string $canonical): string
-    {
-        return (string) preg_replace('/\.pdf$/i', '', $canonical);
-    }
 
     // ── parent bookkeeping ─────────────────────────────────────────────────
 
