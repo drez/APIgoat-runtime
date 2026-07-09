@@ -474,6 +474,18 @@ class RbacMiddleware implements MiddlewareInterface
 
     function normalizeFilter()
     {
+        // args['data'] can reach here as a raw string (e.g. a GET with a
+        // ?query=<json> parameter that upstream parsing left undecoded).
+        // PHP 8 fatals on string['query'] ("Cannot access offset of type
+        // string on string") — a plain unauthenticated GET could 500 the
+        // middleware. Non-array / filter-less bodies have nothing to
+        // normalize; downstream (excludeBody, findBestMatch's WHERE-1
+        // branch, getBodyWildcarded) already handles them.
+        if (!is_array($this->args['data'])
+            || !is_array($this->args['data']['query'] ?? null)
+            || !is_array($this->args['data']['query']['filter'] ?? null)) {
+            return;
+        }
         if (is_array($this->args['data']['query']['filter'])) {
             $normalized = [];
             foreach ($this->args['data']['query']['filter'] as $model => $filters) {
