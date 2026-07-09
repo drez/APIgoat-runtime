@@ -52,7 +52,7 @@ class ToolRegistry
     /** @return McpTool[] */
     private function builtins(): array
     {
-        return [
+        $tools = [
             new Tools\CrmDescribe(),
             new Tools\CrmList(),
             new Tools\CrmGet(),
@@ -60,6 +60,13 @@ class ToolRegistry
             new Tools\CrmUpdate(),
             new Tools\CrmDelete(),
         ];
+        // Generic with_pdf tools — present exactly when the build emitted a
+        // pdf manifest (some table declares the with_pdf behavior).
+        if (\ApiGoat\Pdf\PdfManifest::available()) {
+            $tools[] = new Tools\GcPdfPreview();
+            $tools[] = new Tools\GcRegeneratePdf();
+        }
+        return $tools;
     }
 
     /** Built-ins own the crm_ prefix; a custom tool that shadows is rejected (logged, skipped). */

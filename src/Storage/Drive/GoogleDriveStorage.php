@@ -278,6 +278,23 @@ class GoogleDriveStorage implements FileStorageInterface
     }
 
     /**
+     * The browser webViewLink of the folder at $scope (creating the path if
+     * needed, so an "Open gDrive" click always lands somewhere). Null only
+     * when the folder metadata carries no link.
+     */
+    public function folderLink(string $scope): ?string
+    {
+        $folderId = $this->resolveScope($scope, /*create*/ true);
+        if ($folderId === null) {
+            return null;
+        }
+        $meta = $this->get($folderId);
+        return isset($meta['webViewLink']) && $meta['webViewLink'] !== null
+            ? (string) $meta['webViewLink']
+            : null;
+    }
+
+    /**
      * Resolve a path like "CRM/JohnDoe" to a Drive folder id, optionally
      * creating intermediate folders. Returns null when $create=false and
      * the path doesn't exist.
