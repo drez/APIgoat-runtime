@@ -10,7 +10,7 @@ class CrmDescribe extends AbstractCrmTool
 
     public function description(): string
     {
-        return 'Describe the CRM entities you may access and their fields (name, type, required, writable, enum, relations). Omit "entity" to list all entities; pass "entity" for one entity\'s fields.';
+        return 'Describe the CRM entities you may access and their fields (name, type, required, writable, enum, relations) plus the content locales (see the top-level "locales" block for lang semantics). Omit "entity" to list all entities; pass "entity" for one entity\'s fields.';
     }
 
     public function inputSchema(): array
@@ -30,16 +30,24 @@ class CrmDescribe extends AbstractCrmTool
             foreach ($catalog['entities'] ?? [] as $name => $def) {
                 $list[$name] = ['label' => $def['label'] ?? $name, 'permissions' => $def['permissions'] ?? []];
             }
+            $payload = ['entities' => $list];
+            if (isset($catalog['locales'])) {
+                $payload['locales'] = $catalog['locales'];
+            }
             return [
-                'content' => [['type' => 'text', 'text' => json_encode(['entities' => $list], JSON_UNESCAPED_SLASHES)]],
+                'content' => [['type' => 'text', 'text' => json_encode($payload, JSON_UNESCAPED_SLASHES)]],
                 'isError' => false,
             ];
         }
 
         $this->assertEntityPermitted($catalog, (string) $entity, ''); // existence/read gate
 
+        $payload = $catalog['entities'][$entity];
+        if (isset($catalog['locales'])) {
+            $payload['locales'] = $catalog['locales'];
+        }
         return [
-            'content' => [['type' => 'text', 'text' => json_encode($catalog['entities'][$entity], JSON_UNESCAPED_SLASHES)]],
+            'content' => [['type' => 'text', 'text' => json_encode($payload, JSON_UNESCAPED_SLASHES)]],
             'isError' => false,
         ];
     }

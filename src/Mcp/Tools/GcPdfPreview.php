@@ -35,6 +35,7 @@ class GcPdfPreview extends AbstractPdfTool
             'table'    => ['type' => 'string', 'description' => 'PDF-enabled table (e.g. billing) or its entity name'],
             'id'       => ['type' => 'integer', 'description' => 'Primary key of the record'],
             'template' => ['type' => 'integer', 'description' => 'Optional id_template to pick a specific header/footer variant'],
+            'lang'     => ['type' => 'string', 'description' => 'Render in this locale (e.g. en_US) instead of the record\'s document language'],
         ]];
     }
 
@@ -52,8 +53,9 @@ class GcPdfPreview extends AbstractPdfTool
         $record = $this->loadRecord($entry, $id, $session, 'r');
 
         $templateId = isset($args['template']) ? (int) $args['template'] : null;
+        $lang       = $this->assertValidLang($args);
         try {
-            $doc = PresetRenderer::render($record, $entry, $templateId);
+            $doc = PresetRenderer::render($record, $entry, $templateId, $lang);
         } catch (\Throwable $e) {
             throw new ToolError('Preview failed: ' . $e->getMessage(), [], 'internal');
         }

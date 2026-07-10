@@ -261,10 +261,19 @@ class Api
         $this->response['status'] = 'failure';
 
         // Optional per-request locale for i18n columns: scope the write to one
-        // language instead of fanning out to every supported locale.
+        // language instead of fanning out to every supported locale. The raw
+        // HTTP API merges client query/body keys into $request (RouteHelper),
+        // so an unvalidated value would let any authenticated writer create
+        // translation rows under arbitrary locale strings — reject it here,
+        // not only in the MCP tools.
         $this->i18nWriteLocale = isset($request['lang']) && $request['lang'] !== ''
             ? (string) $request['lang']
             : null;
+        if ($this->i18nWriteLocale !== null
+            && !self::isAllowedI18nLocale($this->i18nWriteLocale, $_SESSION[_AUTH_VAR]->config['locale']['supported_locale'] ?? null)) {
+            $this->response['error'] = "Unsupported lang '{$this->i18nWriteLocale}'";
+            return $this->response;
+        }
 
         #one entry, or multiple with querybuilder
 
@@ -648,6 +657,23 @@ class Api
             return false;
         }
         return $obj;
+    }
+
+    /**
+     * Whether $lang may scope an i18n read/write: a member of the configured
+     * supported_locale list, or — when the project carries no locale config —
+     * a well-formed ll_CC tag (never an arbitrary string into setLocale()).
+     *
+     * @param string $lang
+     * @param mixed $supported config['locale']['supported_locale'] or null
+     * @return bool
+     */
+    public static function isAllowedI18nLocale($lang, $supported)
+    {
+        if (is_array($supported) && $supported !== []) {
+            return in_array($lang, $supported, true);
+        }
+        return (bool) preg_match('/^[a-z]{2}_[A-Z]{2}$/', (string) $lang);
     }
 
     /**

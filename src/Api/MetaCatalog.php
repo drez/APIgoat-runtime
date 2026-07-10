@@ -74,12 +74,76 @@ final class MetaCatalog
             }
         }
 
-        return [
+        $out = [
             'version'      => $this->apiVersion(),
             'generated_at' => time(),
             'user'         => ['is_admin' => $this->session->isAdmin()],
             'entities'     => $entities,
         ];
+        $locales = $this->localesBlock();
+        if ($locales !== null) {
+            $out['locales'] = $locales;
+        }
+        return $out;
+    }
+
+    /**
+     * Advertise the project's content locales so MCP clients don't have to
+     * guess that a 'lang' argument exists or what values it takes. Fields
+     * flagged i18n:true hold per-language content governed by these locales.
+     * Null (block omitted) when the project has no locale config.
+     */
+    private function localesBlock(): ?array
+    {
+        $cfg = null;
+        if (is_object($this->session) && isset($this->session->config['locale'])) {
+            $cfg = (array) $this->session->config['locale'];
+        }
+        $supported = $cfg['supported_locale'] ?? null;
+        if (!is_array($supported) || $supported === []) {
+            return null;
+        }
+        $supported = array_values(array_map('strval', $supported));
+
+        $default = (string) ($cfg['default_locale'] ?? '');
+        if (!in_array($default, $supported, true)) {
+            $default = in_array(\ApiGoat\I18n\LocaleResolver::DEFAULT, $supported, true)
+                ? \ApiGoat\I18n\LocaleResolver::DEFAULT
+                : $supported[0];
+        }
+
+        $block = [
+            'supported' => $supported,
+            'default'   => $default,
+            'usage'     => "Fields flagged i18n:true hold per-language content. crm_get/crm_list accept 'lang' to read one locale "
+                . "(default: the record's own language, then your user language). crm_create/crm_update accept 'lang' to write "
+                . "ONE locale only — omit it to write the same value to every language. gc_pdf_preview/gc_regenerate_pdf accept "
+                . "'lang' to render the document in a specific locale.",
+        ];
+        $userLang = $this->userLanguage();
+        if ($userLang !== null) {
+            $block['user_language'] = $userLang;
+        }
+        return $block;
+    }
+
+    /** The caller's authy.language, or null when unavailable (tests, CLI, older schemas). */
+    private function userLanguage(): ?string
+    {
+        $id = is_object($this->session) ? ($this->session->authyId ?? null) : null;
+        if (empty($id) || !class_exists('\App\AuthyQuery')) {
+            return null;
+        }
+        try {
+            $authy = \App\AuthyQuery::create()->findPk($id);
+        } catch (\Throwable) {
+            return null;
+        }
+        if ($authy === null || !method_exists($authy, 'getLanguage')) {
+            return null;
+        }
+        $v = (string) $authy->getLanguage();
+        return $v !== '' ? $v : null;
     }
 
     /** The API version string, used for both the catalog header and endpoint URLs. */

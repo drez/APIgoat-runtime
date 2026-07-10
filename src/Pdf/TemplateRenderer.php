@@ -37,13 +37,17 @@ final class TemplateRenderer
     public function __construct(
         private object $record,
         private array $entry,
-        private ?int $templateId = null
+        private ?int $templateId = null,
+        private ?string $langOverride = null
     ) {
     }
 
-    /** The record's document language ('fr_CA' | 'en_US'). */
+    /** The record's document language ('fr_CA' | 'en_US'); a caller-supplied override wins. */
     public function lang(): string
     {
+        if ($this->langOverride !== null && in_array($this->langOverride, ['fr_CA', 'en_US'], true)) {
+            return $this->langOverride;
+        }
         $src = $this->entry['lang_source'] ?? null;
         if ($src) {
             $getter = 'get' . $src;

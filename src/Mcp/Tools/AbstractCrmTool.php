@@ -222,14 +222,31 @@ abstract class AbstractCrmTool implements McpTool
             return null;
         }
         $supported = $_SESSION[_AUTH_VAR]->config['locale']['supported_locale'] ?? null;
-        if (is_array($supported) && $supported !== [] && !in_array($lang, $supported, true)) {
-            throw new ToolError(
-                "Unsupported lang '{$lang}'. Supported: " . implode(', ', $supported) . '.',
-                [],
-                'validation'
-            );
+        if (!\ApiGoat\Api\Api::isAllowedI18nLocale($lang, $supported)) {
+            $hint = (is_array($supported) && $supported !== [])
+                ? 'Supported: ' . implode(', ', $supported) . '.'
+                : 'Expected a ll_CC tag like fr_CA.';
+            throw new ToolError("Unsupported lang '{$lang}'. {$hint}", [], 'validation');
         }
         return $lang;
+    }
+
+    /**
+     * The caller's own language (authy.language), used as the read-locale
+     * fallback when neither an explicit 'lang' nor a record language exists.
+     * Null when the column/user is absent (older schemas, CLI contexts).
+     */
+    protected function userLocale(AuthySession $session): ?string
+    {
+        if (empty($session->authyId) || !class_exists('\App\AuthyQuery')) {
+            return null;
+        }
+        $authy = \App\AuthyQuery::create()->findPk($session->authyId);
+        if ($authy === null || !method_exists($authy, 'getLanguage')) {
+            return null;
+        }
+        $v = (string) $authy->getLanguage();
+        return $v !== '' ? $v : null;
     }
 
     /**
@@ -237,12 +254,13 @@ abstract class AbstractCrmTool implements McpTool
      * cannot select i18n columns off the base table (they live in
      * {table}_i18n), so crm_get rows silently lacked Terms/Notes/Description.
      * Values read through the model's proxy getters at $lang (default: the
-     * row's own lang column, else the behavior default), falling back to
-     * fr_CA like the document renderers.
+     * row's own lang column, else $fallbackLang — the caller's user language —
+     * else the behavior default), falling back to fr_CA like the document
+     * renderers.
      *
      * @param mixed $data the envelope 'data' (single assoc row expected)
      */
-    protected function mergeI18nColumns(string $entity, $id, $data, ?string $lang)
+    protected function mergeI18nColumns(string $entity, $id, $data, ?string $lang, ?string $fallbackLang = null)
     {
         if (!is_array($data) || $data === [] || isset($data[0])) {
             return $data; // not a single row
@@ -262,6 +280,7 @@ abstract class AbstractCrmTool implements McpTool
         if ($locale === null && method_exists($obj, 'getLang') && (string) $obj->getLang() !== '') {
             $locale = (string) $obj->getLang();
         }
+        $locale ??= $fallbackLang;
         foreach ($peer::getFieldNames() as $phpName) {
             if ($phpName === 'Locale' || $phpName === 'Id' . $entity) {
                 continue;
@@ -283,6 +302,93 @@ abstract class AbstractCrmTool implements McpTool
                 $data[$key] = $v;
             }
         }
+        return $data;
+    }
+
+    /**
+     * List-shaped counterpart of mergeI18nColumns: append add_i18n column
+     * values to every row of a crm_list result in ONE extra query (no per-row
+     * model loads). Translation rows are read for all listed ids at once and
+     * each row resolves its locale as $lang → the row's own lang column →
+     * $fallbackLang → fr_CA, with empty values falling back to fr_CA like the
+     * document renderers. Rows lacking the primary-key column (custom select
+     * projections, aggregates) are left untouched. Safe on ids the caller can
+     * see only: they came out of the ACL-filtered list query itself.
+     *
+     * @param mixed $data the envelope 'data' (numeric array of assoc rows expected)
+     */
+    protected function mergeI18nColumnsIntoRows(string $entity, $data, ?string $lang, ?string $fallbackLang = null)
+    {
+        if (!is_array($data) || $data === [] || !isset($data[0]) || !is_array($data[0])) {
+            return $data; // not a list of rows
+        }
+        $peer      = "\\App\\{$entity}I18nPeer";
+        $i18nQuery = "\\App\\{$entity}I18nQuery";
+        if (!class_exists($peer) || !method_exists($peer, 'getFieldNames') || !class_exists($i18nQuery)) {
+            return $data;
+        }
+        $fkPhp = 'Id' . $entity;
+        $pkKey = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $fkPhp));
+
+        $ids = [];
+        foreach ($data as $row) {
+            if (is_array($row) && isset($row[$pkKey]) && $row[$pkKey] !== '') {
+                $ids[] = $row[$pkKey];
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        if ($ids === []) {
+            return $data;
+        }
+
+        // Only true i18n content columns: skip the bookkeeping pair AND any
+        // column the MAIN table also has (tablestamps live on both; the row's
+        // own values must win, mirroring the single-row proxy-getter path).
+        $mainPeer   = "\\App\\{$entity}Peer";
+        $mainFields = (class_exists($mainPeer) && method_exists($mainPeer, 'getFieldNames'))
+            ? $mainPeer::getFieldNames()
+            : [];
+        $cols = [];
+        foreach ($peer::getFieldNames() as $phpName) {
+            if ($phpName !== 'Locale' && $phpName !== $fkPhp && !in_array($phpName, $mainFields, true)) {
+                $cols[$phpName] = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $phpName));
+            }
+        }
+        if ($cols === []) {
+            return $data;
+        }
+
+        // id → locale → phpName → value, one IN() query for the whole page.
+        $byId = [];
+        foreach ($i18nQuery::create()->filterBy($fkPhp, $ids, \Criteria::IN)->find() as $tr) {
+            $rowId = $tr->getByName($fkPhp);
+            $loc   = (string) $tr->getByName('Locale');
+            foreach ($cols as $phpName => $snake) {
+                $byId[$rowId][$loc][$phpName] = (string) $tr->getByName($phpName);
+            }
+        }
+
+        foreach ($data as &$row) {
+            if (!is_array($row) || !isset($row[$pkKey]) || $row[$pkKey] === '') {
+                continue;
+            }
+            $locales = $byId[$row[$pkKey]] ?? [];
+            $locale  = $lang
+                ?? ((isset($row['lang']) && is_string($row['lang']) && $row['lang'] !== '') ? $row['lang'] : null)
+                ?? $fallbackLang
+                ?? 'fr_CA';
+            foreach ($cols as $phpName => $snake) {
+                if (array_key_exists($snake, $row)) {
+                    continue;
+                }
+                $v = (string) ($locales[$locale][$phpName] ?? '');
+                if ($v === '' && $locale !== 'fr_CA') {
+                    $v = (string) ($locales['fr_CA'][$phpName] ?? '');
+                }
+                $row[$snake] = $v;
+            }
+        }
+        unset($row);
         return $data;
     }
 

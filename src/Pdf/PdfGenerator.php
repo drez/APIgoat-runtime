@@ -19,9 +19,9 @@ final class PdfGenerator
     /**
      * @return array{url:string, bytes:string, name:string, lang:string}
      */
-    public static function generate(object $record, array $entry, ?int $templateId = null, string $workspaceEmail = ''): array
+    public static function generate(object $record, array $entry, ?int $templateId = null, string $workspaceEmail = '', ?string $langOverride = null): array
     {
-        $doc   = PresetRenderer::render($record, $entry, $templateId);
+        $doc   = PresetRenderer::render($record, $entry, $templateId, $langOverride);
         $bytes = (new HtmlToPdf())->render($doc['html']);
         $name  = self::canonicalName($record, $entry);
         $url   = '';

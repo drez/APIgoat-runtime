@@ -29,6 +29,7 @@ class GcRegeneratePdf extends AbstractPdfTool
             'table'    => ['type' => 'string', 'description' => 'PDF-enabled table (e.g. billing) or its entity name'],
             'id'       => ['type' => 'integer', 'description' => 'Primary key of the record'],
             'template' => ['type' => 'integer', 'description' => 'Optional id_template header/footer variant'],
+            'lang'     => ['type' => 'string', 'description' => 'Generate in this locale (e.g. en_US) instead of the record\'s document language; persists as the saved copy\'s pdf_lang'],
         ]];
     }
 
@@ -50,9 +51,10 @@ class GcRegeneratePdf extends AbstractPdfTool
         // copy actually needed the refresh.
         $wasStale = !PdfStaleness::savedCopyIsCurrent($record, $entry);
 
+        $lang = $this->assertValidLang($args);
         try {
             $templateId = isset($args['template']) ? (int) $args['template'] : null;
-            $res = PdfGenerator::generate($record, $entry, $templateId, $email);
+            $res = PdfGenerator::generate($record, $entry, $templateId, $email, $lang);
         } catch (\RuntimeException $e) {
             throw new ToolError($e->getMessage(), [], 'bad_request');
         } catch (\Throwable $e) {

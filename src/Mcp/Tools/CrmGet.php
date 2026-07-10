@@ -22,7 +22,7 @@ class CrmGet extends AbstractCrmTool
         $lang = $this->assertValidLang($args);
         $env  = $this->dispatch($entity, $this->buildRequest($args));
         if (($env['status'] ?? '') === 'success' && isset($env['data'])) {
-            $env['data'] = $this->mergeI18nColumns($entity, $args['id'] ?? '', $env['data'], $lang);
+            $env['data'] = $this->mergeI18nColumns($entity, $args['id'] ?? '', $env['data'], $lang, $this->userLocale($session));
         }
         return self::mapEnvelope($env);
     }

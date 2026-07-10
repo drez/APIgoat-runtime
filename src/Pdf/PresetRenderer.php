@@ -27,7 +27,7 @@ final class PresetRenderer
     /**
      * @return array{html:string, templates_used:array, placeholders:array, lang:string}
      */
-    public static function render(object $record, array $entry, ?int $templateId = null): array
+    public static function render(object $record, array $entry, ?int $templateId = null, ?string $langOverride = null): array
     {
         if (($entry['type'] ?? '') === 'custom') {
             $class = (string) ($entry['class'] ?? '');
@@ -46,7 +46,7 @@ final class PresetRenderer
             ];
         }
 
-        $tpl  = new TemplateRenderer($record, $entry, $templateId);
+        $tpl  = new TemplateRenderer($record, $entry, $templateId, $langOverride);
         $lang = $tpl->lang();
         $ccy  = PdfCurrency::resolve($record, $entry);
 
