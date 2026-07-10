@@ -63,6 +63,14 @@ class Api
     protected $denyColumns = self::SYSTEM_COLUMNS;
 
     /**
+     * Memo for i18nColumns() — phpNames of add_i18n columns proxied onto this
+     * model (null until first use).
+     *
+     * @var string[]|null
+     */
+    private $i18nColumnsMemo;
+
+    /**
      * Columns that must never appear in a generic-API JSON response, regardless
      * of the caller's `select` or read rights (review M1). Credential hashes and
      * single-use tokens — a user with mere `:r` on Authy could otherwise read
@@ -160,9 +168,40 @@ class Api
     }
 
     /**
+     * PhpNames of add_i18n columns proxied onto this model (e.g. Quote::Terms,
+     * which physically lives in quote_i18n). Propel's i18n behavior moves the
+     * column out of the main table map, so Peer::getFieldNames() no longer
+     * lists it — but the proxy get/set methods on the model remain, and the
+     * admin form still writes it. Without this, an API/MCP body key for an
+     * i18n column is silently dropped by filterRequest.
+     *
+     * @return string[]
+     */
+    private function i18nColumns()
+    {
+        if ($this->i18nColumnsMemo !== null) {
+            return $this->i18nColumnsMemo;
+        }
+        $this->i18nColumnsMemo = [];
+        $peer = "\\App\\{$this->tablename}I18nPeer";
+        if (class_exists($peer) && method_exists($peer, 'getFieldNames')) {
+            foreach ($peer::getFieldNames() as $phpName) {
+                // Skip the translation bookkeeping columns (FK to the parent +
+                // locale discriminator, both part of the i18n composite PK).
+                if ($phpName === 'Locale' || $phpName === 'Id' . $this->tablename) {
+                    continue;
+                }
+                $this->i18nColumnsMemo[] = $phpName;
+            }
+        }
+        return $this->i18nColumnsMemo;
+    }
+
+    /**
      * Decide whether a (camelized) request key may be written: it must be a
-     * real column, not on the sensitive-column denylist, and — when the
-     * generator supplied a per-form allowlist — present on that allowlist.
+     * real column (or an add_i18n proxy column), not on the sensitive-column
+     * denylist, and — when the generator supplied a per-form allowlist —
+     * present on that allowlist.
      *
      * @param string $cam camelized column name
      * @param array $fieldsName Peer::getFieldNames()
@@ -170,14 +209,31 @@ class Api
      */
     private function isWritableColumn($cam, $fieldsName)
     {
-        if (!in_array($cam, $fieldsName)) {
+        $isI18n = !in_array($cam, $fieldsName) && in_array($cam, $this->i18nColumns(), true);
+        if (!$isI18n && !in_array($cam, $fieldsName)) {
             return false;
         }
         if (in_array($cam, $this->denyColumns, true)) {
             return false;
         }
         if ($this->editableFields !== null && !in_array($cam, $this->editableFields, true)) {
-            return false;
+            if (!$isI18n) {
+                return false;
+            }
+            // The generator lists i18n columns on the form allowlist as
+            // per-locale keys ({Table}I18n_{Col}_{locale}); a plain-name write
+            // is allowed iff the form exposes the column in some locale.
+            $prefix = $this->tablename . 'I18n_' . $cam . '_';
+            $onForm = false;
+            foreach ($this->editableFields as $f) {
+                if (strncmp((string) $f, $prefix, strlen($prefix)) === 0) {
+                    $onForm = true;
+                    break;
+                }
+            }
+            if (!$onForm) {
+                return false;
+            }
         }
         return true;
     }
@@ -541,7 +597,11 @@ class Api
             }
 
             if (!$extValidationError) {
-                $this->setColumn($obj, $data);
+                // add_i18n proxy columns are applied per-locale (and kept out
+                // of colsToValidate — they are not columns of the main map).
+                $i18nData = array_intersect_key($data, array_flip($this->i18nColumns()));
+                $this->setColumn($obj, array_diff_key($data, $i18nData));
+                $this->applyI18n($obj, $i18nData);
 
                 if (!$this->validateSave($obj)) {
                     return false;
@@ -573,6 +633,46 @@ class Api
             return false;
         }
         return $obj;
+    }
+
+    /**
+     * Write add_i18n proxy columns across every supported locale, mirroring
+     * the generated form path (updatei18n) and DetailCopier: text supplied
+     * through the locale-less API/MCP surface must print whatever language
+     * the document renders in. Per-locale content stays the admin form's
+     * job (its per-locale {Table}I18n_{Col}_{locale} keys). The translation
+     * rows persist with the main object's save() (Propel i18n behavior).
+     *
+     * @param object $obj Propel model with the i18n behavior
+     * @param array $i18nData camelized i18n column => value
+     * @return void
+     */
+    private function applyI18n($obj, $i18nData)
+    {
+        if (!$i18nData || !method_exists($obj, 'setLocale')) {
+            return;
+        }
+        $locales = $_SESSION[_AUTH_VAR]->config['locale']['supported_locale'] ?? null;
+        if (!is_array($locales) || $locales === []) {
+            $locales = [null]; // no locale config: write the behavior's default locale
+        }
+        $origLocale = method_exists($obj, 'getLocale') ? $obj->getLocale() : null;
+        foreach ($locales as $locale) {
+            if ($locale !== null) {
+                $obj->setLocale((string) $locale);
+            }
+            foreach ($i18nData as $col => $val) {
+                $setter = 'set' . $col;
+                if (method_exists($obj, $setter)) {
+                    $obj->$setter($val);
+                } else {
+                    $this->response['messages'][] = 'Unknown column ' . $col;
+                }
+            }
+        }
+        if ($origLocale !== null) {
+            $obj->setLocale($origLocale);
+        }
     }
 
     /**

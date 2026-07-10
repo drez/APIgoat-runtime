@@ -119,6 +119,31 @@ final class MetaCatalog
             $fields[$phpName] = $this->describeColumn($col);
         }
 
+        // add_i18n columns: Propel's i18n behavior moves them to {table}_i18n,
+        // so the main map no longer lists them — but they stay readable and
+        // writable on the model via proxy getters/setters (Api::applyI18n).
+        // Surface them so crm_describe and the MCP writable check track the
+        // real write surface instead of rejecting e.g. Quote.Terms.
+        try {
+            $i18nMap = ($this->mapResolver)($name . 'I18n');
+        } catch (\Throwable) {
+            $i18nMap = null; // a failing i18n lookup must not hide the entity
+        }
+        if ($i18nMap instanceof \TableMap) {
+            foreach ($i18nMap->getColumns() as $col) {
+                $phpName = $col->getPhpName();
+                // Skip the translation bookkeeping (FK to the parent + locale,
+                // both in the i18n composite PK) and any name collision.
+                if ($col->isPrimaryKey() || $phpName === 'Locale' || isset($fields[$phpName])) {
+                    continue;
+                }
+                $field = $this->describeColumn($col);
+                $field['required'] = false; // translation rows are optional
+                $field['i18n'] = true;
+                $fields[$phpName] = $field;
+            }
+        }
+
         return [
             'label'       => $map->getPhpName(),
             'table'       => $map->getName(),
