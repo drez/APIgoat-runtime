@@ -359,12 +359,21 @@ abstract class AbstractCrmTool implements McpTool
         }
 
         // id → locale → phpName → value, one IN() query for the whole page.
+        // Concrete getters, NOT getByName(): the emitted models keep getByName
+        // but drop its getByPosition delegate, so generic access fatals.
+        $fkGetter = 'get' . $fkPhp;
         $byId = [];
         foreach ($i18nQuery::create()->filterBy($fkPhp, $ids, \Criteria::IN)->find() as $tr) {
-            $rowId = $tr->getByName($fkPhp);
-            $loc   = (string) $tr->getByName('Locale');
+            if (!method_exists($tr, $fkGetter) || !method_exists($tr, 'getLocale')) {
+                return $data;
+            }
+            $rowId = $tr->$fkGetter();
+            $loc   = (string) $tr->getLocale();
             foreach ($cols as $phpName => $snake) {
-                $byId[$rowId][$loc][$phpName] = (string) $tr->getByName($phpName);
+                $getter = 'get' . $phpName;
+                if (method_exists($tr, $getter)) {
+                    $byId[$rowId][$loc][$phpName] = (string) $tr->$getter();
+                }
             }
         }
 

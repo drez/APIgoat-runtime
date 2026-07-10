@@ -19,10 +19,17 @@ namespace {
 
 namespace App {
     // Fake translation row: quote_i18n shape (IdQuote, Locale, Terms, Notes).
+    // Concrete getters only — the merge must NOT rely on getByName (the
+    // emitted models keep it but drop its getByPosition delegate → fatal).
     class FakeI18nRow
     {
         public function __construct(private array $vals) {}
-        public function getByName(string $n) { return $this->vals[$n] ?? null; }
+        public function getIdQuote() { return $this->vals['IdQuote'] ?? null; }
+        public function getLocale() { return $this->vals['Locale'] ?? null; }
+        public function getTerms() { return $this->vals['Terms'] ?? null; }
+        public function getNotes() { return $this->vals['Notes'] ?? null; }
+        public function getDateCreation() { return $this->vals['DateCreation'] ?? null; }
+        public function getByName(string $n): void { throw new \RuntimeException('getByName must not be used (no getByPosition on emitted models)'); }
     }
 
     class QuotePeer
@@ -46,7 +53,7 @@ namespace App {
         public function find(): array
         {
             $ids = self::$lastFilter[1] ?? [];
-            return array_values(array_filter(self::$rows, fn ($r) => in_array($r->getByName('IdQuote'), $ids, true)));
+            return array_values(array_filter(self::$rows, fn ($r) => in_array($r->getIdQuote(), $ids, true)));
         }
     }
 }
