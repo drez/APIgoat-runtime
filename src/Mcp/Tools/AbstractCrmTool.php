@@ -210,6 +210,82 @@ abstract class AbstractCrmTool implements McpTool
         }
     }
 
+    /**
+     * Validate the optional 'lang' argument against the configured locales.
+     * Returns the normalized locale, or null when absent (locale-less
+     * behavior: writes fan out to every locale, reads use the record's lang).
+     */
+    protected function assertValidLang(array $args): ?string
+    {
+        $lang = trim((string) ($args['lang'] ?? ''));
+        if ($lang === '') {
+            return null;
+        }
+        $supported = $_SESSION[_AUTH_VAR]->config['locale']['supported_locale'] ?? null;
+        if (is_array($supported) && $supported !== [] && !in_array($lang, $supported, true)) {
+            throw new ToolError(
+                "Unsupported lang '{$lang}'. Supported: " . implode(', ', $supported) . '.',
+                [],
+                'validation'
+            );
+        }
+        return $lang;
+    }
+
+    /**
+     * Append add_i18n column values to a fetched row. The generic view SQL
+     * cannot select i18n columns off the base table (they live in
+     * {table}_i18n), so crm_get rows silently lacked Terms/Notes/Description.
+     * Values read through the model's proxy getters at $lang (default: the
+     * row's own lang column, else the behavior default), falling back to
+     * fr_CA like the document renderers.
+     *
+     * @param mixed $data the envelope 'data' (single assoc row expected)
+     */
+    protected function mergeI18nColumns(string $entity, $id, $data, ?string $lang)
+    {
+        if (!is_array($data) || $data === [] || isset($data[0])) {
+            return $data; // not a single row
+        }
+        $peer  = "\\App\\{$entity}I18nPeer";
+        $query = "\\App\\{$entity}Query";
+        if (!class_exists($peer) || !method_exists($peer, 'getFieldNames') || !class_exists($query)) {
+            return $data;
+        }
+        // filterByPrimaryKey()->findOne(), NOT findPk(): the tenant/ACL query
+        // behaviors only apply through doSelect (see AuthySession::loadPkScoped).
+        $obj = $query::create()->filterByPrimaryKey($id)->findOne();
+        if (!$obj || !method_exists($obj, 'setLocale')) {
+            return $data;
+        }
+        $locale = $lang;
+        if ($locale === null && method_exists($obj, 'getLang') && (string) $obj->getLang() !== '') {
+            $locale = (string) $obj->getLang();
+        }
+        foreach ($peer::getFieldNames() as $phpName) {
+            if ($phpName === 'Locale' || $phpName === 'Id' . $entity) {
+                continue;
+            }
+            $getter = 'get' . $phpName;
+            if (!method_exists($obj, $getter)) {
+                continue;
+            }
+            if ($locale !== null) {
+                $obj->setLocale($locale);
+            }
+            $v = (string) $obj->$getter();
+            if ($v === '' && $locale !== null && $locale !== 'fr_CA') {
+                $obj->setLocale('fr_CA');
+                $v = (string) $obj->$getter();
+            }
+            $key = strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $phpName));
+            if (!array_key_exists($key, $data)) {
+                $data[$key] = $v;
+            }
+        }
+        return $data;
+    }
+
     /** Reject a create missing required writable fields (mirrors crm_describe's 'required' flag). */
     protected function assertRequired(array $catalog, string $entity, array $data): void
     {

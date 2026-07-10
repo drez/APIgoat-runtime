@@ -14,6 +14,7 @@ class CrmCreate extends AbstractCrmTool
             'entity' => ['type' => 'string'],
             'data' => ['type' => 'object', 'description' => 'column → value; only writable columns (see crm_describe)'],
             'confirm' => ['type' => 'boolean', 'description' => 'must be true to execute; get the user\'s approval of the pending record first'],
+            'lang' => ['type' => 'string', 'description' => 'Scope add_i18n column writes to this locale only (e.g. fr_CA); omit to write every language'],
         ]];
     }
 
@@ -25,6 +26,7 @@ class CrmCreate extends AbstractCrmTool
         $this->assertEntityPermitted($catalog, $entity, 'create');
         $this->assertWritable($catalog, $entity, $data);
         $this->assertRequired($catalog, $entity, $data);
+        $this->assertValidLang($args);
         if (empty($args['confirm'])) {
             throw new ToolError(
                 "Nothing created yet — show the user this pending {$entity} and re-call with confirm:true once they approve: "
@@ -41,6 +43,7 @@ class CrmCreate extends AbstractCrmTool
         return array_merge(self::baseRequest((string) $args['entity'], 'POST'), [
             'action' => 'create',
             'data' => (array) ($args['data'] ?? []),
+            'lang' => trim((string) ($args['lang'] ?? '')),
         ]);
     }
 }

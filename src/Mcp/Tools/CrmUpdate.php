@@ -6,12 +6,13 @@ use ApiGoat\Sessions\AuthySession;
 class CrmUpdate extends AbstractCrmTool
 {
     public function name(): string { return 'crm_update'; }
-    public function description(): string { return 'Update an existing CRM row by id. data = writable column → value.'; }
+    public function description(): string { return 'Update an existing CRM row by id. data = writable column → value. add_i18n columns write to EVERY language by default — pass lang to write one locale only.'; }
     public function inputSchema(): array
     {
         return ['type' => 'object', 'required' => ['entity', 'id', 'data'], 'properties' => [
             'entity' => ['type' => 'string'], 'id' => ['type' => ['integer', 'string']],
             'data' => ['type' => 'object'],
+            'lang' => ['type' => 'string', 'description' => 'Scope add_i18n column writes to this locale only (e.g. fr_CA); omit to write every language'],
         ]];
     }
 
@@ -21,6 +22,7 @@ class CrmUpdate extends AbstractCrmTool
         $catalog = $this->catalog($session);
         $this->assertEntityPermitted($catalog, $entity, 'update');
         $this->assertWritable($catalog, $entity, (array) ($args['data'] ?? []));
+        $this->assertValidLang($args);
         return self::mapEnvelope($this->dispatch($entity, $this->buildRequest($args)));
     }
 
@@ -30,6 +32,7 @@ class CrmUpdate extends AbstractCrmTool
             'i' => $args['id'] ?? '',
             'action' => 'update',
             'data' => (array) ($args['data'] ?? []),
+            'lang' => trim((string) ($args['lang'] ?? '')),
         ]);
     }
 }

@@ -71,6 +71,15 @@ class Api
     private $i18nColumnsMemo;
 
     /**
+     * Per-request locale for i18n writes (the request's 'lang' key, set by
+     * the MCP crm_update/crm_create tools). null = write every supported
+     * locale (the locale-less default).
+     *
+     * @var string|null
+     */
+    private $i18nWriteLocale;
+
+    /**
      * Columns that must never appear in a generic-API JSON response, regardless
      * of the caller's `select` or read rights (review M1). Credential hashes and
      * single-use tokens — a user with mere `:r` on Authy could otherwise read
@@ -250,6 +259,12 @@ class Api
 
         $this->response = [];
         $this->response['status'] = 'failure';
+
+        // Optional per-request locale for i18n columns: scope the write to one
+        // language instead of fanning out to every supported locale.
+        $this->i18nWriteLocale = isset($request['lang']) && $request['lang'] !== ''
+            ? (string) $request['lang']
+            : null;
 
         #one entry, or multiple with querybuilder
 
@@ -652,9 +667,13 @@ class Api
         if (!$i18nData || !method_exists($obj, 'setLocale')) {
             return;
         }
-        $locales = $_SESSION[_AUTH_VAR]->config['locale']['supported_locale'] ?? null;
-        if (!is_array($locales) || $locales === []) {
-            $locales = [null]; // no locale config: write the behavior's default locale
+        if ($this->i18nWriteLocale !== null) {
+            $locales = [$this->i18nWriteLocale]; // per-request locale-scoped write
+        } else {
+            $locales = $_SESSION[_AUTH_VAR]->config['locale']['supported_locale'] ?? null;
+            if (!is_array($locales) || $locales === []) {
+                $locales = [null]; // no locale config: write the behavior's default locale
+            }
         }
         $origLocale = method_exists($obj, 'getLocale') ? $obj->getLocale() : null;
         foreach ($locales as $locale) {
