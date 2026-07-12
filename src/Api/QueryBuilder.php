@@ -181,12 +181,11 @@ class QueryBuilder
         }
 
         if (!empty($this->request['select'])) {
-            // From a query string the select arrives as its raw JSON text
-            // (only `filter` has a normalizer); body/tool callers pass arrays.
-            $select = $this->request['select'];
-            if (\is_string($select)) {
-                $select = \json_decode($select, true);
-            }
+            // From a query string the select arrives as its raw JSON text — and,
+            // behind a rewrite that re-escapes the query, still percent-encoded
+            // (see decodeJsonParam). A silently-dropped select turned the
+            // dashboard's SUM() aggregates into unfiltered full-table reads.
+            $select = self::decodeJsonParam($this->request['select']);
             if (\is_array($select) && $this->setSelect($select)) {
                 return true;
             }
@@ -376,6 +375,38 @@ class QueryBuilder
         return $useQuery;
     }
 
+    /**
+     * Decode a JSON query param (filter / select), or NULL when it cannot be read.
+     *
+     * A web server may hand PHP the param STILL PERCENT-ENCODED: prod's root
+     * .htaccess rewrites `^(.*)$ -> /.admin/$1` and the internal redirect escaped
+     * the query string a second time, so `filter[Project]` arrived as the literal
+     * text '%5B%5B%22state%22...' instead of '[["state",...]]'. json_decode()
+     * returned null, the caller coerced that to [[]] — a filter row with NO column
+     * — and Propel threw "Unknown column  in model App\Project": a 500 HTML page
+     * for every filtered request (dashboard KPIs, list search, every child list),
+     * which the mobile client could only report as "JSON Parse error: Unexpected
+     * character: <". Dev has no such rewrite, so dev never reproduced it.
+     *
+     * Retry once through urldecode() so the API survives any such proxy, and
+     * return NULL (never an empty row) when the param is genuinely unreadable.
+     */
+    public static function decodeJsonParam($raw)
+    {
+        if (is_array($raw)) {
+            return $raw ?: null;
+        }
+        if (!is_string($raw) || $raw === '') {
+            return null;
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            // Only a re-escaped payload reaches here; a valid JSON string decoded above.
+            $decoded = json_decode(urldecode($raw), true);
+        }
+        return is_array($decoded) && $decoded !== [] ? $decoded : null;
+    }
+
     private function setFilters(array $filtersRequest)
     {
         foreach ($filtersRequest as $table => $filters) {
@@ -389,10 +420,17 @@ class QueryBuilder
 
             if (empty($useQuery) || method_exists($this->Query, $useQuery)) {
 
-                // GET path: PHP delivers filter[Model] as a JSON string; decode it.
+                // GET path: PHP delivers filter[Model] as a JSON string (possibly
+                // re-escaped by the web server — see decodeJsonParam).
                 if (is_string($filters)) {
-                    $decoded = json_decode($filters, true);
-                    $filters = is_array($decoded) ? $decoded : [];
+                    $filters = self::decodeJsonParam($filters);
+                }
+
+                // Unreadable filter: say so and move on. Coercing it into [[]] built
+                // a column-less filterBy() and fataled the whole request.
+                if (!is_array($filters) || $filters === []) {
+                    $this->messages[] = "Filter: could not read filters for ({$table})";
+                    continue;
                 }
 
                 if (!is_array($filters[0])) {
@@ -401,8 +439,15 @@ class QueryBuilder
 
                 foreach ($filters as $filter) {
 
+                    // A row without a column can only produce filterBy('') → a
+                    // PropelException that 500s the request. Skip it.
+                    if (!isset($filter[0]) || !is_string($filter[0]) || $filter[0] === '') {
+                        $this->messages[] = "Filter: skipped a filter with no column on ({$table})";
+                        continue;
+                    }
+
                     $addOr = false;
-                    $filter[1] = ($filter[1] == 'null') ? null : $filter[1];
+                    $filter[1] = ($filter[1] ?? null) == 'null' ? null : ($filter[1] ?? null);
                     if (strpos($filter[0], '.') === false) {
                         $filterStr = "filterBy" . \camelize($filter[0], true);
                     } else {

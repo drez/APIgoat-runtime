@@ -36,15 +36,27 @@ class OAuthServerFactory
             $this->encryptionKey
         );
 
+        // Session policy for bearer clients (the mobile app):
+        //   access token  PT1H  — short-lived; the client silently refreshes it.
+        //   refresh token P7D   — the session ceiling. Rotated on every use, so an
+        //                         app opened at least once a week stays signed in;
+        //                         a week untouched requires a fresh login. (Was
+        //                         P30D — a month-long bearer session is a wider
+        //                         window than this app needs.)
+        // An idle day is therefore never a re-login, which is the point: the app
+        // refreshes on resume, well inside the ceiling.
+        $accessTtl  = new \DateInterval('PT1H');
+        $refreshTtl = new \DateInterval('P7D');
+
         $authCode = new AuthCodeGrant($this->authCodes, $this->refreshTokens, new \DateInterval('PT10M'));
-        $authCode->setRefreshTokenTTL(new \DateInterval('P30D'));
+        $authCode->setRefreshTokenTTL($refreshTtl);
         // PKCE is required by default for public clients; do NOT disable it.
         // S256-only enforcement is done in the controller (Task 8).
-        $server->enableGrantType($authCode, new \DateInterval('PT1H'));
+        $server->enableGrantType($authCode, $accessTtl);
 
         $refresh = new RefreshTokenGrant($this->refreshTokens);
-        $refresh->setRefreshTokenTTL(new \DateInterval('P30D'));
-        $server->enableGrantType($refresh, new \DateInterval('PT1H'));
+        $refresh->setRefreshTokenTTL($refreshTtl);
+        $server->enableGrantType($refresh, $accessTtl);
 
         return $server;
     }
