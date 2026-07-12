@@ -298,14 +298,16 @@ class Api
             return $this->response;
         }
 
-        if ($request['rbac_public'] != 'passed') {
-            if ($request["action"] == 'update' || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'] ?? null)))) {
-                $acl = $this->authorize($this->tablename, 'w');
-            } else {
-                $acl = $this->authorize($this->tablename, 'a');
-            }
+        // SECURITY: write operations ALWAYS run authorize(), regardless of
+        // rbac_public. A Public+Allow api_rbac rule (e.g. the public Authy/auth
+        // login) may waive owner/tenant ACL on READS only — it must never waive
+        // authorization on create/update/delete. The router dispatches
+        // Authy/auth/<id> to generic CRUD (setJson) inheriting rbac_public=='passed';
+        // without this an unauthenticated caller could create/overwrite rows.
+        if ($request["action"] == 'update' || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'] ?? null)))) {
+            $acl = $this->authorize($this->tablename, 'w');
         } else {
-            $acl = true;
+            $acl = $this->authorize($this->tablename, 'a');
         }
 
         if (!$acl) {
@@ -487,11 +489,10 @@ class Api
     public function deleteJson($data, $QueryBuilder = null)
     {
 
-        if ($data['rbac_public'] != 'passed') {
-            $acls = $this->authorize($this->tablename, 'd');
-        } else {
-            $acls = true;
-        }
+        // SECURITY: delete ALWAYS runs authorize(), regardless of rbac_public.
+        // Public status may waive owner/tenant ACL on READS only, never on
+        // create/update/delete (see setJson).
+        $acls = $this->authorize($this->tablename, 'd');
 
         if (!$acls) {
             $this->response['error'] = "Permission denied";
