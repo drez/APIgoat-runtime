@@ -24,12 +24,45 @@ use Slim\Psr7\Response;
  */
 class OAuthResourceMiddleware implements MiddlewareInterface
 {
-    /** Legacy (is_api=false) actions that still need bearer identity: file upload/download and mass actions. */
+    /** Framework legacy (is_api=false) actions that need bearer identity: file upload/download + mass actions. */
     private const LEGACY_BEARER_ACTIONS = ['upload', 'open', 'file', 'mass'];
 
     /**
+     * The legacy actions a bearer client may authenticate to: the framework's own,
+     * plus whatever the project declares in settings under `bearer_legacy_actions`.
+     *
+     * Projects mount their own non-API routes (apigoatacc: Cost/scanReceipt and
+     * Client/scanAndCreateClient — the dashboard's receipt / business-card scans).
+     * A mobile bearer client could not reach ANY of them: identity was only
+     * hydrated for the four hardcoded names, so the request arrived
+     * unauthenticated. A shared runtime can't grow a per-project const, hence the
+     * settings hook. Widening it grants IDENTITY only — api_rbac, Api::authorize
+     * and the ACL still gate the request exactly as they do for a browser session.
+     *
+     * @param array<string,mixed> $settings
+     * @return list<string>
+     */
+    public static function legacyBearerActions(array $settings): array
+    {
+        $extra = $settings['bearer_legacy_actions'] ?? null;
+        if (!is_array($extra)) {
+            return self::LEGACY_BEARER_ACTIONS;
+        }
+        $out = self::LEGACY_BEARER_ACTIONS;
+        foreach ($extra as $action) {
+            // Never admit an empty/blank entry: it would match a request carrying
+            // no action at all and hydrate identity on routes nobody listed.
+            if (!is_string($action) || trim($action) === '' || in_array($action, $out, true)) {
+                continue;
+            }
+            $out[] = $action;
+        }
+        return $out;
+    }
+
+    /**
      * Pure routing predicate (unit-tested). Bearer identity is hydrated for API routes
-     * AND for legacy is_api=false actions (upload/open/file/mass) — those are dispatched
+     * AND for legacy is_api=false actions (see legacyBearerActions) — those are dispatched
      * only by the legacy route, so without this the mobile bearer client cannot reach them.
      * Hydration is identity-only; RbacMiddleware (api_rbac) + Authy +
      * Api::authorize + ACL still gate the request identically to a browser session.
@@ -44,7 +77,7 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         $parsed = $request->getAttribute('parsed_args');
         $isApi = is_array($parsed) && (($parsed['is_api'] ?? false) == true);
         $action = is_array($parsed) ? (string) ($parsed['action'] ?? '') : '';
-        $isLegacyBearerAction = in_array($action, self::LEGACY_BEARER_ACTIONS, true);
+        $isLegacyBearerAction = in_array($action, self::legacyBearerActions(\ApiGoat\Utility\Settings::load()), true);
 
         $connected = isset($_SESSION[\_AUTH_VAR]) && $_SESSION[\_AUTH_VAR]->get('connected') === 'YES';
 
