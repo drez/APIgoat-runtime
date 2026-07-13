@@ -65,4 +65,52 @@ $qr = $client->query('123', "select Id from Customer where DisplayName = 'Acme'"
 check('query unwrapped', $qr['Customer'][0]['Id'], '5');
 check('query urlencoded', str_contains($captured[1], 'query?query=select%20Id%20from%20Customer'), true);
 
+// fromEnv(): missing credentials → AuthFailed
+putenv('QB_CLIENT_ID');
+putenv('QB_CLIENT_SECRET');
+putenv('QB_ENV');
+unset($_ENV['QB_CLIENT_ID'], $_ENV['QB_CLIENT_SECRET'], $_ENV['QB_ENV']);
+$threw = null;
+try { QboApiClient::fromEnv(); } catch (\Throwable $e) { $threw = get_class($e); }
+check('fromEnv missing => AuthFailed', $threw, 'ApiGoat\Sync\Exceptions\AuthFailed');
+
+// fromEnv(): production env via env vars
+$_ENV['QB_CLIENT_ID'] = 'envid';
+$_ENV['QB_CLIENT_SECRET'] = 'envsec';
+$_ENV['QB_ENV'] = 'production';
+$env_client = QboApiClient::fromEnv();
+check('fromEnv prod apiBase', $env_client->apiBase(), 'https://quickbooks.api.intuit.com');
+$auth_url = $env_client->authorizeUrl('https://cb', 'st');
+check('fromEnv authorizeUrl has client_id', str_contains($auth_url, 'client_id=envid'), true);
+// Clean up env vars
+unset($_ENV['QB_CLIENT_ID'], $_ENV['QB_CLIENT_SECRET'], $_ENV['QB_ENV']);
+putenv('QB_CLIENT_ID');
+putenv('QB_CLIENT_SECRET');
+putenv('QB_ENV');
+
+// fromEnv(): default to sandbox when QB_ENV unset
+$_ENV['QB_CLIENT_ID'] = 'envid2';
+$_ENV['QB_CLIENT_SECRET'] = 'envsec2';
+// QB_ENV intentionally not set
+$sandbox_client = QboApiClient::fromEnv();
+check('fromEnv default sandbox', $sandbox_client->apiBase(), 'https://sandbox-quickbooks.api.intuit.com');
+// Clean up
+unset($_ENV['QB_CLIENT_ID'], $_ENV['QB_CLIENT_SECRET']);
+putenv('QB_CLIENT_ID');
+putenv('QB_CLIENT_SECRET');
+
+// refreshToken(): grant_type and form body via transport
+$refresh_client = new QboApiClient('rid', 'rsec', 'sandbox');
+$refresh_captured = [];
+$refresh_client->transport = function (string $m, string $u, array $h, ?string $b) use (&$refresh_captured): array {
+    $refresh_captured = [$m, $u, $h, $b];
+    return ['status' => 200, 'body' => json_encode(['access_token' => 'NEWAT', 'refresh_token' => 'NEWRT', 'expires_in' => 3600])];
+};
+$new_tok = $refresh_client->refreshToken('RTOK');
+check('refreshToken returns access_token', $new_tok['access_token'], 'NEWAT');
+parse_str((string) $refresh_captured[3], $refresh_form);
+check('refreshToken grant_type', $refresh_form['grant_type'], 'refresh_token');
+check('refreshToken refresh_token param', $refresh_form['refresh_token'], 'RTOK');
+check('refreshToken Basic auth header', in_array('Authorization: Basic ' . base64_encode('rid:rsec'), $refresh_captured[2], true), true);
+
 exit($fails ? 1 : 0);
