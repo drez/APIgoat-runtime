@@ -87,7 +87,7 @@ final class QboApiClient
             'Authorization: Bearer ' . $accessToken,
             'Accept: application/json',
             'Content-Type: application/json',
-        ], $payload === null ? null : (string) json_encode($payload));
+        ], $payload === null ? null : (string) json_encode($payload, JSON_PRESERVE_ZERO_FRACTION));
         return $this->decode($r);
     }
 
