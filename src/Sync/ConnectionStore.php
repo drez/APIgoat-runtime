@@ -24,6 +24,9 @@ final class ConnectionStore
 
     public static function storeTokens($conn, array $tok): void
     {
+        if (empty($tok['access_token']) || empty($tok['refresh_token'])) {
+            throw new Exceptions\AuthFailed('QuickBooks token response missing access_token/refresh_token');
+        }
         $conn->setAccessTokenEnc(en_de('encrypt', (string) $tok['access_token']));
         $conn->setRefreshTokenEnc(en_de('encrypt', (string) $tok['refresh_token']));
         // 60s skew so we refresh before the edge, not after a 401.

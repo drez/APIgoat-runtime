@@ -66,6 +66,17 @@ final class QboProvider implements AccountingProvider
             return null;
         }
         $nameProp = in_array($role, self::MATCH_ONLY, true) ? 'Name' : 'DisplayName';
+        $hit = $this->queryByName($entity, $nameProp, $name);
+        // A company that is both Customer and Vendor lives in QBO under a decorated
+        // DisplayName (QBO enforces cross-entity name uniqueness) — look for it too.
+        if (!$hit && $role === 'vendor') {
+            $hit = $this->queryByName($entity, $nameProp, $name . ' (Vendor)');
+        }
+        return $hit;
+    }
+
+    private function queryByName(string $entity, string $nameProp, string $name): ?array
+    {
         $q    = "select Id, SyncToken from {$entity} where {$nameProp} = '" . str_replace("'", "\\'", $name) . "'";
         $rows = $this->client->query($this->realm(), $q, $this->token())[$entity] ?? [];
         return $rows
@@ -88,12 +99,25 @@ final class QboProvider implements AccountingProvider
 
         $entity  = self::ENTITY[$role] ?? throw new Exceptions\ValidationRejected("Unknown sync role '{$role}'");
         $payload = $this->payload($role, $dto);
-        if ($remoteId) {
+        $isUpdate = (bool) $remoteId;
+        if ($isUpdate) {
             $payload['Id']        = (string) $remoteId;
             $payload['SyncToken'] = (string) ($existing['synctoken'] ?? '0');
             $payload['sparse']    = true;
         }
-        $res = $this->client->api($this->realm(), 'POST', strtolower($entity), $payload, $this->token());
+        try {
+            $res = $this->client->api($this->realm(), 'POST', strtolower($entity), $payload, $this->token());
+        } catch (Exceptions\ValidationRejected $e) {
+            // QBO enforces DisplayName uniqueness ACROSS Customer+Vendor: a vendor
+            // create colliding with an existing customer retries once, decorated.
+            if (!$isUpdate && $role === 'vendor'
+                && preg_match('/already using this name|Duplicate Name/i', $e->getMessage())) {
+                $payload['DisplayName'] = (string) ($dto['fields']['display_name'] ?? '') . ' (Vendor)';
+                $res = $this->client->api($this->realm(), 'POST', strtolower($entity), $payload, $this->token());
+            } else {
+                throw $e;
+            }
+        }
         $ent = $res[$entity] ?? [];
         $out = ['id' => (string) ($ent['Id'] ?? ''), 'synctoken' => (string) ($ent['SyncToken'] ?? '0')];
 
@@ -134,15 +158,46 @@ final class QboProvider implements AccountingProvider
                 foreach (($dto['lines'] ?? []) as $l) {
                     $qty  = (float) ($l['qty'] ?? 1);
                     $unit = (float) ($l['unit_price'] ?? 0);
+                    // Per-line taxability overrides the invoice-level code when the map
+                    // supplies taxable_gst/taxable_qst. QBO has no GST-only/QST-only code,
+                    // so a mixed line is rejected rather than silently mis-taxed.
+                    $lineTaxRef = $taxRef;
+                    if (array_key_exists('taxable_gst', $l) || array_key_exists('taxable_qst', $l)) {
+                        $gstYes = ((string) ($l['taxable_gst'] ?? '')) === 'Yes';
+                        $qstYes = ((string) ($l['taxable_qst'] ?? '')) === 'Yes';
+                        if ($gstYes !== $qstYes) {
+                            throw new Exceptions\ValidationRejected(
+                                'Line "' . (string) ($l['description'] ?? '')
+                                . '": GST-only or QST-only lines are not supported by the QuickBooks sync'
+                                . ' — make the line fully taxable or fully exempt'
+                            );
+                        }
+                        $lineTaxRef = $this->resolveTaxCode($gstYes && $qstYes);
+                    }
                     $lines[] = [
                         'DetailType'  => 'SalesItemLineDetail',
                         'Amount'      => (float) round($qty * $unit, 2),
                         'Description' => (string) ($l['description'] ?? ''),
                         'SalesItemLineDetail' => [
                             'ItemRef' => ['value' => $itemRef], 'Qty' => $qty, 'UnitPrice' => $unit,
-                            'TaxCodeRef' => ['value' => $taxRef],
+                            'TaxCodeRef' => ['value' => $lineTaxRef],
                         ],
                     ];
+                }
+                // Invoice-level discount → a DiscountLineDetail line (percent or amount).
+                if (((float) ($f['discount'] ?? 0)) > 0) {
+                    if (((string) ($f['discount_type'] ?? '%')) === '%') {
+                        $lines[] = [
+                            'DetailType'        => 'DiscountLineDetail',
+                            'DiscountLineDetail' => ['PercentBased' => true, 'DiscountPercent' => (float) $f['discount']],
+                        ];
+                    } else {
+                        $lines[] = [
+                            'DetailType'        => 'DiscountLineDetail',
+                            'Amount'            => (float) $f['discount'],
+                            'DiscountLineDetail' => ['PercentBased' => false],
+                        ];
+                    }
                 }
                 $p = ['CustomerRef' => ['value' => (string) $dto['refs']['customer']['remote_id']],
                       'Line' => $lines, 'GlobalTaxCalculation' => 'TaxExcluded'];

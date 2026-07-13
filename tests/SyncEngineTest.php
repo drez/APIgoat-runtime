@@ -35,9 +35,13 @@ final class MemLinks implements LinkStore {
 final class FakeProvider implements AccountingProvider {
     public array $pushes = [];          // list of [role, dto, existing]
     public array $matches = [];         // "role|display_name" => ['id'=>..,'synctoken'=>..]
+    public array $throwOn = [];         // roles that should throw on push
     private int $seq = 100;
     public function push(string $role, array $dto, ?array $existing): array {
         $this->pushes[] = [$role, $dto, $existing];
+        if (in_array($role, $this->throwOn, true)) {
+            throw new \ApiGoat\Sync\Exceptions\ValidationRejected("boom {$role}");
+        }
         if (in_array($role, ['account', 'category'], true) && !$existing) {
             throw new \ApiGoat\Sync\Exceptions\ValidationRejected("no QuickBooks account named '{$dto['fields']['display_name']}'");
         }
@@ -70,8 +74,8 @@ $db = [
     'company'      => [3 => ['name' => 'Acme', 'is_vendor' => 'No'], 9 => ['name' => 'Depot', 'is_vendor' => 'Yes']],
     'bank_account' => [2 => ['name' => 'Desjardins']],
 ];
-$loadRecord = fn (string $t, int $pk): ?array => $db[$t][$pk] ?? null;
-$loadChildren = function (string $t, string $fk, int $pk) use ($db): array {
+$loadRecord = function (string $t, int $pk) use (&$db): ?array { return $db[$t][$pk] ?? null; };
+$loadChildren = function (string $t, string $fk, int $pk) use (&$db): array {
     return array_values(array_filter($db[$t] ?? [], fn ($r) => (int) ($r[$fk] ?? 0) === $pk));
 };
 
@@ -120,5 +124,37 @@ $payDto = null;
 foreach ($prov4->pushes as [$role, $dto]) { if ($role === 'payment') $payDto = $dto; }
 check('payment has invoice ref', isset($payDto['refs']['invoice']), true);
 check('payment has customer ref', isset($payDto['refs']['customer']), true);
+
+// 7. party role (customer/vendor) with no existing link is SKIPPED in pushRecord
+//    — a direct edit of an unlinked party must never attempt a create.
+$links5 = new MemLinks(); $prov5 = new FakeProvider();
+$engine5 = new SyncEngine($prov5, $links5, $loadRecord, $loadChildren, $map);
+check('unlinked party skipped', $engine5->pushRecord('company', 9), 'skipped'); // is_vendor Yes, no link
+check('no party push attempted', count($prov5->pushes), 0);
+
+// 8. role loop continues past a throwing role; first exception rethrown at the end
+$db['company'][20] = ['name' => 'Both Co', 'is_vendor' => 'Yes'];
+$links6 = new MemLinks(); $prov6 = new FakeProvider();
+$prov6->throwOn = ['customer'];
+$links6->save('customer', 'company', 20, ['remote_id' => '201', 'synctoken' => '0', 'hash' => 'stale']);
+$links6->save('vendor',   'company', 20, ['remote_id' => '202', 'synctoken' => '0', 'hash' => 'stale']);
+$engine6 = new SyncEngine($prov6, $links6, $loadRecord, $loadChildren, $map);
+$threw2 = false;
+try { $engine6->pushRecord('company', 20); } catch (\ApiGoat\Sync\Exceptions\ValidationRejected $e) { $threw2 = true; }
+check('role loop rethrows first error', $threw2, true);
+check('other role still pushed despite throw', in_array('vendor', array_column($prov6->pushes, 0), true), true);
+
+// 9. when_not gate: a gated-out row is skipped entirely (no push, no dep resolve)
+$mapWN = $map;
+$mapWN['tables']['invoice'] = ['roles' => ['invoice' => ['when_not' => ['status' => 'Cancelled']]],
+    'customer' => 'id_company',
+    'fields' => ['doc_number' => 'invoice_number', 'txn_date' => 'issue_date'],
+    'lines' => ['table' => 'invoice_line', 'fields' => ['description' => 'description', 'qty' => 'qty', 'unit_price' => 'unit_price']],
+    'taxes' => ['gst' => 'tps_amount', 'qst' => 'tvq_amount']];
+$db['invoice'][30] = ['invoice_number' => 'INV-30', 'issue_date' => '2026-07-01', 'id_company' => 3, 'status' => 'Cancelled', 'tps_amount' => '0', 'tvq_amount' => '0'];
+$links7 = new MemLinks(); $prov7 = new FakeProvider();
+$engine7 = new SyncEngine($prov7, $links7, $loadRecord, $loadChildren, $mapWN);
+check('when_not cancels the push', $engine7->pushRecord('invoice', 30), 'skipped');
+check('cancelled invoice not pushed', count($prov7->pushes), 0);
 
 exit($fails ? 1 : 0);

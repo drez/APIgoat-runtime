@@ -25,6 +25,14 @@ check('tablesByRole none', SyncMap::tablesByRole($map, 'payment'), []);
 check('whenPasses no gate', SyncMap::whenPasses([], ['is_vendor' => 'No']), true);
 check('whenPasses gate yes', SyncMap::whenPasses(['when' => ['is_vendor' => 'Yes']], ['is_vendor' => 'Yes']), true);
 check('whenPasses gate no', SyncMap::whenPasses(['when' => ['is_vendor' => 'Yes']], ['is_vendor' => 'No']), false);
+// when value as array → in_array membership
+check('whenPasses array member', SyncMap::whenPasses(['when' => ['status' => ['Sent', 'Paid']]], ['status' => 'Paid']), true);
+check('whenPasses array miss', SyncMap::whenPasses(['when' => ['status' => ['Sent', 'Paid']]], ['status' => 'Draft']), false);
+// when_not: all must NOT match (scalar + array)
+check('when_not blocks', SyncMap::whenPasses(['when_not' => ['status' => 'Cancelled']], ['status' => 'Cancelled']), false);
+check('when_not passes', SyncMap::whenPasses(['when_not' => ['status' => 'Cancelled']], ['status' => 'Sent']), true);
+check('when_not array blocks', SyncMap::whenPasses(['when_not' => ['status' => ['Cancelled', 'Void']]], ['status' => 'Void']), false);
+check('when + when_not combined', SyncMap::whenPasses(['when' => ['kind' => 'A'], 'when_not' => ['status' => 'X']], ['kind' => 'A', 'status' => 'Y']), true);
 check('primary roles', SyncMap::PRIMARY_ROLES, ['invoice', 'expense', 'payment']);
 check('load without _BASE_DIR', SyncMap::load(), null);
 

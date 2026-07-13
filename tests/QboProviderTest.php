@@ -158,4 +158,77 @@ $respond([
 $prov2->push('invoice', $invDto, null);
 check('tax code resolved + cached', json_decode($conn2->f['state_json'], true)['tax_code_id'], '7');
 
+// F7 — percent-based invoice discount → DiscountLineDetail line
+$discPctDto = ['fields' => ['doc_number' => 'INV-D1', 'discount' => '10', 'discount_type' => '%'],
+    'refs' => ['customer' => ['remote_id' => '70']],
+    'lines' => [['description' => 'Work', 'qty' => '1', 'unit_price' => '100']],
+    'taxes' => ['gst' => '5.00', 'qst' => '9.98']];
+$calls = [];
+$respond([['status' => 200, 'body' => '{"Invoice":{"Id":"320","SyncToken":"0"}}']]);
+$prov->push('invoice', $discPctDto, null);
+$body = json_decode((string) $calls[0][2], true);
+$disc = null; foreach ($body['Line'] as $ln) { if (($ln['DetailType'] ?? '') === 'DiscountLineDetail') $disc = $ln; }
+check('percent discount line', [$disc['DiscountLineDetail']['PercentBased'], $disc['DiscountLineDetail']['DiscountPercent']], [true, 10.0]);
+
+// F7 — amount-based invoice discount → Amount on the discount line
+$discAmtDto = $discPctDto; $discAmtDto['fields']['discount'] = '25'; $discAmtDto['fields']['discount_type'] = '$';
+$calls = [];
+$respond([['status' => 200, 'body' => '{"Invoice":{"Id":"321","SyncToken":"0"}}']]);
+$prov->push('invoice', $discAmtDto, null);
+$body = json_decode((string) $calls[0][2], true);
+$disc = null; foreach ($body['Line'] as $ln) { if (($ln['DetailType'] ?? '') === 'DiscountLineDetail') $disc = $ln; }
+check('amount discount line', [$disc['DiscountLineDetail']['PercentBased'], $disc['Amount']], [false, 25.0]);
+
+// F7 — both-No per-line taxability uses the exempt code (state exempt_code_id=6)
+$exemptDto = ['fields' => ['doc_number' => 'INV-EX'],
+    'refs' => ['customer' => ['remote_id' => '70']],
+    'lines' => [['description' => 'Exempt', 'qty' => '1', 'unit_price' => '50', 'taxable_gst' => 'No', 'taxable_qst' => 'No']],
+    'taxes' => ['gst' => '0', 'qst' => '0']];
+$calls = [];
+$respond([['status' => 200, 'body' => '{"Invoice":{"Id":"322","SyncToken":"0"}}']]);
+$prov->push('invoice', $exemptDto, null);
+$body = json_decode((string) $calls[0][2], true);
+check('both-No line uses exempt code', $body['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'], '6');
+
+// F7 — mixed per-line taxability (GST-only) is rejected
+$mixedDto = ['fields' => ['doc_number' => 'INV-MX'],
+    'refs' => ['customer' => ['remote_id' => '70']],
+    'lines' => [['description' => 'Mixed', 'qty' => '1', 'unit_price' => '50', 'taxable_gst' => 'Yes', 'taxable_qst' => 'No']],
+    'taxes' => ['gst' => '5', 'qst' => '0']];
+$threw = false;
+try { $prov->push('invoice', $mixedDto, null); }
+catch (\ApiGoat\Sync\Exceptions\ValidationRejected $e) { $threw = str_contains($e->getMessage(), 'GST-only or QST-only'); }
+check('mixed-tax line rejected', $threw, true);
+
+// F4 — vendor create colliding with a customer name retries once, decorated
+$calls = [];
+$respond([
+    ['status' => 400, 'body' => '{"Fault":{"Error":[{"Message":"Duplicate Name Exists Error","Detail":"Another customer is already using this name."}]}}'],
+    ['status' => 200, 'body' => '{"Vendor":{"Id":"88","SyncToken":"0"}}'],
+]);
+$out = $prov->push('vendor', ['fields' => ['display_name' => 'Acme'], 'refs' => []], null);
+check('vendor retry id', $out['id'], '88');
+check('vendor two api calls', count($calls), 2);
+check('vendor decorated name', json_decode((string) $calls[1][2], true)['DisplayName'], 'Acme (Vendor)');
+
+// F4 — findMatch('vendor') falls back to the decorated name on a plain miss
+$calls = [];
+$respond([
+    ['status' => 200, 'body' => '{"QueryResponse":{}}'],
+    ['status' => 200, 'body' => '{"QueryResponse":{"Vendor":[{"Id":"91","SyncToken":"0"}]}}'],
+]);
+$m = $prov->findMatch('vendor', ['fields' => ['display_name' => 'Acme']]);
+check('vendor decorated match', $m['id'], '91');
+check('vendor tried decorated query', str_contains(urldecode($calls[1][1]), 'Acme (Vendor)'), true);
+
+// F8 — storeTokens guards an empty access/refresh token before persisting
+$threw = false;
+try { \ApiGoat\Sync\ConnectionStore::storeTokens(new StubConn(), ['access_token' => '', 'refresh_token' => 'x']); }
+catch (\ApiGoat\Sync\Exceptions\AuthFailed $e) { $threw = true; }
+check('storeTokens guards empty access', $threw, true);
+$threw = false;
+try { \ApiGoat\Sync\ConnectionStore::storeTokens(new StubConn(), ['access_token' => 'x']); }
+catch (\ApiGoat\Sync\Exceptions\AuthFailed $e) { $threw = true; }
+check('storeTokens guards missing refresh', $threw, true);
+
 exit($fails ? 1 : 0);

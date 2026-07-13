@@ -42,13 +42,31 @@ final class SyncEngine
             return 'missing';
         }
         $result = 'skipped';
+        $firstError = null;
         foreach (SyncMap::rolesOf($cfg) as $role => $opts) {
             if (!SyncMap::whenPasses($opts, $row)) {
                 continue;
             }
-            if ($this->pushRole($role, $table, $cfg, $pk, $row)) {
-                $result = 'synced';
+            // A party role (customer/vendor — not a primary role) is created only
+            // through a document's ensureRef dependency path. Directly pushing an
+            // unlinked party would attempt a create (e.g. editing a vendor-only
+            // company must not spawn a Customer), so skip it until it's linked.
+            if (!in_array($role, SyncMap::PRIMARY_ROLES, true) && !$this->links->find($role, $table, $pk)) {
+                continue;
             }
+            // Iterate every when-passing role even if one throws: land the other
+            // roles' updates, keep the first error, and rethrow it so the job still
+            // fails/retries.
+            try {
+                if ($this->pushRole($role, $table, $cfg, $pk, $row)) {
+                    $result = 'synced';
+                }
+            } catch (\Throwable $e) {
+                $firstError = $firstError ?? $e;
+            }
+        }
+        if ($firstError !== null) {
+            throw $firstError;
         }
         return $result;
     }

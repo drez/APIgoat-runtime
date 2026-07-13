@@ -52,14 +52,38 @@ final class SyncMap
         return $out;
     }
 
-    /** True when $row satisfies a role's when-gate (['col' => 'value'], all must match). */
+    /**
+     * True when $row satisfies a role's gate. Each 'when' entry must match and
+     * each 'when_not' entry must NOT match. A value may be a scalar (equality)
+     * or an array (in_array membership).
+     */
     public static function whenPasses(array $roleOpts, array $row): bool
     {
         foreach (($roleOpts['when'] ?? []) as $col => $val) {
-            if ((string) ($row[$col] ?? '') !== (string) $val) {
+            if (!self::valueMatches($row[$col] ?? null, $val)) {
+                return false;
+            }
+        }
+        foreach (($roleOpts['when_not'] ?? []) as $col => $val) {
+            if (self::valueMatches($row[$col] ?? null, $val)) {
                 return false;
             }
         }
         return true;
+    }
+
+    /** Scalar → string equality; array → membership. */
+    private static function valueMatches($actual, $expected): bool
+    {
+        $a = (string) ($actual ?? '');
+        if (is_array($expected)) {
+            foreach ($expected as $e) {
+                if ($a === (string) $e) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return $a === (string) $expected;
     }
 }
