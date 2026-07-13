@@ -52,7 +52,7 @@ final class CronBindings
             ];
             $stats = (new SyncQueue())->drain(25, $handlers);
             return $stats['processed'] > 0 ? 'sync: ' . json_encode($stats) : true;
-        }, [], 'accountingSyncDrain')->everyMinute();
+        }, [], 'accountingSyncDrain')->everyMinute()->onlyOne();
 
         // Enqueue (deduped) a payment pull every 15 minutes; the drain executes it.
         $scheduler->call(function () {

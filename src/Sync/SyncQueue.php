@@ -27,6 +27,21 @@ final class SyncQueue
         return min(7200, 30 * $attempt * $attempt);
     }
 
+    /**
+     * GoatCheese emits ENUM columns as TINYINT storing the valueSet INDEX, so raw
+     * SQL must compare the integer index, never the string literal. Translate a
+     * state label through the generated Peer's valueSet.
+     */
+    private static function stateIndex(string $state): int
+    {
+        $set = \App\AcctSyncJobPeer::getValueSet(\App\AcctSyncJobPeer::STATE);
+        $i = array_search($state, $set, true);
+        if ($i === false) {
+            throw new \RuntimeException("Unknown acct_sync_job state '$state'");
+        }
+        return (int) $i;
+    }
+
     /** Insert a job unless an identical Pending one exists. @return ?int pk, null when deduped */
     public static function enqueue(string $kind, array $payload = [], ?string $runAfter = null): ?int
     {
@@ -61,6 +76,9 @@ final class SyncQueue
             if (!$this->claim((int) $job->getPrimaryKey())) {
                 continue; // another drainer won the race
             }
+            // Keep the in-memory object consistent with the row the claim just wrote,
+            // else a later setState('Pending') on defer is a no-op modification.
+            $job->setState('Running');
             $stats['processed']++;
             try {
                 $handler = $handlers[$job->getKind()] ?? null;
@@ -72,6 +90,15 @@ final class SyncQueue
                 $job->setLastError(null);
                 $job->save();
                 $stats['ok']++;
+            } catch (Exceptions\RateLimited | Exceptions\TransientError $e) {
+                // Throttle / transient outage: always defer, NEVER count toward
+                // MAX_ATTEMPTS (attempts stays put — a 429 isn't the job's fault).
+                $attempts = (int) $job->getAttempts();
+                $job->setState('Pending');
+                $job->setLastError(mb_substr($e->getMessage(), 0, 2000));
+                $job->setRunAfter(date('Y-m-d H:i:s', time() + self::backoffSeconds(max(1, $attempts))));
+                $job->save();
+                $stats['deferred']++;
             } catch (\Throwable $e) {
                 $attempt = (int) $job->getAttempts() + 1;
                 $job->setAttempts($attempt);
@@ -93,17 +120,19 @@ final class SyncQueue
     /** Atomic Pending→Running; false when another worker claimed it first. */
     private function claim(int $pk): bool
     {
+        // state is TINYINT (valueSet index) — bind the translated indexes, not labels.
         $st = \Propel::getConnection()->prepare(
-            "UPDATE acct_sync_job SET state = 'Running', claimed_at = NOW() WHERE id_acct_sync_job = ? AND state = 'Pending'"
+            "UPDATE acct_sync_job SET state = ?, claimed_at = NOW() WHERE id_acct_sync_job = ? AND state = ?"
         );
-        $st->execute([$pk]);
+        $st->execute([self::stateIndex('Running'), $pk, self::stateIndex('Pending')]);
         return $st->rowCount() === 1;
     }
 
     private function reclaimStale(): void
     {
-        \Propel::getConnection()->prepare(
-            "UPDATE acct_sync_job SET state = 'Pending' WHERE state = 'Running' AND claimed_at < (NOW() - INTERVAL " . self::STALE_RUNNING_MINUTES . " MINUTE)"
-        )->execute();
+        $st = \Propel::getConnection()->prepare(
+            "UPDATE acct_sync_job SET state = ? WHERE state = ? AND claimed_at < (NOW() - INTERVAL " . self::STALE_RUNNING_MINUTES . " MINUTE)"
+        );
+        $st->execute([self::stateIndex('Pending'), self::stateIndex('Running')]);
     }
 }
