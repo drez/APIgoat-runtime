@@ -58,7 +58,7 @@ final class SyncStatusService
             $rows .= '<tr><td>' . $h($label) . '</td><td style="text-align:right">' . (int) $count . '</td></tr>';
         }
         $connected = $conn && $conn->getStatus() === 'Connected';
-        $statusTxt = $conn ? $conn->getStatus() . ' (realm ' . $h($conn->getRealmId()) . ')' : 'Not connected';
+        $statusTxt = $conn ? $conn->getStatus() . ' (realm ' . $conn->getRealmId() . ')' : 'Not connected';
         $connectUrl = rtrim((string) _SITE_URL, '/') . '/Sync/connect';
 
         $html = '<!doctype html><html><head><meta charset="utf-8"><title>Accounting sync</title>'

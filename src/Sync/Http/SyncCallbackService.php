@@ -41,7 +41,7 @@ final class SyncCallbackService
         $conn = ConnectionStore::find() ?: new \App\AcctConnection();
         $conn->setProvider('quickbooks');
         $conn->setRealmId($realm);
-        $conn->setConnectedBy((int) ($session->get('id_authy') ?? 0));
+        $conn->setConnectedBy((int) ($session->get('id') ?? 0));
         ConnectionStore::storeTokens($conn, $tok);
         return $this->response->withHeader('Location', SyncUrls::status())->withStatus(302);
     }
