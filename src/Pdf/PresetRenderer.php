@@ -38,11 +38,22 @@ final class PresetRenderer
             if (!$renderer instanceof PdfHtmlRendererInterface) {
                 throw new \RuntimeException("with_pdf custom renderer '{$class}' must implement " . PdfHtmlRendererInterface::class);
             }
+            // A `lang` override must reach the custom renderer's add_i18n
+            // content too, not only the preset path. Pass the RAW override
+            // ($langOverride, possibly null) so the renderer keeps its own,
+            // richer resolution (a custom quote/invoice renderer also falls
+            // back through contact/company language when the record's own lang
+            // is empty — 6 live quotes have no lang); null means "record's own
+            // language" per the interface contract. The reported `lang` is
+            // resolved the same way the preset branch reports it
+            // (TemplateRenderer::lang(): override → lang_source → fr_CA); it
+            // touches no templates, so it is cheap to instantiate.
+            $lang = (new TemplateRenderer($record, $entry, null, $langOverride))->lang();
             return [
-                'html'           => $renderer->render($record),
+                'html'           => $renderer->render($record, $langOverride),
                 'templates_used' => [],
                 'placeholders'   => [],
-                'lang'           => 'fr_CA',
+                'lang'           => $lang,
             ];
         }
 
