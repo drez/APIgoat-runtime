@@ -607,7 +607,14 @@ class Assets
 
         // Download, concatenate and minifiy files
 
-        $buffer = $this->packLinks($assets, $minifier, $isCss);
+        // Relative-path base (relative to public_dir, same basis as each
+        // source asset's path) of the directory the bundle will be written
+        // into — used to rebase CSS url() references so the bundle stays
+        // portable across hosts/paths instead of being pinned to whatever
+        // _SITE_URL happened to resolve to at build time.
+        $outputDirRel = $subdirectory . (empty($this->pipeline_dir) ? '' : '/' . $this->pipeline_dir);
+
+        $buffer = $this->packLinks($assets, $minifier, $isCss, $outputDirRel);
         // Write minified file
         if (@file_put_contents($absolute_path, $buffer) === false) {
             trigger_error("Asset pipeline: cannot write $absolute_path (check ownership/permissions; gc setpermission fixes this)", E_USER_WARNING);
@@ -668,7 +675,7 @@ class Assets
      * @param  bool    $isCss rewrite relative url() refs in local CSS sources
      * @return string
      */
-    protected function packLinks(array $links, \Closure $minifier, $isCss = false)
+    protected function packLinks(array $links, \Closure $minifier, $isCss = false, $outputDirRel = '')
     {
         $buffer = '';
 
@@ -736,7 +743,7 @@ class Assets
             // would resolve against the bundle location and 404. Rewrite them
             // to _SITE_URL-absolute paths based on the source file's location.
             if ($isCss && $localPath !== null) {
-                $content = $this->rewriteCssRelativeUrls($content, $localPath);
+                $content = $this->rewriteCssRelativeUrls($content, $localPath, $outputDirRel);
             }
 
             // Minify
@@ -748,9 +755,17 @@ class Assets
         return $buffer;
     }
     /**
-     * Rewrite relative url() references of a local CSS file to absolute
-     * _SITE_URL-based URLs so they keep resolving once the rule lives in a
-     * concatenated bundle under {css_dir}/{pipeline_dir}/.
+     * Rebase relative url() references of a local CSS file so they stay
+     * valid once the rule lives in a concatenated bundle under
+     * {css_dir}/{pipeline_dir}/ — as a path RELATIVE to that bundle
+     * location (e.g. "../remix/remixicon.ttf"), not an absolute URL.
+     *
+     * The bundle must be portable across hosts/paths (a build done on one
+     * machine gets deployed and served from another origin/prefix), so
+     * baking in an absolute URL (previously _SITE_URL-prefixed) pinned every
+     * font/image reference to wherever the bundle happened to be built,
+     * breaking them anywhere else. A relative path resolves correctly no
+     * matter where the project is hosted.
      *
      * Absolute (/...), protocol (http:, data:, ...), protocol-relative (//)
      * and fragment (#...) references are left untouched. Sources outside the
@@ -758,13 +773,14 @@ class Assets
      *
      * @param  string $css            CSS source content
      * @param  string $absSourcePath  realpath of the source stylesheet
+     * @param  string $outputDirRel   path (relative to public_dir, same
+     *                                basis as the source asset paths) of the
+     *                                directory the bundle will be written
+     *                                into, e.g. "public/css/min"
      * @return string
      */
-    protected function rewriteCssRelativeUrls($css, $absSourcePath)
+    protected function rewriteCssRelativeUrls($css, $absSourcePath, $outputDirRel = '')
     {
-        if (! defined('_SITE_URL') || _SITE_URL === '') {
-            return $css;
-        }
         $root   = realpath(_BASE_DIR . $this->public_dir);
         $srcDir = realpath(dirname($absSourcePath));
         if ($root === false || $srcDir === false) {
@@ -775,11 +791,13 @@ class Assets
         if (strpos($srcDir . '/', rtrim($root, '/') . '/') !== 0) {
             return $css;
         }
-        $srcRel = trim(substr($srcDir, strlen($root)), '/'); // e.g. "public/css"
+        $srcRel     = trim(substr($srcDir, strlen($root)), '/'); // e.g. "public/css/remix"
+        $srcSegs    = $srcRel === '' ? [] : explode('/', $srcRel);
+        $outputSegs = trim($outputDirRel, '/') === '' ? [] : explode('/', trim($outputDirRel, '/'));
 
         return preg_replace_callback(
             '/url\(\s*([\'"]?)([^)\'"]+)\1\s*\)/i',
-            function ($m) use ($srcRel) {
+            function ($m) use ($srcSegs, $outputSegs) {
                 $url = trim($m[2]);
                 if ($url === ''
                     || $url[0] === '/'
@@ -788,18 +806,41 @@ class Assets
                 ) {
                     return $m[0];
                 }
-                $segments = $srcRel === '' ? [] : explode('/', $srcRel);
+
+                // Resolve the url() reference against the source file's
+                // directory to get its absolute (root-relative) segments.
+                $targetSegs = $srcSegs;
                 foreach (explode('/', $url) as $part) {
                     if ($part === '' || $part === '.') {
                         continue;
                     }
                     if ($part === '..') {
-                        array_pop($segments);
+                        array_pop($targetSegs);
                         continue;
                     }
-                    $segments[] = $part;
+                    $targetSegs[] = $part;
                 }
-                return 'url("' . _SITE_URL . implode('/', $segments) . '")';
+                if (empty($targetSegs)) {
+                    return $m[0];
+                }
+                $targetFile = array_pop($targetSegs);
+                $targetDir  = $targetSegs;
+
+                // Rebase: path from the bundle's output directory to the
+                // resolved target, expressed relatively ("../x/y.ext").
+                $commonLen = 0;
+                while ($commonLen < count($outputSegs)
+                    && $commonLen < count($targetDir)
+                    && $outputSegs[$commonLen] === $targetDir[$commonLen]
+                ) {
+                    $commonLen++;
+                }
+                $ups   = count($outputSegs) - $commonLen;
+                $downs = array_slice($targetDir, $commonLen);
+                $downs[] = $targetFile;
+                $relative = str_repeat('../', $ups) . implode('/', $downs);
+
+                return 'url("' . $relative . '")';
             },
             $css
         );
