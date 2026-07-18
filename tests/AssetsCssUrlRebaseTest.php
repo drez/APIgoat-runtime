@@ -91,7 +91,30 @@ check(
     'a{background:url("icon.png")}'
 );
 
-// 4. Absolute / protocol / data / fragment URLs are left untouched.
+// 4. Query string AND fragment together: both preserved verbatim during rebase.
+check(
+    'query string + fragment preserved',
+    $call(
+        'a{background:url("../remix/remixicon.eot?t=1590207869815#iefix")}',
+        $tmpRoot . '/public/css/remix/remixicon.css',
+        'public/css/min'
+    ),
+    'a{background:url("../remix/remixicon.eot?t=1590207869815#iefix")}'
+);
+
+// 5. Three-level path mismatch: source at public/css, output at public/css/min,
+//    url from public needs to reach up three levels then back down.
+check(
+    '3-level path mismatch',
+    $call(
+        'a{background:url("../../img/x.svg")}',
+        $tmpRoot . '/public/css/file.css',
+        'public/css/min'
+    ),
+    'a{background:url("../../../img/x.svg")}'
+);
+
+// 6. Absolute / protocol / data / fragment URLs are left untouched.
 foreach ([
     'url(/already/absolute.png)',
     "url('http://cdn.example.com/x.png')",
