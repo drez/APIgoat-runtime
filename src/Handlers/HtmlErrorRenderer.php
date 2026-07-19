@@ -21,16 +21,9 @@ class HtmlErrorRenderer implements ErrorRendererInterface
     protected $request;
     protected $displayErrorDetails;
 
-    /**
-     * The constructor.
-     *
-     * @param LoggerFactory $loggerFactory The logger factory
-     */
-    public function __construct()
-    {
-        $this->request = $request;
-        $this->displayErrorDetails = $displayErrorDetails;
-    }
+    // No constructor: $request / $displayErrorDetails default to null. The
+    // previous body assigned from two undefined local variables (a PHP warning
+    // that left $this->request null anyway).
 
     /**
      * Invoke.
@@ -54,9 +47,9 @@ class HtmlErrorRenderer implements ErrorRendererInterface
             $errorMessage = '500 Internal Server Error';
         }
 
-        if ($this->request['a']) {
+        if (!empty($this->request['a'])) {
             if ($displayErrorDetails) {
-                $errorMessage = $displayErrorDetails;
+                $errorMessage = $detailedErrorMessage;
             }
 
             return scriptReady("alertb('Error', '{$errorMessage}');");

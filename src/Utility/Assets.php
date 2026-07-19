@@ -208,7 +208,7 @@ class Assets
 
         // Set pipeline options
         foreach (['fetch_command', 'notify_command', 'css_minifier', 'js_minifier'] as $option) {
-            if (isset($config[$option]) and ($config[$option] instanceof Closure)) {
+            if (isset($config[$option]) and ($config[$option] instanceof \Closure)) {
                 $this->$option = $config[$option];
             }
         }

@@ -166,6 +166,7 @@ class RouteHelper
         $get = $this->request->getQueryParams();
         $this->args['queryArgs'] = count($get);
         $this->args = array_merge($this->args, $get);
+        $this->reassertTrustedArgs();
 
         return $this->args;
     }
@@ -181,8 +182,27 @@ class RouteHelper
         $post = ($this->request->getParsedBody()) ? $this->request->getParsedBody() : [];
         $this->args['bodyArgs'] = count($post);
         $this->args = array_merge($this->args, $post);
+        $this->reassertTrustedArgs();
 
         return $this->args;
+    }
+
+    /**
+     * Restore the middleware/route-derived args that the array_merge of raw
+     * user query/body params could otherwise clobber. SECURITY: a client could
+     * send ?rbac_public=passed to skip Api::getJson()/getOne()'s read-rights
+     * gate, or method=POST to steer service dispatch into a write branch — the
+     * trusted request attributes and resolved route name always win.
+     * @return void
+     */
+    private function reassertTrustedArgs()
+    {
+        $this->args['method']      = $this->method;
+        $this->args['rbac_public'] = $this->request->getAttribute('rbac_public');
+        $this->args['routeName']   = $this->routeName;
+        $this->args['route']       = $this->route->getName();
+        $this->args['p']           = $this->routeName;
+        $this->args['isApiCall']   = (bool) strstr($this->baseRouteName, 'api/');
     }
 
     private function getOPTIONSArgs()
@@ -207,6 +227,7 @@ class RouteHelper
         $post = ($this->request->getParsedBody()) ? $this->request->getParsedBody() : [];
         $this->args['bodyArgs'] = count($post);
         $this->args = array_merge($this->args, $post);
+        $this->reassertTrustedArgs();
 
         return $this->args;
     }

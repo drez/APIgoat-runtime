@@ -1,5 +1,6 @@
 <?php
 namespace ApiGoat\Utility;
+use Slim\Exception\HttpNotFoundException;
 use Throwable;
 /**
  * Class ExceptionDetail.

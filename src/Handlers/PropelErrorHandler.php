@@ -95,10 +95,16 @@ class PropelErrorHandler
                 $msg = message_label($failure);
                 $this->errorArray['messages'][] = $msg;
                 $this->errorArray['columns'][] = array_merge($fields, isset($field['fields']) ? $field['fields'] : []);
-                $this->errorArray['all'][] = [$field => $msg];
+                // 'all' is consumed as [fieldName => msg] (getValidationErrors ->
+                // getField()). $field here is ['fields' => [...]]; using it as an
+                // array key is an "Illegal offset type" fatal on PHP 8. Emit one
+                // string-keyed entry per field (fall back to the failure id).
+                $extFields = (isset($field['fields']) && is_array($field['fields'])) ? $field['fields'] : [(string) $failure];
+                foreach ($extFields as $extField) {
+                    $this->errorArray['all'][] = [$extField => $msg];
+                }
             }
         }
-        $this->hasExtendedValidations = false;
     }
 
     private function getField($field)

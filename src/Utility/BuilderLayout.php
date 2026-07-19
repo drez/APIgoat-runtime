@@ -462,7 +462,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
         $items    = '';
         $settings = $this->settings['top_nav'];
         foreach ($menus as $menu) {
-            if (isset([$menu]['url'])) {
+            if (isset($settings[$menu]['url'])) {
                 $items .= li(href(span(_($settings[$menu]['caption'])), $settings[$menu]['url'], 'title="' . $settings[$menu]['title'] . '" class="icon ' . $menu . '"'), "class='right'");
             }
         }

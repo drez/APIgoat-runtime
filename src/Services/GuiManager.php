@@ -48,7 +48,7 @@ class GuiManager extends Service
         }
 
         if ($a == 'ixsamem') {
-            \AuthyQuery::create()
+            \App\AuthyQuery::create()
                 ->filterByIdAuthy($_SESSION[_AUTH_VAR]->get('id'))
                 ->update(array('Onglet' => serialize($_SESSION['mem'])));
             $this->body['status'] = 'success';
@@ -106,7 +106,7 @@ class GuiManager extends Service
                 unset($_SESSION['mem']['search']);
             }
 
-            \AuthyQuery::create()
+            \App\AuthyQuery::create()
                 ->filterByIdAuthy($_SESSION[_AUTH_VAR]->get('id'))->update(array('Onglet' => serialize($_SESSION['mem'])));
             $this->body['status'] = 'success';
         }
