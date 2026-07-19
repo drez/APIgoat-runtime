@@ -5,6 +5,8 @@
     "type": "library",
     "license": "MIT",
     "require": {
+        "ext-dom": "*",
+        "ext-libxml": "*",
         "slim/slim": "^4.0",
         "slim/psr7": "^1.0",
         "tuupola/base62": "^2.0",
