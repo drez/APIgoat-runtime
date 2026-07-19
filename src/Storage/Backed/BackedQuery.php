@@ -19,7 +19,9 @@ class BackedQuery
 {
     /** @var class-string<BackedEntity> */
     private string $entityClass;
-    private FileStorageInterface $storage;
+    // Nullable: create() may defer storage injection (sentinel null until
+    // setStorage()); requireStorage() enforces it before any execution.
+    private ?FileStorageInterface $storage;
     private string $scope = '';
 
     /** @var array<int, array{column: string, value: mixed, op: string}> */
@@ -146,6 +148,7 @@ class BackedQuery
 
     public function count(): int
     {
+        $this->requireStorage();
         $payload = $this->storage->list($this->scope, $this->buildListFilters());
         return (int) ($payload['total'] ?? count($payload['items'] ?? []));
     }

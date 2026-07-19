@@ -83,16 +83,22 @@ class BuilderReturn
     }
 "; // update paging
 
+        $closeDiag = '';
         if (strstr($this->request['ui'], 'Dialog')) {
             if ($this->request['diag'] != 'noclose') {
                 $closeDiag = "if(window.gcScreens){gcScreens.popAfterSave(null);}";
             }
         }
+        // Was computed but never emitted, so deleting from a dialog left it open.
+        $this->return['onReadyJs'] .= $closeDiag;
     }
 
     private function update_return()
     {
         $messages = '';
+        // Default so an unrecognized 'jet' value doesn't leave it undefined at
+        // the `$alert_close .= $action_success` concat below.
+        $action_success = '';
 
         if ($this->request['action'] == 'create') {
             $alert_close = "

@@ -6,13 +6,14 @@ namespace ApiGoat\Utility;
  * and open the template in the editor.
  */
 
-use Psr\Http\Message\ResponseInterface;
 /**
  * Description of BuilderResponse
  *
- * @author sysadmin
+ * Plain builder DTO (setHtml/setJs/setCss/setOnReadyJs). It is NOT a PSR-7
+ * response; it previously `extends ResponseInterface`, a compile-time fatal
+ * the moment the class was autoloaded.
  */
-class BuilderResponse extends ResponseInterface{
+class BuilderResponse {
     
     private $html;
     private $js;

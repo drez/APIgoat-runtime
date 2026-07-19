@@ -446,6 +446,26 @@ class QueryBuilder
                         continue;
                     }
 
+                    // SECURITY: reject a client filter targeting an ACL-managed
+                    // column on the base model. setAclFilter() adds the tenant /
+                    // owner-group scope as filterBy<Col>() criteria; a client
+                    // filterBy on the SAME column merges into it
+                    // (preferColumnCondition), entangling the ACL criterion — so a
+                    // trailing `or` operator ORs the whole ACL group away and leaks
+                    // rows the caller does not own (verified:
+                    // [["id_creation",X,"or"],["col",Y]] -> (acl AND id_creation=X)
+                    // OR col=Y). Related-table (dotted) filters run in a
+                    // use...Query() subquery and cannot merge with the base ACL, so
+                    // only base-model columns are guarded. Root has no ACL applied
+                    // and is exempt.
+                    if (strpos($filter[0], '.') === false) {
+                        $isRoot = isset($_SESSION[_AUTH_VAR]) && $_SESSION[_AUTH_VAR]->get('isRoot');
+                        if (!$isRoot && in_array(\camelize($filter[0], true), ['IdCreation', 'IdGroupCreation', 'IdTenant'], true)) {
+                            $this->messages[] = "Filter: column ({$filter[0]}) is access-controlled and cannot be filtered on ({$table})";
+                            continue;
+                        }
+                    }
+
                     $addOr = false;
                     $filter[1] = ($filter[1] ?? null) == 'null' ? null : ($filter[1] ?? null);
                     if (strpos($filter[0], '.') === false) {
