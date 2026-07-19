@@ -310,6 +310,32 @@ class QueryBuilder
         return false;
     }
 
+    /**
+     * SECURITY: is this select clause a credential/token column that must never
+     * be returned? Api::stripSensitiveOutput removes them from full-row reads,
+     * but a qualified (`authy.passwd_hash`) or aliased (`[["passwd_hash","x"]]`)
+     * select produced an output key that normalization missed — so a caller with
+     * mere `:r` could read the raw hash. Reject at the source instead. The base
+     * column is extracted (aggregate wrapper + table qualifier stripped) and
+     * normalized the same way as Api::$outputDenyColumns.
+     *
+     * @param string $clause
+     * @return boolean
+     */
+    private function isSensitiveSelectColumn($clause)
+    {
+        static $deny = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
+        $c = trim((string) $clause);
+        if (preg_match('/^(?:COUNT|SUM|AVG|MIN|MAX)\(\s*(?:DISTINCT\s+)?(.+?)\s*\)$/i', $c, $m)) {
+            $c = $m[1];
+        }
+        $dot = strrpos($c, '.');
+        if ($dot !== false) {
+            $c = substr($c, $dot + 1);
+        }
+        return in_array(strtolower(str_replace('_', '', $c)), $deny, true);
+    }
+
     private function setSelect(array $selectRequest)
     {
         foreach ($selectRequest as $select) {
@@ -328,6 +354,10 @@ class QueryBuilder
                     $this->messages[] = "Select: alias not allowed.";
                     return true;
                 }
+                if ($this->isSensitiveSelectColumn($select[0])) {
+                    $this->messages[] = "Select: column is not selectable.";
+                    return true;
+                }
 
                 if (strpos($select[0], '.') !== false) {
                     $select[0] = camelize($select[0], true);
@@ -338,6 +368,10 @@ class QueryBuilder
                 $this->selectKey[] = $select[1];
             } else {
 
+                if ($this->isSensitiveSelectColumn($select)) {
+                    $this->messages[] = "Select: column is not selectable.";
+                    return true;
+                }
                 $orig = $select;
                 if (strpos($select, '.') !== false) {
                     $part = explode('.', $select);
