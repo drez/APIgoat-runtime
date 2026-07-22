@@ -89,7 +89,8 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
     public function recordAttempt(string $ip, string $familyId, int $at): void
     {
         $log = new \App\AuthyLog();
-        $log->setEvent('refresh');   // varchar(64) — fits; result is varchar(1) and must not be used
+        $log->setEvent('refresh');   // varchar(64) — isolates refresh rows from the login throttle
+        $log->setResult('');         // authy_log.result is NOT NULL; unused for refresh (cf. OAuthRegisterService)
         $log->setIp($ip);
         $log->setLogin($familyId);
         $log->setTimestamp($at);     // integer() column — raw unix int, not a DateTime
