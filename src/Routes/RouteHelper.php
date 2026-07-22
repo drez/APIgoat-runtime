@@ -72,6 +72,15 @@ class RouteHelper
      * @var array
      */
     private $preMergeTrusted = [];
+    /**
+     * True once a route explicitly pins its action via setArgs('a', …) — only
+     * then is 'a' reasserted after the user-arg merge. Routes that read 'a' from
+     * the query (GuiManager?a=alive, generic admin actions) leave it false so the
+     * merged query value stands. 'method' is always reasserted (no route reads it
+     * from the query); only 'a' is legitimately query-driven for some routes.
+     * @var bool
+     */
+    private $aRouteLocked = false;
 
 
     public function __construct(Request $request, $args)
@@ -230,8 +239,17 @@ class RouteHelper
     {
         $this->args['method']      = array_key_exists('method', $this->preMergeTrusted)
             ? $this->preMergeTrusted['method'] : $this->method;
-        $this->args['a']           = array_key_exists('a', $this->preMergeTrusted)
-            ? $this->preMergeTrusted['a'] : (array_key_exists('a', $this->args) ? $this->args['a'] : null);
+        // 'a' is reasserted ONLY when the route provided one before the merge —
+        // set either via setArgs('a', …) (AUTH routes) or the path {a} placeholder
+        // (generic admin Model/{a} actions). A route that leaves 'a' entirely to
+        // the query (GuiManager?a=alive) has an EMPTY pre-merge 'a', so its query
+        // value is left intact (reasserting would blank ?a=alive and break the
+        // admin GUI/keepalive). Injection protection still holds: the AUTH dispatch
+        // gadget ($this->{a}()) only runs on routes that pin a non-empty 'a'.
+        $preA = array_key_exists('a', $this->preMergeTrusted) ? $this->preMergeTrusted['a'] : null;
+        if ($preA !== null && $preA !== '') {
+            $this->args['a'] = $preA;
+        }
         $this->args['rbac_public'] = $this->request->getAttribute('rbac_public');
         $this->args['routeName']   = $this->routeName;
         $this->args['route']       = $this->route->getName();

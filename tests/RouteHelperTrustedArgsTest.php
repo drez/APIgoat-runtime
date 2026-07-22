@@ -139,13 +139,29 @@ check('normal route path a=list survives merged ?a=delete', $out['a'], 'list');
 check('rbac_public restored (null attr) not ?rbac_public', $out['rbac_public'], null);
 
 // -------------------------------------------------------------------------
-// 4. Normal route whose pre-merge a is empty: a ?a=list must STILL be discarded
-//    (the pre-merge snapshot — empty — wins; user query can never set 'a').
-$req  = new FakeRequest(['a' => 'list'], [], ['rbac_public' => null], '/api/v1/Project');
+// 4. Query-driven route (GuiManager?a=alive): the route pins NO action — empty
+//    pre-merge 'a' (no setArgs('a'), no path {a} placeholder) — so the query 'a'
+//    IS the real action and must SURVIVE the merge. Reasserting an empty
+//    pre-merge 'a' here would blank ?a=alive and break the admin GUI keepalive
+//    (GuiManager::set() dispatches on $args['a']). Safe: routes with the AUTH
+//    dispatch gadget ($this->{a}()) always pin a non-empty 'a' (cases 1/2), so
+//    they stay protected; empty-pre-merge routes dispatch via explicit-case
+//    switches, not a dynamic method call.
+$req  = new FakeRequest(['a' => 'alive'], [], ['rbac_public' => null], '/GuiManager');
 $args = ['a' => '', 'method' => 'GET', 'data' => []];
-$out  = makeHelper('GET', 'api/Project', $args, $req)->getArgs();
+$out  = makeHelper('GET', 'GuiManager', $args, $req)->getArgs();
 
-check('empty pre-merge a is preserved (?a=list discarded)', $out['a'], '');
+check('GuiManager query a=alive survives (empty pre-merge a)', $out['a'], 'alive');
+
+// -------------------------------------------------------------------------
+// 5. Regression re-guard: a route that DOES pin its action (path {a} or setArgs)
+//    still discards a conflicting ?a= — the AUTH gadget and admin Model/{a}
+//    actions can never be redirected by the client.
+$req  = new FakeRequest(['a' => 'delete'], [], ['rbac_public' => null], '/api/v1/Product');
+$args = ['a' => 'edit', 'method' => 'GET', 'data' => []];
+$out  = makeHelper('GET', 'api/Product', $args, $req)->getArgs();
+
+check('path a=edit survives merged ?a=delete (non-empty pre-merge a locked)', $out['a'], 'edit');
 
 echo $fail === 0 ? "PASS: RouteHelper trusted-arg preservation OK\n" : "FAILED: {$fail}\n";
 exit($fail === 0 ? 0 : 1);
