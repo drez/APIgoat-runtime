@@ -37,7 +37,7 @@ class RbacMiddleware implements MiddlewareInterface
         $Configuration = new Configuration(\ApiGoat\Utility\Settings::load());
         $this->config = $Configuration->getArray('rbac');
         // Per-request RBAC bookkeeping writes (a hit-count UPDATE and an api_log
-        // INSERT on every API call) are non-essential metrics/audit. High-traffic
+        // insert-or-bump on every API call) are non-essential metrics/audit. High-traffic
         // deployments can shed them via config. Default true = unchanged behavior;
         // projects that haven't synced the new keys keep logging + counting.
         $this->rbacHitCounter = ($this->config['hit_counter'] ?? true) !== false;
@@ -440,6 +440,30 @@ class RbacMiddleware implements MiddlewareInterface
     private function logApi($IdApiRbac, $IdAuthy = null)
     {
         if (!$this->rbacAuditLog) {
+            return;
+        }
+        // Dedup: an identical event (same rule, same user, same raw parameters)
+        // bumps the existing row's count and time instead of inserting a
+        // duplicate — api_log stays one row per distinct call shape. EQUAL is
+        // passed explicitly for raw_parameters: the generated filterBy would
+        // otherwise turn a value containing % (rawurlencoded bodies) into a
+        // LIKE and match unrelated rows. A failed lookup (e.g. DB not yet
+        // migrated to have `count`) falls through to the plain insert path.
+        try {
+            $existing = \App\ApiLogQuery::create()
+                ->filterByIdApiRbac($IdApiRbac)
+                ->filterByIdAuthy($IdAuthy)
+                ->filterByRawParameters($this->raw_parameters, \Criteria::EQUAL)
+                ->findOne();
+        } catch (\Exception $e) {
+            $existing = null;
+        }
+        // method_exists: models built before the emitter added api_log.count
+        // have no setCount — keep the plain-insert behavior until a rebuild.
+        if ($existing && method_exists($existing, 'setCount')) {
+            $existing->setTime(time());
+            $existing->setCount($existing->getCount() + 1);
+            $this->saveBookkeeping($existing);
             return;
         }
         $ApiLog = new \App\ApiLog();
