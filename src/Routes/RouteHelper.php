@@ -62,6 +62,16 @@ class RouteHelper
      */
     private $request;
     private $baseRouteName;
+    /**
+     * Snapshot of the route-layer's TRUSTED args (method + action) captured
+     * immediately BEFORE the user query/body params are array_merge()d in. At
+     * that moment $this->args['method'] holds the route's override (e.g. 'AUTH'
+     * set via setArgs()) or, for a normal route, the constructor's HTTP method;
+     * and $this->args['a'] holds the route/path-provided action. reassertTrustedArgs()
+     * restores these so a client-supplied ?method= / ?a= can never override them.
+     * @var array
+     */
+    private $preMergeTrusted = [];
 
 
     public function __construct(Request $request, $args)
@@ -165,6 +175,7 @@ class RouteHelper
 
         $get = $this->request->getQueryParams();
         $this->args['queryArgs'] = count($get);
+        $this->snapshotTrustedArgs();
         $this->args = array_merge($this->args, $get);
         $this->reassertTrustedArgs();
 
@@ -181,6 +192,7 @@ class RouteHelper
 
         $post = ($this->request->getParsedBody()) ? $this->request->getParsedBody() : [];
         $this->args['bodyArgs'] = count($post);
+        $this->snapshotTrustedArgs();
         $this->args = array_merge($this->args, $post);
         $this->reassertTrustedArgs();
 
@@ -188,16 +200,38 @@ class RouteHelper
     }
 
     /**
+     * Snapshot the route-layer's trusted method + action BEFORE the user
+     * query/body array_merge, so reassertTrustedArgs() can restore them.
+     * MUST be called immediately before every merge of user-controlled params.
+     * @return void
+     */
+    private function snapshotTrustedArgs()
+    {
+        $this->preMergeTrusted = [
+            'method' => isset($this->args['method']) ? $this->args['method'] : $this->method,
+            'a'      => array_key_exists('a', $this->args) ? $this->args['a'] : null,
+        ];
+    }
+
+    /**
      * Restore the middleware/route-derived args that the array_merge of raw
      * user query/body params could otherwise clobber. SECURITY: a client could
      * send ?rbac_public=passed to skip Api::getJson()/getOne()'s read-rights
-     * gate, or method=POST to steer service dispatch into a write branch — the
-     * trusted request attributes and resolved route name always win.
+     * gate, or method=POST / a=list to steer service dispatch into a write or
+     * generic-read branch — the PRE-MERGE trusted snapshot and resolved route
+     * name always win. method/a come from the snapshot (the route's trusted
+     * override, or a normal route's HTTP method + path-derived action) — NOT
+     * from the raw HTTP method, and never left user-overridable. This preserves
+     * the original security intent (a user's ?method=/?a= is discarded) without
+     * destroying the route layer's trusted setArgs('method','AUTH') override.
      * @return void
      */
     private function reassertTrustedArgs()
     {
-        $this->args['method']      = $this->method;
+        $this->args['method']      = array_key_exists('method', $this->preMergeTrusted)
+            ? $this->preMergeTrusted['method'] : $this->method;
+        $this->args['a']           = array_key_exists('a', $this->preMergeTrusted)
+            ? $this->preMergeTrusted['a'] : (array_key_exists('a', $this->args) ? $this->args['a'] : null);
         $this->args['rbac_public'] = $this->request->getAttribute('rbac_public');
         $this->args['routeName']   = $this->routeName;
         $this->args['route']       = $this->route->getName();
@@ -226,6 +260,7 @@ class RouteHelper
 
         $post = ($this->request->getParsedBody()) ? $this->request->getParsedBody() : [];
         $this->args['bodyArgs'] = count($post);
+        $this->snapshotTrustedArgs();
         $this->args = array_merge($this->args, $post);
         $this->reassertTrustedArgs();
 
