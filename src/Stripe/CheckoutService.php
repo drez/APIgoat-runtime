@@ -26,14 +26,107 @@ final class CheckoutService
             throw new \RuntimeException('STRIPE_SECRET_KEY is not configured in the project .env');
         }
 
+        $customer = self::customerForRecord($rec, $entry, $gw);
+
+        $tok   = PayTokens::mint();
+        $built = self::buildSessionParams($rec, $entry, $table, $customer, $opts, $tok['token']);
+
+        $session = $gw->client()->checkout->sessions->create(
+            $built['params'],
+            ['idempotency_key' => 'gc-co-' . $table . '-' . $rec->getPrimaryKey() . '-' . $tok['hash']]
+        );
+
+        $baseUrl = \defined('_SITE_URL') ? _SITE_URL : '';
+        $model   = StripeDb::model('StripePayment');
+        $pay     = new $model();
+        $pay->setIdStripeCustomer($customer->getPrimaryKey());
+        $pay->setPayableTable($table);
+        $pay->setPayableId((int) $rec->getPrimaryKey());
+        $pay->setStripeCheckoutSessionId($session->id);
+        $pay->setAmount($built['amount']);
+        $pay->setCurrency($built['currency']);
+        $pay->setStatus('pending');
+        $pay->setPayTokenHash($tok['hash']);
+        $pay->setPayTokenExpires(\strtotime('+7 days'));
+        $pay->setLivemode(StripeManifest::livemode() ? 1 : 0);
+        $pay->save();
+
+        return [
+            'url'        => (string) $session->url,
+            'pay_url'    => $baseUrl . 'stripe/pay/' . $tok['token'],
+            'payment_id' => (int) $pay->getPrimaryKey(),
+        ];
+    }
+
+    /**
+     * Regenerate ONLY the Stripe Checkout session for an existing ledger row
+     * (the stored session is no longer 'open') and update the row in place —
+     * no new stripe_payment row, no new pay token. The row keeps its hash so
+     * previously-shared pay-page URLs stay valid; the raw token is required
+     * to rebuild success/cancel URLs since the row only ever stores the hash.
+     *
+     * @param object $payRow  the existing stripe_payment ledger row (already resolved by its token hash)
+     * @param string $rawToken the raw pay token (PayPage::render's $token argument — never derivable from $payRow)
+     * @return string the fresh Checkout session URL
+     */
+    public static function refreshSessionFor(object $payRow, string $rawToken): string
+    {
+        $table = (string) $payRow->getPayableTable();
+        $entry = StripeManifest::payable($table);
+        if ($entry === null) {
+            throw new \RuntimeException("Table {$table} is not in the Stripe manifest — run gc build");
+        }
+        $gw = StripeGateway::fromEnv();
+        if ($gw === null) {
+            throw new \RuntimeException('STRIPE_SECRET_KEY is not configured in the project .env');
+        }
+
+        $q   = StripeDb::query($entry['entity']);
+        $rec = $q::create()->findPk((int) $payRow->getPayableId());
+        if ($rec === null) {
+            throw new \RuntimeException('Payable record not found for checkout refresh');
+        }
+
+        $customer = self::customerForRecord($rec, $entry, $gw);
+
+        $built = self::buildSessionParams($rec, $entry, $table, $customer, [], $rawToken);
+
+        $session = $gw->client()->checkout->sessions->create(
+            $built['params'],
+            ['idempotency_key' => 'gc-co-refresh-' . $table . '-' . $rec->getPrimaryKey() . '-'
+                . $payRow->getPrimaryKey() . '-' . \bin2hex(\random_bytes(8))]
+        );
+
+        // Save the new session id BEFORE returning the URL — the webhook
+        // matches incoming events by session id.
+        $payRow->setStripeCheckoutSessionId($session->id);
+        $payRow->setAmount($built['amount']);
+        $payRow->setCurrency($built['currency']);
+        $payRow->save();
+
+        return (string) $session->url;
+    }
+
+    private static function customerForRecord(object $rec, array $entry, StripeGateway $gw): object
+    {
         $clientQ  = StripeDb::query($entry['client_entity']);
         $clientId = (int) $rec->{$entry['client_id_getter']}();
         $client   = $clientQ::create()->findPk($clientId);
         if ($client === null) {
             throw new \RuntimeException("Client record {$clientId} not found for checkout");
         }
-        $customer = StripeDb::customerFor($client, $entry, $gw);
+        return StripeDb::customerFor($client, $entry, $gw);
+    }
 
+    /**
+     * Shared Checkout Session param-array construction (createForRecord +
+     * refreshSessionFor) — one place amount/currency/line-items are computed
+     * from the record, so both entry points stay in lockstep.
+     *
+     * @return array{params: array, mode: string, amount: int, currency: string}
+     */
+    private static function buildSessionParams(object $rec, array $entry, string $table, object $customer, array $opts, string $rawToken): array
+    {
         $currency = $entry['currency_getter'] !== null
             ? \strtolower((string) $rec->{$entry['currency_getter']}())
             : (string) $entry['currency'];
@@ -45,14 +138,13 @@ final class CheckoutService
             ? (string) $rec->{$entry['description_getter']}()
             : ($entry['entity'] . ' #' . $rec->getPrimaryKey());
 
-        $tok      = PayTokens::mint();
-        $mode     = isset($opts['price_id']) ? 'subscription' : 'payment';
-        $baseUrl  = \defined('_SITE_URL') ? _SITE_URL : '';
-        $params   = [
+        $mode    = isset($opts['price_id']) ? 'subscription' : 'payment';
+        $baseUrl = \defined('_SITE_URL') ? _SITE_URL : '';
+        $params  = [
             'mode'        => $mode,
             'customer'    => $customer->getStripeCustomerId(),
-            'success_url' => $baseUrl . 'stripe/return/' . $tok['token'] . '?s=success&sid={CHECKOUT_SESSION_ID}',
-            'cancel_url'  => $baseUrl . 'stripe/return/' . $tok['token'] . '?s=cancel',
+            'success_url' => $baseUrl . 'stripe/return/' . $rawToken . '?s=success&sid={CHECKOUT_SESSION_ID}',
+            'cancel_url'  => $baseUrl . 'stripe/return/' . $rawToken . '?s=cancel',
             'metadata'    => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $rec->getPrimaryKey()],
         ];
         if ($mode === 'payment') {
@@ -77,29 +169,6 @@ final class CheckoutService
             $params['line_items'] = [['quantity' => 1, 'price' => $price->getStripePriceId()]];
         }
 
-        $session = $gw->client()->checkout->sessions->create(
-            $params,
-            ['idempotency_key' => 'gc-co-' . $table . '-' . $rec->getPrimaryKey() . '-' . $tok['hash']]
-        );
-
-        $model = StripeDb::model('StripePayment');
-        $pay = new $model();
-        $pay->setIdStripeCustomer($customer->getPrimaryKey());
-        $pay->setPayableTable($table);
-        $pay->setPayableId((int) $rec->getPrimaryKey());
-        $pay->setStripeCheckoutSessionId($session->id);
-        $pay->setAmount($amount);
-        $pay->setCurrency($currency);
-        $pay->setStatus('pending');
-        $pay->setPayTokenHash($tok['hash']);
-        $pay->setPayTokenExpires(\strtotime('+7 days'));
-        $pay->setLivemode(StripeManifest::livemode() ? 1 : 0);
-        $pay->save();
-
-        return [
-            'url'        => (string) $session->url,
-            'pay_url'    => $baseUrl . 'stripe/pay/' . $tok['token'],
-            'payment_id' => (int) $pay->getPrimaryKey(),
-        ];
+        return ['params' => $params, 'mode' => $mode, 'amount' => $amount, 'currency' => $currency];
     }
 }

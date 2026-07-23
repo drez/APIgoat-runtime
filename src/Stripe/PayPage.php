@@ -41,17 +41,20 @@ final class PayPage
             if ($entry === null || $gw === null) {
                 return self::html($response, 503, 'Payment unavailable', '<p>Payments are temporarily unavailable. Please contact us.</p>');
             }
-            $q   = StripeDb::query($entry['entity']);
-            $rec = $q::create()->findPk((int) $pay->getPayableId());
-            if ($rec === null) {
+            try {
+                // Reuse the existing ledger row (same pay token / URL) instead
+                // of spawning a new stripe_payment row per stale visit.
+                $url = CheckoutService::refreshSessionFor($pay, $token);
+            } catch (\Throwable $e) {
                 return self::html($response, 404, 'Payment link', '<p>This payment link is invalid.</p>');
             }
-            $fresh = CheckoutService::createForRecord($rec, (string) $pay->getPayableTable());
-            $url   = $fresh['url'];
         }
 
-        $amount   = \number_format($pay->getAmount() / 100, 2);
-        $currency = \strtoupper((string) $pay->getCurrency());
+        // refreshSessionFor() mutates $pay in place (setAmount/setCurrency)
+        // when it regenerates the session, so the displayed figure always
+        // matches what the (possibly just-refreshed) session will charge.
+        $amount   = \htmlspecialchars(\number_format($pay->getAmount() / 100, 2), ENT_QUOTES);
+        $currency = \htmlspecialchars(\strtoupper((string) $pay->getCurrency()), ENT_QUOTES);
         $body = "<p class=\"gc-pay-amount\">{$amount} {$currency}</p>"
               . "<a class=\"gc-pay-button\" href=\"" . \htmlspecialchars($url, ENT_QUOTES) . "\">Pay now</a>"
               . "<p class=\"gc-pay-note\">You will be redirected to Stripe's secure payment page.</p>";
