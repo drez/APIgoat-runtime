@@ -20,7 +20,7 @@
         "respect/validation": "^2.4",
         "jimtools/jwt-auth": "^3.0",
         "league/oauth2-server": "^8.5",
-        "stripe/stripe-php": "^17"
+        "stripe/stripe-php": "^16 || ^17"
     }, "repositories": [
         {
             "type": "git",
