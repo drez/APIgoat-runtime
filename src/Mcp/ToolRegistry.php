@@ -66,6 +66,12 @@ class ToolRegistry
             $tools[] = new Tools\GcPdfPreview();
             $tools[] = new Tools\GcRegeneratePdf();
         }
+        // Generic Stripe tools — present exactly when the build emitted a
+        // stripe manifest (some table declares the with_stripe behavior).
+        if (\ApiGoat\Stripe\StripeManifest::available()) {
+            $tools[] = new Tools\GcStripePaymentLink();
+            $tools[] = new Tools\GcStripeStatus();
+        }
         return $tools;
     }
 
