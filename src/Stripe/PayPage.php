@@ -24,8 +24,9 @@ final class PayPage
         }
 
         // Re-create a fresh Checkout Session if the stored one is expired/consumed.
-        $gw  = StripeGateway::fromEnv();
-        $url = '';
+        $gw      = StripeGateway::fromEnv();
+        $url     = '';
+        $session = null;
         if ($gw !== null && (string) $pay->getStripeCheckoutSessionId() !== '') {
             try {
                 $session = $gw->client()->checkout->sessions->retrieve((string) $pay->getStripeCheckoutSessionId());
@@ -34,6 +35,7 @@ final class PayPage
                 }
             } catch (\Throwable $e) {
                 // fall through — regenerate below
+                $session = null;
             }
         }
         if ($url === '') {
@@ -43,10 +45,17 @@ final class PayPage
             }
             try {
                 // Reuse the existing ledger row (same pay token / URL) instead
-                // of spawning a new stripe_payment row per stale visit.
-                $url = CheckoutService::refreshSessionFor($pay, $token);
+                // of spawning a new stripe_payment row per stale visit. Pass
+                // along the session we already retrieved above (if any) so
+                // refreshSessionFor can skip a second Stripe round trip.
+                $url = CheckoutService::refreshSessionFor($pay, $token, $session);
             } catch (\Throwable $e) {
-                return self::html($response, 404, 'Payment link', '<p>This payment link is invalid.</p>');
+                // A refresh failure here is a real (transient or Stripe-side)
+                // error, not evidence the link/token itself is invalid —
+                // paymentByToken() already validated the token above. Report
+                // it the same way as "no gateway configured" rather than
+                // misleading the payer with a 404 "invalid link" page.
+                return self::html($response, 503, 'Payment unavailable', '<p>Payments are temporarily unavailable. Please contact us.</p>');
             }
         }
 

@@ -67,9 +67,13 @@ final class CheckoutService
      *
      * @param object $payRow  the existing stripe_payment ledger row (already resolved by its token hash)
      * @param string $rawToken the raw pay token (PayPage::render's $token argument — never derivable from $payRow)
+     * @param object|null $oldSession an already-retrieved Checkout Session for $payRow's stored session id
+     *        (avoids a second Stripe API round trip when the caller already fetched it); if it lacks
+     *        expanded line_items and the original session turns out to be subscription-mode, it is
+     *        re-retrieved once with ['expand' => ['line_items']].
      * @return string the fresh Checkout session URL
      */
-    public static function refreshSessionFor(object $payRow, string $rawToken): string
+    public static function refreshSessionFor(object $payRow, string $rawToken, ?object $oldSession = null): string
     {
         $table = (string) $payRow->getPayableTable();
         $entry = StripeManifest::payable($table);
@@ -89,7 +93,44 @@ final class CheckoutService
 
         $customer = self::customerForRecord($rec, $entry, $gw);
 
-        $built = self::buildSessionParams($rec, $entry, $table, $customer, [], $rawToken);
+        // The stored session carries the ORIGINAL mode (payment vs subscription).
+        // A ledger row has no mode/price column, so we must consult Stripe —
+        // rebuilding blind as 'payment' silently turns subscription links into
+        // one-time charges (or throws when the payable's amount is <= 0).
+        $sessionId = (string) $payRow->getStripeCheckoutSessionId();
+        $old       = $oldSession;
+        try {
+            if ($old === null || $old->id !== $sessionId) {
+                $old = $gw->client()->checkout->sessions->retrieve($sessionId, ['expand' => ['line_items']]);
+            } elseif (($old->mode ?? '') === 'subscription' && empty($old->line_items->data ?? null)) {
+                // Caller handed us a session without expanded line items — re-fetch.
+                $old = $gw->client()->checkout->sessions->retrieve($sessionId, ['expand' => ['line_items']]);
+            }
+        } catch (\Throwable $e) {
+            // Original session is gone. Only safe to fall back to a fresh
+            // payment-mode session when the record's amount actually supports
+            // one — otherwise rethrow so the caller shows "unavailable"
+            // rather than silently building a wrong (or impossible) charge.
+            $amount = StripeGateway::minorUnits((float) $rec->{$entry['amount_getter']}());
+            if ($amount <= 0) {
+                throw $e;
+            }
+            $old = null;
+        }
+
+        $opts = [];
+        if ($old !== null && ($old->mode ?? '') === 'subscription') {
+            $priceId = $old->line_items->data[0]->price->id ?? null;
+            if ($priceId === null) {
+                throw new \RuntimeException('Original subscription session has no line items to rebuild from');
+            }
+            $priceRow = StripeDb::query('StripePrice')::create()->filterByStripePriceId($priceId)->findOne();
+            $opts = $priceRow !== null
+                ? ['price_id' => $priceRow->getPrimaryKey()]
+                : ['price_id' => null, 'stripe_price_id' => $priceId];
+        }
+
+        $built = self::buildSessionParams($rec, $entry, $table, $customer, $opts, $rawToken);
 
         $session = $gw->client()->checkout->sessions->create(
             $built['params'],
@@ -100,8 +141,14 @@ final class CheckoutService
         // Save the new session id BEFORE returning the URL — the webhook
         // matches incoming events by session id.
         $payRow->setStripeCheckoutSessionId($session->id);
-        $payRow->setAmount($built['amount']);
-        $payRow->setCurrency($built['currency']);
+        if ($built['mode'] !== 'subscription') {
+            // Payment-mode refresh: amount/currency come straight from the
+            // record, as always. Subscription-mode refresh keeps the row's
+            // existing amount/currency (set at original checkout creation)
+            // untouched — buildSessionParams doesn't price subscriptions.
+            $payRow->setAmount($built['amount']);
+            $payRow->setCurrency($built['currency']);
+        }
         $payRow->save();
 
         return (string) $session->url;
@@ -123,22 +170,29 @@ final class CheckoutService
      * refreshSessionFor) — one place amount/currency/line-items are computed
      * from the record, so both entry points stay in lockstep.
      *
+     * $opts['price_id'] selects a local StripePrice row (int, may be present-but-null
+     * when no local row matched — see $opts['stripe_price_id']); $opts['stripe_price_id']
+     * is a raw Stripe price id to use directly when no local StripePrice row exists for it
+     * (subscription refresh from an original session Stripe still knows about).
+     *
      * @return array{params: array, mode: string, amount: int, currency: string}
      */
     private static function buildSessionParams(object $rec, array $entry, string $table, object $customer, array $opts, string $rawToken): array
     {
+        $isSubscription = \array_key_exists('price_id', $opts) || isset($opts['stripe_price_id']);
+
         $currency = $entry['currency_getter'] !== null
             ? \strtolower((string) $rec->{$entry['currency_getter']}())
             : (string) $entry['currency'];
         $amount = StripeGateway::minorUnits((float) $rec->{$entry['amount_getter']}());
-        if ($amount <= 0 && !isset($opts['price_id'])) {
+        if ($amount <= 0 && !$isSubscription) {
             throw new \RuntimeException('Amount must be positive to request a payment');
         }
         $desc = $entry['description_getter'] !== null
             ? (string) $rec->{$entry['description_getter']}()
             : ($entry['entity'] . ' #' . $rec->getPrimaryKey());
 
-        $mode    = isset($opts['price_id']) ? 'subscription' : 'payment';
+        $mode    = $isSubscription ? 'subscription' : 'payment';
         $baseUrl = \defined('_SITE_URL') ? _SITE_URL : '';
         $params  = [
             'mode'        => $mode,
@@ -160,6 +214,12 @@ final class CheckoutService
                 'setup_future_usage' => 'off_session',
                 'metadata'           => $params['metadata'],
             ];
+        } elseif (isset($opts['stripe_price_id'])) {
+            // Refreshing a subscription session whose original price has no
+            // matching local StripePrice row (e.g. price managed directly in
+            // Stripe) — rebuild line_items from the raw Stripe price id
+            // instead of failing the refresh.
+            $params['line_items'] = [['quantity' => 1, 'price' => (string) $opts['stripe_price_id']]];
         } else {
             $priceQ = StripeDb::query('StripePrice');
             $price  = $priceQ::create()->findPk((int) $opts['price_id']);
