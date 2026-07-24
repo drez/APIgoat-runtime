@@ -13,8 +13,9 @@ namespace ApiGoat\Auth;
  */
 final class RefreshTokenService
 {
-    // Fallback defaults, overridden by jwt_middleware.refresh_expire / .refresh_family_expire.
-    const DEFAULT_REFRESH_EXPIRE        = 'now +30 days';
+    // Fallback defaults when neither the GC_SESSION_API_DAYS knob nor
+    // jwt_middleware.refresh_expire / .refresh_family_expire settings exist.
+    const DEFAULT_REFRESH_EXPIRE        = 'now +90 days';
     const DEFAULT_REFRESH_FAMILY_EXPIRE = 'now +90 days';
 
     const THROTTLE_WINDOW = 60;   // seconds
@@ -53,8 +54,8 @@ final class RefreshTokenService
             'id_authy'       => $idAuthy,
             'family_id'      => $this->newFamilyId(),
             'token_hash'     => $hash,
-            'expires'        => $this->ts($this->jwt['refresh_expire'] ?? self::DEFAULT_REFRESH_EXPIRE, $now),
-            'family_expires' => $this->ts($this->jwt['refresh_family_expire'] ?? self::DEFAULT_REFRESH_FAMILY_EXPIRE, $now),
+            'expires'        => $this->ts($this->refreshExpire(), $now),
+            'family_expires' => $this->ts($this->familyExpire(), $now),
         ]);
         return $raw;
     }
@@ -103,7 +104,7 @@ final class RefreshTokenService
         $this->store->markRevoked($row['id'], $now);
         [$raw2, $hash2] = $this->generate();
         $newExpires = min(
-            $this->ts($this->jwt['refresh_expire'] ?? self::DEFAULT_REFRESH_EXPIRE, $now),
+            $this->ts($this->refreshExpire(), $now),
             $row['family_expires']
         );
         $this->store->insert([
@@ -130,6 +131,32 @@ final class RefreshTokenService
     public function revokeAllForUser(int $idAuthy): void
     {
         $this->store->revokeAllForUser($idAuthy);
+    }
+
+    /**
+     * Session-length resolution: GC_SESSION_API_DAYS knob (project .env,
+     * clamped to 365) > jwt_middleware settings > 90-day default. Env-first
+     * because per-project settings.defaults.php copies are not drift-synced —
+     * the knob must work on projects whose settings still carry old values.
+     * With the knob set, refresh and family expire together: the API session
+     * is an absolute N-day window from login.
+     */
+    private function refreshExpire(): string|int
+    {
+        $days = SessionLifetime::apiDaysFromEnv();
+        if ($days !== null) {
+            return 'now +' . $days . ' days';
+        }
+        return $this->jwt['refresh_expire'] ?? self::DEFAULT_REFRESH_EXPIRE;
+    }
+
+    private function familyExpire(): string|int
+    {
+        $days = SessionLifetime::apiDaysFromEnv();
+        if ($days !== null) {
+            return 'now +' . $days . ' days';
+        }
+        return $this->jwt['refresh_family_expire'] ?? self::DEFAULT_REFRESH_FAMILY_EXPIRE;
     }
 
     /** Resolve a DateTime-string OR integer-seconds TTL to a unix timestamp, anchored to $now. */

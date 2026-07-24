@@ -36,17 +36,15 @@ class OAuthServerFactory
             $this->encryptionKey
         );
 
-        // Session policy for bearer clients (the mobile app):
-        //   access token  PT1H  — short-lived; the client silently refreshes it.
-        //   refresh token P7D   — the session ceiling. Rotated on every use, so an
-        //                         app opened at least once a week stays signed in;
-        //                         a week untouched requires a fresh login. (Was
-        //                         P30D — a month-long bearer session is a wider
-        //                         window than this app needs.)
-        // An idle day is therefore never a re-login, which is the point: the app
-        // refreshes on resume, well inside the ceiling.
+        // Session policy for bearer clients (the MCP connector + the mobile app):
+        //   access token  PT1H — short-lived; the client silently refreshes it.
+        //   refresh token     — the session ceiling, rotated on every use.
+        //                       GC_SESSION_MCP_DAYS knob (project .env),
+        //                       default 90 days, clamped to 365. (Was a fixed
+        //                       P7D; widened 2026-07-24 so MCP connectors and
+        //                       the app don't force re-logins.)
         $accessTtl  = new \DateInterval('PT1H');
-        $refreshTtl = new \DateInterval('P7D');
+        $refreshTtl = \ApiGoat\Auth\SessionLifetime::mcpRefreshTtl();
 
         $authCode = new AuthCodeGrant($this->authCodes, $this->refreshTokens, new \DateInterval('PT10M'));
         $authCode->setRefreshTokenTTL($refreshTtl);
