@@ -77,8 +77,12 @@ final class PayPage
             return self::html($response, 404, 'Payment', '<p>This link is invalid or has expired.</p>');
         }
         $params = $request->getQueryParams();
+        $base   = \getenv('STRIPE_RETURN_URL') ?: ($_ENV['STRIPE_RETURN_URL'] ?? '');
         if (($params['s'] ?? '') === 'cancel') {
-            return self::html($response, 200, 'Payment canceled', '<p>The payment was canceled. You can retry from the same link at any time.</p>');
+            $target = self::returnTarget('cancel', $base ?: null);
+            return $target !== null
+                ? $response->withStatus(302)->withHeader('Location', $target)
+                : self::html($response, 200, 'Payment canceled', '<p>The payment was canceled. You can retry from the same link at any time.</p>');
         }
         // Display-only server-side verification (webhook remains authoritative).
         $gw = StripeGateway::fromEnv();
@@ -92,9 +96,23 @@ final class PayPage
                 $paid = false;
             }
         }
+        $status = $paid ? 'success' : 'processing';
+        $target = self::returnTarget($status, $base ?: null);
+        if ($target !== null) {
+            return $response->withStatus(302)->withHeader('Location', $target);
+        }
         return $paid
             ? self::html($response, 200, 'Payment received', '<p>Thank you! Your payment was received. A receipt has been emailed to you by Stripe.</p>')
             : self::html($response, 200, 'Payment processing', '<p>Your payment is being processed. This page does not update automatically — you will receive a Stripe receipt by email once it completes.</p>');
+    }
+
+    /** Redirect target back into the app, or null to keep the built-in HTML page. */
+    public static function returnTarget(string $status, ?string $base): ?string
+    {
+        if ($base === null || $base === '') {
+            return null;
+        }
+        return \rtrim($base, '/') . '?billing=' . $status;
     }
 
     private static function paymentByToken(string $token): ?object
