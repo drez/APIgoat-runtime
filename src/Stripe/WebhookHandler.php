@@ -22,6 +22,12 @@ final class WebhookHandler
         return !\in_array($type, self::HANDLED, true);
     }
 
+    /** The subscription's current first-item price id (''=none). */
+    public static function priceIdFromSub(array $sub): string
+    {
+        return (string) ($sub['items']['data'][0]['price']['id'] ?? '');
+    }
+
     public static function process(array $event): void
     {
         $obj = $event['data']['object'] ?? [];
@@ -166,6 +172,15 @@ final class WebhookHandler
                 $row->setIdStripePrice($price->getPrimaryKey());
             }
             $row->setLivemode(StripeManifest::livemode() ? 1 : 0);
+        }
+        // Re-sync the price on every update (in-place upgrade / scheduled downgrade
+        // landing at period end changes items[0].price without recreating the row).
+        $priceId = self::priceIdFromSub($sub);
+        if ($priceId !== '') {
+            $priceRow = StripeDb::query('StripePrice')::create()->filterByStripePriceId($priceId)->findOne();
+            if ($priceRow !== null) {
+                $row->setIdStripePrice($priceRow->getPrimaryKey());
+            }
         }
         $status = (string) ($sub['status'] ?? 'incomplete');
         $row->setStatus(\in_array($status, ['incomplete', 'trialing', 'active', 'past_due', 'canceled', 'unpaid'], true) ? $status : 'incomplete');
