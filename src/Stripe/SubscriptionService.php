@@ -4,6 +4,40 @@ namespace ApiGoat\Stripe;
 
 final class SubscriptionService
 {
+    /**
+     * Self-heal from the Stripe API (audit C4): pull ALL of a customer's
+     * subscriptions from Stripe and upsert the local stripe_subscription rows
+     * — the repair path for a lost/crashed webhook, called by the project's
+     * refresh endpoint before reconciling. Returns how many were synced;
+     * failures return 0 (refresh then proceeds on local state as before).
+     */
+    public static function pullAllForCustomer(object $custRow): int
+    {
+        $gw = StripeGateway::fromEnv();
+        if ($gw === null) {
+            return 0;
+        }
+        try {
+            $subs = $gw->client()->subscriptions->all([
+                'customer' => (string) $custRow->getStripeCustomerId(),
+                'status'   => 'all',
+                'limit'    => 20,
+            ]);
+        } catch (\Throwable $e) {
+            return 0;
+        }
+        $n = 0;
+        foreach ($subs->data as $sub) {
+            try {
+                WebhookHandler::syncSubscription($sub->toArray());
+                $n++;
+            } catch (\Throwable $e) {
+                // one bad row must not block the rest
+            }
+        }
+        return $n;
+    }
+
     public static function cancel(object $subRow, bool $atPeriodEnd = true): object
     {
         $gw = StripeGateway::fromEnv();

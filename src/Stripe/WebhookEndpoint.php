@@ -33,17 +33,33 @@ final class WebhookEndpoint
             return self::json($response, 400, ['status' => 'error', 'message' => 'Invalid signature']);
         }
 
-        $eventQ = StripeDb::query('StripeEvent');
-        if ($eventQ::create()->filterByStripeEventId((string) $event['id'])->findOne() !== null) {
-            return self::json($response, 200, ['status' => 'ok', 'message' => 'Already received']);
+        // Mode gate (audit M11): a test-mode event must never mutate a live
+        // deployment (and vice versa). Distinct signing secrets make this
+        // unlikely, but a copy-pasted secret would otherwise let it through.
+        if (isset($event['livemode']) && (bool) $event['livemode'] !== StripeManifest::livemode()) {
+            return self::json($response, 200, ['status' => 'ok', 'message' => 'Wrong mode — ignored']);
         }
-        $model = StripeDb::model('StripeEvent');
-        $row = new $model();
-        $row->setStripeEventId((string) $event['id']);
-        $row->setType((string) $event['type']);
-        $row->setPayload($payload);
-        $row->setStatus('received');
-        $row->save();
+
+        $eventQ = StripeDb::query('StripeEvent');
+        $row = $eventQ::create()->filterByStripeEventId((string) $event['id'])->findOne();
+        if ($row !== null) {
+            // Dedup is PROCESS-state-aware (audit C3 2026-07-27): a row stuck
+            // at received (handler died before the Throwable catch — OOM,
+            // timeout) or failed must let Stripe's retry re-drive processing.
+            // Only genuinely finished events short-circuit; the old
+            // insert-first 200 made a crashed handler permanent silent loss.
+            if (\in_array((string) $row->getStatus(), ['processed', 'ignored'], true)) {
+                return self::json($response, 200, ['status' => 'ok', 'message' => 'Already received']);
+            }
+        } else {
+            $model = StripeDb::model('StripeEvent');
+            $row = new $model();
+            $row->setStripeEventId((string) $event['id']);
+            $row->setType((string) $event['type']);
+            $row->setPayload($payload);
+            $row->setStatus('received');
+            $row->save();
+        }
 
         try {
             WebhookHandler::process($event);

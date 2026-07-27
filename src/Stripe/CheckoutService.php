@@ -210,9 +210,11 @@ final class CheckoutService
                     'product_data' => ['name' => $desc !== '' ? $desc : 'Payment'],
                 ],
             ]];
+            // No setup_future_usage (audit M2): a one-time payment must not
+            // silently vault the buyer's card for off-session reuse — no
+            // consent copy exists anywhere in the purchase UIs.
             $params['payment_intent_data'] = [
-                'setup_future_usage' => 'off_session',
-                'metadata'           => $params['metadata'],
+                'metadata' => $params['metadata'],
             ];
         } elseif (isset($opts['stripe_price_id'])) {
             // Refreshing a subscription session whose original price has no

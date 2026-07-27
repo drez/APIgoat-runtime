@@ -9,7 +9,13 @@ namespace ApiGoat\Stripe;
  */
 final class StripeGateway
 {
-    public const API_VERSION = '2025-06-30.basil';
+    // MUST match the vendored stripe-php SDK's generation: pinning a NEWER
+    // api version than the SDK was generated for silently drops fields the
+    // SDK still expects (audit C2 2026-07-27: '2025-06-30.basil' removed
+    // Subscription.current_period_* → every scheduleDowngrade start_date was
+    // null → Stripe 400 on all downgrades, and "January 1, 1970" renewal
+    // dates in subscription emails).
+    public const API_VERSION = \Stripe\Util\ApiVersion::CURRENT;
 
     private ?\Stripe\StripeClient $client = null;
 
