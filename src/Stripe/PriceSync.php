@@ -17,9 +17,28 @@ final class PriceSync
         }
         $client = $gw->client();
 
+        // Stripe "Managed Payments" (default-on for newer accounts) refuses
+        // Checkout line items whose Product has no tax_code (seen live
+        // 2026-07-27: every checkout 400'd). Default: electronically
+        // supplied services; override per project via STRIPE_TAX_CODE.
+        $taxCode = (\function_exists('env') ? env('STRIPE_TAX_CODE') : \getenv('STRIPE_TAX_CODE')) ?: 'txcd_10000000';
+
         if ((string) $priceRow->getStripeProductId() === '') {
-            $product = $client->products->create(['name' => (string) $priceRow->getName()]);
+            $product = $client->products->create([
+                'name'     => (string) $priceRow->getName(),
+                'tax_code' => $taxCode,
+            ]);
             $priceRow->setStripeProductId($product->id);
+        } else {
+            // Backfill: products minted before this fix carry no tax_code.
+            try {
+                $product = $client->products->retrieve((string) $priceRow->getStripeProductId());
+                if (empty($product->tax_code)) {
+                    $client->products->update($product->id, ['tax_code' => $taxCode]);
+                }
+            } catch (\Throwable $e) {
+                // best-effort — a failed backfill shouldn't block the price push
+            }
         }
 
         // One-time packages (type='one_time', 2026-07-27) create a Price
