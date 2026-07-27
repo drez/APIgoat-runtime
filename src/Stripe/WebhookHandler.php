@@ -193,8 +193,11 @@ final class WebhookHandler
         }
         $status = (string) ($sub['status'] ?? 'incomplete');
         $row->setStatus(\in_array($status, ['incomplete', 'trialing', 'active', 'past_due', 'canceled', 'unpaid'], true) ? $status : 'incomplete');
-        if (!empty($sub['current_period_end'])) {
-            $row->setCurrentPeriodEnd((int) $sub['current_period_end']);
+        // basil (2025-03-31+) moved current_period_* onto the subscription
+        // item; older shapes carry it on the root. Accept both.
+        $periodEnd = $sub['current_period_end'] ?? ($sub['items']['data'][0]['current_period_end'] ?? null);
+        if (!empty($periodEnd)) {
+            $row->setCurrentPeriodEnd((int) $periodEnd);
         }
         $row->setCancelAtPeriodEnd(!empty($sub['cancel_at_period_end']) ? 1 : 0);
         if (!empty($sub['canceled_at'])) {

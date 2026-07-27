@@ -9,13 +9,14 @@ namespace ApiGoat\Stripe;
  */
 final class StripeGateway
 {
-    // MUST match the vendored stripe-php SDK's generation: pinning a NEWER
-    // api version than the SDK was generated for silently drops fields the
-    // SDK still expects (audit C2 2026-07-27: '2025-06-30.basil' removed
-    // Subscription.current_period_* → every scheduleDowngrade start_date was
-    // null → Stripe 400 on all downgrades, and "January 1, 1970" renewal
-    // dates in subscription emails).
-    public const API_VERSION = \Stripe\Util\ApiVersion::CURRENT;
+    // basil (2025-03-31+) is REQUIRED by accounts with Managed Payments
+    // (default-on for new accounts — pre-basil requests are refused outright,
+    // seen live 2026-07-27). basil also MOVED Subscription.current_period_*
+    // onto subscription items, which is why a bare basil pin once broke all
+    // downgrades (audit C2): every reader now handles BOTH shapes
+    // (SubscriptionService::currentPeriod / WebhookHandler::syncSubscription),
+    // so the pin is safe on old and new accounts alike.
+    public const API_VERSION = '2025-06-30.basil';
 
     private ?\Stripe\StripeClient $client = null;
 

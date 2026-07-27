@@ -5,6 +5,22 @@ namespace ApiGoat\Stripe;
 final class SubscriptionService
 {
     /**
+     * [current_period_start, current_period_end] tolerant of BOTH API shapes:
+     * pre-basil they live on the Subscription root; from 2025-03-31.basil they
+     * moved onto the subscription item. Never returns nulls silently — a
+     * schedule built on null start/end 400s at Stripe with a cryptic message.
+     */
+    public static function currentPeriod(object $sub): array
+    {
+        $start = $sub->current_period_start ?? ($sub->items->data[0]->current_period_start ?? null);
+        $end   = $sub->current_period_end   ?? ($sub->items->data[0]->current_period_end ?? null);
+        if (empty($start) || empty($end)) {
+            throw new \RuntimeException('Subscription has no resolvable current period');
+        }
+        return [(int) $start, (int) $end];
+    }
+
+    /**
      * Self-heal from the Stripe API (audit C4): pull ALL of a customer's
      * subscriptions from Stripe and upsert the local stripe_subscription rows
      * — the repair path for a lost/crashed webhook, called by the project's
@@ -85,18 +101,19 @@ final class SubscriptionService
         $subId    = (string) $subRow->getStripeSubscriptionId();
         $sub      = $client->subscriptions->retrieve($subId);
         $curPrice = (string) $sub->items->data[0]->price->id;
+        [$periodStart, $periodEnd] = self::currentPeriod($sub);
         $schedule = $client->subscriptionSchedules->create(['from_subscription' => $subId]);
         return $client->subscriptionSchedules->update($schedule->id, [
             'end_behavior' => 'release',
             'phases'       => [
                 [
                     'items'      => [['price' => $curPrice, 'quantity' => 1]],
-                    'start_date' => $sub->current_period_start,
-                    'end_date'   => $sub->current_period_end,
+                    'start_date' => $periodStart,
+                    'end_date'   => $periodEnd,
                 ],
                 [
                     'items'      => [['price' => $newStripePriceId, 'quantity' => 1]],
-                    'start_date' => $sub->current_period_end,
+                    'start_date' => $periodEnd,
                 ],
             ],
         ]);
