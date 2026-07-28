@@ -50,9 +50,14 @@ final class WebhookHandler
                 self::syncSubscription($obj);
                 break;
             case 'invoice.paid':
+                // Record the renewal in the payment ledger (audit I6 2026-07-27):
+                // without this, month 2..N charges had no stripe_payment row at
+                // all — invisible to revenue reporting and unrefundable through
+                // PaymentService::refund (which matches on payment_intent).
+                self::recordInvoicePayment($obj);
+                break;
             case 'invoice.payment_failed':
-                // Subscription cycle result — reflected via customer.subscription.updated
-                // (status past_due/active); nothing extra to record in v1.
+                // Reflected via customer.subscription.updated (status past_due).
                 break;
             case 'charge.refunded':
                 self::onChargeRefunded($obj);
@@ -95,7 +100,10 @@ final class WebhookHandler
         }
         $pay->setStatus($status);
         if ($status === 'succeeded') {
-            $charge = $intent['charges']['data'][0] ?? [];
+            // `charges` was removed from PaymentIntent in API 2022-11-15
+            // (audit I7): the event carries only `latest_charge` (an id), so
+            // receipt/method come from a best-effort charge retrieve.
+            $charge = self::retrieveCharge((string) ($intent['latest_charge'] ?? ''));
             if (!empty($charge['receipt_url'])) {
                 $pay->setReceiptUrl((string) $charge['receipt_url']);
             }
@@ -151,7 +159,8 @@ final class WebhookHandler
         }
     }
 
-    private static function syncSubscription(array $sub): void
+    /** Public so SubscriptionService::pullAllForCustomer (API self-heal) can reuse it. */
+    public static function syncSubscription(array $sub): void
     {
         $custQ = StripeDb::query('StripeCustomer');
         $cust  = $custQ::create()->filterByStripeCustomerId((string) ($sub['customer'] ?? ''))->findOne();
@@ -184,8 +193,11 @@ final class WebhookHandler
         }
         $status = (string) ($sub['status'] ?? 'incomplete');
         $row->setStatus(\in_array($status, ['incomplete', 'trialing', 'active', 'past_due', 'canceled', 'unpaid'], true) ? $status : 'incomplete');
-        if (!empty($sub['current_period_end'])) {
-            $row->setCurrentPeriodEnd((int) $sub['current_period_end']);
+        // basil (2025-03-31+) moved current_period_* onto the subscription
+        // item; older shapes carry it on the root. Accept both.
+        $periodEnd = $sub['current_period_end'] ?? ($sub['items']['data'][0]['current_period_end'] ?? null);
+        if (!empty($periodEnd)) {
+            $row->setCurrentPeriodEnd((int) $periodEnd);
         }
         $row->setCancelAtPeriodEnd(!empty($sub['cancel_at_period_end']) ? 1 : 0);
         if (!empty($sub['canceled_at'])) {
@@ -216,7 +228,80 @@ final class WebhookHandler
             $row->setIsDispute(0);
             $row->save();
         }
-        $pay->setStatus(((int) ($charge['amount_refunded'] ?? 0)) >= ((int) ($charge['amount'] ?? 0)) ? 'refunded' : 'partially_refunded');
+        $fullyRefunded = ((int) ($charge['amount_refunded'] ?? 0)) >= ((int) ($charge['amount'] ?? 0));
+        $pay->setStatus($fullyRefunded ? 'refunded' : 'partially_refunded');
+        $pay->save();
+        // Audit I5: a full refund must revoke what the payment bought — at
+        // minimum reset the payable's paid flag so an unconsumed grant can't
+        // be applied later. Consumed-state cleanup (e.g. unfeaturing a boosted
+        // ad) is project-side: the reconcilers sweep refunded payments.
+        if ($fullyRefunded) {
+            self::resetPaidFlag($pay);
+        }
+    }
+
+    private static function resetPaidFlag(object $pay): void
+    {
+        $entry = StripeManifest::payable((string) $pay->getPayableTable());
+        if ($entry === null || $entry['paid_flag_setter'] === null) {
+            return;
+        }
+        $q   = StripeDb::query($entry['entity']);
+        $rec = $q::create()->findPk((int) $pay->getPayableId());
+        // Only claw back an UNCONSUMED grant (flag still 1) — consumed state
+        // (2) is the reconcilers' to unwind with full context.
+        $getter = \str_replace('set', 'get', (string) $entry['paid_flag_setter']);
+        if ($rec !== null && \method_exists($rec, $getter) && (int) $rec->{$getter}() === 1) {
+            $rec->{$entry['paid_flag_setter']}(0);
+            $rec->save();
+        }
+    }
+
+    /** Best-effort charge retrieve for receipt/method capture — never fails the webhook. */
+    private static function retrieveCharge(string $chargeId): array
+    {
+        if ($chargeId === '') {
+            return [];
+        }
+        $gw = StripeGateway::fromEnv();
+        if ($gw === null) {
+            return [];
+        }
+        try {
+            return $gw->client()->charges->retrieve($chargeId)->toArray();
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    /** Ledger row for a subscription-cycle charge (invoice.paid). Idempotent by payment intent. */
+    private static function recordInvoicePayment(array $invoice): void
+    {
+        $intentId = (string) ($invoice['payment_intent'] ?? '');
+        if ($intentId === '' || (int) ($invoice['amount_paid'] ?? 0) <= 0) {
+            return;
+        }
+        $payQ = StripeDb::query('StripePayment');
+        if ($payQ::create()->filterByStripePaymentIntentId($intentId)->findOne() !== null) {
+            return; // initial checkout payment (or an earlier delivery) already holds it
+        }
+        $custQ = StripeDb::query('StripeCustomer');
+        $cust  = $custQ::create()->filterByStripeCustomerId((string) ($invoice['customer'] ?? ''))->findOne();
+        if ($cust === null) {
+            return;
+        }
+        $model = StripeDb::model('StripePayment');
+        $pay = new $model();
+        $pay->setIdStripeCustomer($cust->getPrimaryKey());
+        $pay->setStripePaymentIntentId($intentId);
+        $pay->setAmount((int) $invoice['amount_paid']);
+        $pay->setCurrency((string) ($invoice['currency'] ?? ''));
+        // Renewal ledger entry — not tied to a specific payable row (the
+        // originating checkout payment carries that); payable_id 0 marks it.
+        $pay->setPayableTable('membership');
+        $pay->setPayableId(0);
+        $pay->setStatus('succeeded');
+        $pay->setLivemode(StripeManifest::livemode() ? 1 : 0);
         $pay->save();
     }
 

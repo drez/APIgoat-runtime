@@ -202,17 +202,31 @@ final class CheckoutService
             'metadata'    => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $rec->getPrimaryKey()],
         ];
         if ($mode === 'payment') {
-            $params['line_items'] = [[
-                'quantity'   => 1,
-                'price_data' => [
-                    'currency'     => $currency,
-                    'unit_amount'  => $amount,
-                    'product_data' => ['name' => $desc !== '' ? $desc : 'Payment'],
-                ],
-            ]];
+            if (isset($opts['price_id'])) {
+                // One-time CATALOG package (stripe_price type=one_time,
+                // 2026-07-27): reference the pushed Price so the charge uses
+                // the catalog row, not ad-hoc price_data.
+                $priceQ = StripeDb::query('StripePrice');
+                $price  = $priceQ::create()->findPk((int) $opts['price_id']);
+                if ($price === null || (string) $price->getStripePriceId() === '') {
+                    throw new \RuntimeException('Price not found or not pushed to Stripe — use the Prices screen first');
+                }
+                $params['line_items'] = [['quantity' => 1, 'price' => $price->getStripePriceId()]];
+            } else {
+                $params['line_items'] = [[
+                    'quantity'   => 1,
+                    'price_data' => [
+                        'currency'     => $currency,
+                        'unit_amount'  => $amount,
+                        'product_data' => ['name' => $desc !== '' ? $desc : 'Payment'],
+                    ],
+                ]];
+            }
+            // No setup_future_usage (audit M2): a one-time payment must not
+            // silently vault the buyer's card for off-session reuse — no
+            // consent copy exists anywhere in the purchase UIs.
             $params['payment_intent_data'] = [
-                'setup_future_usage' => 'off_session',
-                'metadata'           => $params['metadata'],
+                'metadata' => $params['metadata'],
             ];
         } elseif (isset($opts['stripe_price_id'])) {
             // Refreshing a subscription session whose original price has no
