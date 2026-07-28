@@ -158,7 +158,11 @@ class RouteParser implements MiddlewareInterface
         }
 
         $path = trim($path, "/");
-        $pathPart = explode('/', $path);
+        // getPath() is the RAW encoded URI: a composite-PK id segment like
+        // %5B49%2C%222026-07-28%22%5D must be decoded or json_decode() on the
+        // id nulls out downstream (blank edit forms). Decode per segment,
+        // AFTER the explode, so an encoded slash can never change the split.
+        $pathPart = array_map('rawurldecode', explode('/', $path));
 
         $data['id'] = (isset($pathPart[2])) ? $pathPart[2] : '';
         if (!empty($pathPart[0])) {
