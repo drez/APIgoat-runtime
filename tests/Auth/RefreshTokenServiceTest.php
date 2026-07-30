@@ -7,6 +7,13 @@ namespace ApiGoat\Tests\Auth;
 use ApiGoat\Auth\RefreshTokenService;
 use PHPUnit\Framework\TestCase;
 
+// Explicitly require the source files under test — the runtime package has
+// no composer autoload of its own (same convention as tests/Stripe/*).
+require_once __DIR__ . '/../../src/Auth/RefreshTokenStore.php';
+require_once __DIR__ . '/../../src/Auth/SessionLifetime.php';
+require_once __DIR__ . '/../../src/Auth/RefreshTokenService.php';
+require_once __DIR__ . '/ArrayRefreshTokenStore.php';
+
 final class RefreshTokenServiceTest extends TestCase
 {
     private int $clock = 1000000;
@@ -61,7 +68,7 @@ final class RefreshTokenServiceTest extends TestCase
         $this->assertSame($family, $newRow['family_id']);
     }
 
-    public function testReusedTokenRevokesEntireFamily(): void
+    public function testReusedTokenRevokesEntireFamilyBeyondGrace(): void
     {
         $store = new ArrayRefreshTokenStore();
         $svc = $this->svc($store);
@@ -69,11 +76,56 @@ final class RefreshTokenServiceTest extends TestCase
         $family = array_values($store->rows)[0]['family_id'];
 
         $out = $svc->redeem($raw, '1.2.3.4', $this->minter());   // rotate: raw now revoked, raw2 live
+        $this->clock += RefreshTokenService::REUSE_GRACE + 1;     // past the concurrency grace window
         $reuse = $svc->redeem($raw, '1.2.3.4', $this->minter());  // present the OLD (revoked) token again
 
         $this->assertSame('error', $reuse['status']);
         $this->assertSame('token_reuse', $reuse['message']);
         $this->assertSame(0, $store->liveCountForFamily($family)); // whole family killed
+    }
+
+    /**
+     * Concurrency grace (2026-07-30): several parallel clients of ONE
+     * session (a web page load fires 4+ app-server requests; the mobile app
+     * does the same) can all present the same refresh token when the access
+     * token expires. The first redeem rotates it; before this grace, every
+     * later redeem tripped reuse detection and revoked the WHOLE family —
+     * the session died exactly when it should have refreshed (the
+     * overnight hard-401 report). A token rotated less than REUSE_GRACE ago
+     * is a benign concurrent redeem: mint a fresh pair in the same family,
+     * leave everything else alone.
+     */
+    public function testConcurrentRedeemWithinGraceMintsInsteadOfRevoking(): void
+    {
+        $store = new ArrayRefreshTokenStore();
+        $svc = $this->svc($store);
+        $raw = $svc->mintForLogin(7);
+        $family = array_values($store->rows)[0]['family_id'];
+
+        $first = $svc->redeem($raw, '1.2.3.4', $this->minter());  // rotates
+        $this->clock += 5;                                        // a straggler lands 5s later
+        $second = $svc->redeem($raw, '1.2.3.4', $this->minter());
+
+        $this->assertSame('success', $second['status']);
+        $this->assertSame('JWT-for-7', $second['token']);
+        $this->assertNotSame($first['refresh_token'], $second['refresh_token']);
+        // Both minted pairs stay live — nothing was revoked.
+        $this->assertSame(2, $store->liveCountForFamily($family));
+        $this->assertSame('No', $store->findByHash(hash('sha256', (string) $first['refresh_token']))['revoked']);
+    }
+
+    public function testGraceRedeemStillClampsToFamilyExpiry(): void
+    {
+        $store = new ArrayRefreshTokenStore();
+        $svc = $this->svc($store);
+        $raw = $svc->mintForLogin(7);
+
+        $svc->redeem($raw, '1.2.3.4', $this->minter());
+        $this->clock += 5;
+        $second = $svc->redeem($raw, '1.2.3.4', $this->minter());
+
+        $row = $store->findByHash(hash('sha256', (string) $second['refresh_token']));
+        $this->assertLessThanOrEqual($row['family_expires'], $row['expires']);
     }
 
     public function testUnknownTokenIsInvalid(): void

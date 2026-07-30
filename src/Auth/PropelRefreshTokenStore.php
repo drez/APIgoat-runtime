@@ -38,6 +38,7 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
             'expires'        => (int) $m->getExpires(),
             'family_expires' => (int) $m->getFamilyExpires(),
             'revoked'        => (string) $m->getRevoked(),
+            'last_used_at'   => $m->getLastUsedAt('U') !== null ? (int) $m->getLastUsedAt('U') : null,
         ];
     }
 

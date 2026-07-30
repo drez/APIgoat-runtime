@@ -21,6 +21,22 @@ final class RefreshTokenService
     const THROTTLE_WINDOW = 60;   // seconds
     const THROTTLE_MAX    = 20;   // redeem attempts per ip-or-family per window
 
+    /**
+     * Concurrency grace for reuse detection (2026-07-30): several parallel
+     * clients of ONE session (a web page load fires 4+ app-server requests;
+     * mobile fires parallel calls too) can all present the same refresh
+     * token the moment the access token expires. The first redeem rotates
+     * it; without a grace window every later redeem tripped reuse
+     * detection and revoked the WHOLE family — killing the session exactly
+     * when it should have refreshed (overnight hard-401s, seen live on
+     * vidifye). A token rotated less than REUSE_GRACE seconds ago is a
+     * benign concurrent redeem: mint a fresh pair in the same family.
+     * Security trade-off: a stolen-and-replayed token gains a bounded 30s
+     * window before family revocation kicks in; the redeem throttle
+     * (THROTTLE_MAX) still applies inside it.
+     */
+    const REUSE_GRACE = 30;       // seconds
+
     /** @var callable():int */
     private $clock;
 
@@ -84,8 +100,14 @@ final class RefreshTokenService
             return $this->err('invalid_token');
         }
         if ($row['revoked'] === 'Yes') {
-            $this->store->revokeFamily($row['family_id']);   // reuse attack
-            return $this->err('token_reuse');
+            $lastUsed = $row['last_used_at'] ?? null;
+            if ($lastUsed === null || ($now - (int) $lastUsed) > self::REUSE_GRACE) {
+                $this->store->revokeFamily($row['family_id']);   // reuse attack
+                return $this->err('token_reuse');
+            }
+            // Benign concurrent redeem (see REUSE_GRACE): fall through and
+            // mint a fresh pair — the presented row is already revoked, so
+            // the expiry/rotation steps below skip re-revoking it.
         }
         if ($row['expires'] < $now || $row['family_expires'] < $now) {
             $this->store->markRevoked($row['id'], $now);
@@ -100,8 +122,11 @@ final class RefreshTokenService
             return $this->err('invalid_token');
         }
 
-        // rotate
-        $this->store->markRevoked($row['id'], $now);
+        // rotate (grace path: the presented row is already revoked — don't
+        // stamp it again, its last_used_at anchors the grace window)
+        if ($row['revoked'] !== 'Yes') {
+            $this->store->markRevoked($row['id'], $now);
+        }
         [$raw2, $hash2] = $this->generate();
         $newExpires = min(
             $this->ts($this->refreshExpire(), $now),
