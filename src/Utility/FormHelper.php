@@ -98,6 +98,12 @@ trait FormHelper
         }
         if ($values) {
             $order = json_decode($values, true);
+            // '*' clear-all sentinel: drop every stored ordering for this
+            // list so it falls back to its schema default order.
+            if (($order['col'] ?? '') === '*') {
+                unset($_SESSION['mem']['order'][$model]);
+                return null;
+            }
             $found = false;
             if (is_array($search['order'])) {
                 foreach ($search['order'] as &$orders) {
