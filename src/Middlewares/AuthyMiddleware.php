@@ -288,17 +288,33 @@ class AuthyMiddleware implements MiddlewareInterface
         // token / sends a test to the caller's OWN devices — self-service, not
         // an RBAC model.
         //
-        // Project-declared self-service models (settings `self_service_models`,
-        // mirrors OAuthResourceMiddleware::legacyBearerActions): a project's own
+        // Project-declared self-service ACTIONS (settings `self_service_models`,
+        // shape `['Model' => ['actionOne', 'actionTwo', ...]]`): a project's own
         // custom non-CRUD service (e.g. apigTutor's RealtimeService/TutorService)
-        // is not a Propel model either, so authorize($model, ...) can never
-        // succeed for it and would lock out every non-root caller. A shared
-        // runtime can't grow a per-project hardcoded list, hence the settings
-        // hook. This grants exemption from the model-RBAC-matrix check ONLY —
-        // being authenticated is still required (enforced above), and the
-        // service itself is responsible for scoping data to the caller.
-        $selfServiceModels = array_merge(['account', 'oauth', '_meta', 'push'], self::projectSelfServiceModels());
-        if (in_array(strtolower((string) $this->args['model']), $selfServiceModels, true)) {
+        // is not a Propel model, so authorize($model, ...) can never succeed for
+        // it and would lock out every non-root caller. A shared runtime can't
+        // grow a per-project hardcoded list, hence the settings hook.
+        //
+        // SECURITY (review I1): this is deliberately ACTION-granular, not
+        // model-granular — a declared model exempts ONLY the actions it lists,
+        // mirroring the ApiGoat/geocode precedent just below (scoped to two
+        // named actions) rather than widening to "every action under this URL
+        // segment". A model-only exemption would have let a single typo/
+        // copy-paste (e.g. declaring a real Propel model name by mistake)
+        // silently drop RBAC from that model's entire CRUD surface with no
+        // error. self::isProjectSelfServiceAction() additionally refuses (and
+        // error_logs) any declared name that resolves to a real emitted model,
+        // as a second guard against exactly that mistake.
+        //
+        // This grants exemption from the model-RBAC-matrix check ONLY — being
+        // authenticated is still required (enforced above), and the service
+        // itself is responsible for any further authorization (e.g. apigTutor's
+        // RealtimeService/TutorService verify conversation ownership — see
+        // LearnerResolver in that project).
+        if (in_array(strtolower((string) $this->args['model']), ['account', 'oauth', '_meta', 'push'], true)) {
+            return false;
+        }
+        if (self::isProjectSelfServiceAction((string) $this->args['model'], (string) $this->args['action'])) {
             return false;
         }
 
@@ -345,23 +361,40 @@ class AuthyMiddleware implements MiddlewareInterface
     }
 
     /**
-     * Project-declared extra self-service model names (settings key
-     * `self_service_models`), lowercased. Empty when the project hasn't set one.
-     * @return list<string>
+     * True when $model/$action matches a project-declared self-service entry
+     * (settings `self_service_models = ['Model' => ['action', ...], ...]`).
+     * Case-insensitive on both the model and action names. A declared model
+     * name that resolves to a REAL emitted Propel model is refused (and
+     * logged loudly) rather than honored — see the review-I1 comment at the
+     * call site for why. Bit-identical to "no exemption" when the setting is
+     * absent (returns false immediately).
      */
-    private static function projectSelfServiceModels(): array
+    public static function isProjectSelfServiceAction(string $model, string $action): bool
     {
-        $extra = \ApiGoat\Utility\Settings::load()['self_service_models'] ?? null;
-        if (!is_array($extra)) {
-            return [];
+        $map = \ApiGoat\Utility\Settings::load()['self_service_models'] ?? null;
+        if (!is_array($map) || $model === '') {
+            return false;
         }
-        $out = [];
-        foreach ($extra as $model) {
-            if (is_string($model) && trim($model) !== '') {
-                $out[] = strtolower(trim($model));
+        $modelLower = strtolower($model);
+        $actionLower = strtolower($action);
+        foreach ($map as $declaredModel => $actions) {
+            if (!is_string($declaredModel) || strtolower($declaredModel) !== $modelLower || !is_array($actions)) {
+                continue;
+            }
+            if (class_exists('\\App\\' . $declaredModel . 'Query')) {
+                error_log('[gc-self-service] self_service_models declares "' . $declaredModel
+                    . '", which resolves to a real Propel model (\\App\\' . $declaredModel . 'Query exists) — '
+                    . 'ignoring the exemption for it. This would otherwise silently drop RBAC from that '
+                    . "model's entire CRUD surface for every authenticated user.");
+                continue;
+            }
+            foreach ($actions as $declaredAction) {
+                if (is_string($declaredAction) && strtolower($declaredAction) === $actionLower) {
+                    return true;
+                }
             }
         }
-        return $out;
+        return false;
     }
 
     private function checkExclude($route)

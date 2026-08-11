@@ -82,14 +82,21 @@ class RbacMiddleware implements MiddlewareInterface
         // the gate (do NOT set rbac_public='passed' — AuthyMiddleware +
         // GeoService still require a connected session/bearer identity).
         $isGeo = (bool) preg_match('#/api/v[0-9]+/ApiGoat/(geocode|reverseGeocode)(/|$)#i', $request->getUri()->getPath());
-        // Project-declared self-service models (settings `self_service_models`,
-        // same key AuthyMiddleware reads): a project's own custom non-CRUD
-        // service takes a free-shaped request body per action (e.g. apigTutor's
-        // RealtimeService/TutorService), so api_rbac's body-pattern matching
-        // would auto-mint a per-shape rule that fails closed (Deny) on prod —
-        // mirrors the _meta/geocode exemptions above. Authentication (AuthyMiddleware
-        // + the service's own isAuthenticated()) stays the gate.
-        $isSelfService = $this->isSelfServiceApiRoute($request->getUri()->getPath());
+        // Project-declared self-service ACTIONS (settings `self_service_models`,
+        // shape `['Model' => ['action', ...]]`, same key + action-granularity
+        // AuthyMiddleware::isProjectSelfServiceAction() enforces — review I1: this
+        // used to be a model-wide URL-path regex, widened to every action under
+        // that path segment; now it matches the SAME declared model+action pairs
+        // AuthyMiddleware does, via the same shared, guarded lookup): a project's
+        // own custom non-CRUD service takes a free-shaped request body per
+        // action, so api_rbac's body-pattern matching would auto-mint a
+        // per-shape rule that fails closed (Deny) on prod — mirrors the
+        // _meta/geocode exemptions above. Authentication (AuthyMiddleware + the
+        // service's own isAuthenticated()) stays the gate.
+        $isSelfService = \ApiGoat\Middlewares\AuthyMiddleware::isProjectSelfServiceAction(
+            (string) ($this->args['model'] ?? ''),
+            (string) ($this->args['action'] ?? '')
+        );
         if ($isMcp) {
             $request = $request->withAttribute('rbac_public', 'passed')
                                ->withAttribute('rbac_complete', 'yes');
@@ -169,29 +176,6 @@ class RbacMiddleware implements MiddlewareInterface
     private function isAccountSelfService(): bool
     {
         return strtolower((string) ($this->args['model'] ?? '')) === 'account';
-    }
-
-    /**
-     * True when $path is an /api/v{N}/<Model>/... route for a project-declared
-     * self-service model (settings `self_service_models`, mirrors
-     * AuthyMiddleware::projectSelfServiceModels()). Empty/unset -> false.
-     */
-    private function isSelfServiceApiRoute(string $path): bool
-    {
-        static $pattern = false; // false = not computed yet, null = no models declared
-        if ($pattern === false) {
-            $extra = \ApiGoat\Utility\Settings::load()['self_service_models'] ?? null;
-            $models = [];
-            if (is_array($extra)) {
-                foreach ($extra as $model) {
-                    if (is_string($model) && trim($model) !== '') {
-                        $models[] = preg_quote(trim($model), '#');
-                    }
-                }
-            }
-            $pattern = $models ? '#/api/v[0-9]+/(' . implode('|', $models) . ')(/|$)#i' : null;
-        }
-        return $pattern !== null && (bool) preg_match($pattern, $path);
     }
 
     /**
