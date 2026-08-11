@@ -287,7 +287,18 @@ class AuthyMiddleware implements MiddlewareInterface
         // "push" (POST /api/v1/Push[/test]) registers the caller's OWN device
         // token / sends a test to the caller's OWN devices — self-service, not
         // an RBAC model.
-        if (in_array(strtolower((string) $this->args['model']), ['account', 'oauth', '_meta', 'push'], true)) {
+        //
+        // Project-declared self-service models (settings `self_service_models`,
+        // mirrors OAuthResourceMiddleware::legacyBearerActions): a project's own
+        // custom non-CRUD service (e.g. apigTutor's RealtimeService/TutorService)
+        // is not a Propel model either, so authorize($model, ...) can never
+        // succeed for it and would lock out every non-root caller. A shared
+        // runtime can't grow a per-project hardcoded list, hence the settings
+        // hook. This grants exemption from the model-RBAC-matrix check ONLY —
+        // being authenticated is still required (enforced above), and the
+        // service itself is responsible for scoping data to the caller.
+        $selfServiceModels = array_merge(['account', 'oauth', '_meta', 'push'], self::projectSelfServiceModels());
+        if (in_array(strtolower((string) $this->args['model']), $selfServiceModels, true)) {
             return false;
         }
 
@@ -331,6 +342,26 @@ class AuthyMiddleware implements MiddlewareInterface
         } else {
             return new InvalidSessionRenderer($this->args['is_api'], "Missing privileges in the Privileges Map for the requested action");
         }
+    }
+
+    /**
+     * Project-declared extra self-service model names (settings key
+     * `self_service_models`), lowercased. Empty when the project hasn't set one.
+     * @return list<string>
+     */
+    private static function projectSelfServiceModels(): array
+    {
+        $extra = \ApiGoat\Utility\Settings::load()['self_service_models'] ?? null;
+        if (!is_array($extra)) {
+            return [];
+        }
+        $out = [];
+        foreach ($extra as $model) {
+            if (is_string($model) && trim($model) !== '') {
+                $out[] = strtolower(trim($model));
+            }
+        }
+        return $out;
     }
 
     private function checkExclude($route)
