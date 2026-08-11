@@ -175,11 +175,40 @@ final class CheckoutService
      * is a raw Stripe price id to use directly when no local StripePrice row exists for it
      * (subscription refresh from an original session Stripe still knows about).
      *
+     * Checkout mode is NOT simply "any catalog price opt present → subscription":
+     * a resolvable row's own `type` decides ('one_time' → 'payment', anything
+     * else → 'subscription'); an opt whose row can't be resolved locally keeps
+     * the historical subscription assumption.
+     *
      * @return array{params: array, mode: string, amount: int, currency: string}
      */
     private static function buildSessionParams(object $rec, array $entry, string $table, object $customer, array $opts, string $rawToken): array
     {
-        $isSubscription = \array_key_exists('price_id', $opts) || isset($opts['stripe_price_id']);
+        // Resolve the catalog StripePrice row (if any) ONCE up front — both
+        // mode detection below and the line-item construction further down
+        // reuse this same $priceRow instead of re-querying.
+        $priceRow = null;
+        if (\array_key_exists('price_id', $opts) && $opts['price_id'] !== null) {
+            $priceRow = StripeDb::query('StripePrice')::create()->findPk((int) $opts['price_id']);
+        } elseif (isset($opts['stripe_price_id'])) {
+            $priceRow = StripeDb::query('StripePrice')::create()->filterByStripePriceId((string) $opts['stripe_price_id'])->findOne();
+        }
+
+        // A catalog price opt used to force subscription mode unconditionally
+        // (array_key_exists('price_id', $opts) || isset($opts['stripe_price_id'])).
+        // That broke one_time catalog prices (boost + video-extend packages,
+        // 2026-07-27/28): Stripe rejects a subscription-mode session that has
+        // no recurring price ("You must provide at least one recurring price
+        // in subscription mode"), so the payment-mode catalog branch below
+        // was unreachable. The price row's own `type` now decides: a
+        // one_time row means payment mode; a recurring row (or an opt whose
+        // row can't be resolved locally — e.g. refreshSessionFor rebuilding
+        // from a raw Stripe price id Stripe still knows about) keeps the
+        // original subscription behavior byte-identical.
+        $hasCatalogPriceOpt = \array_key_exists('price_id', $opts) || isset($opts['stripe_price_id']);
+        $isSubscription = $hasCatalogPriceOpt
+            ? ($priceRow !== null ? $priceRow->getType() !== 'one_time' : true)
+            : false;
 
         $currency = $entry['currency_getter'] !== null
             ? \strtolower((string) $rec->{$entry['currency_getter']}())
@@ -202,16 +231,14 @@ final class CheckoutService
             'metadata'    => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $rec->getPrimaryKey()],
         ];
         if ($mode === 'payment') {
-            if (isset($opts['price_id'])) {
+            if ($priceRow !== null) {
                 // One-time CATALOG package (stripe_price type=one_time,
                 // 2026-07-27): reference the pushed Price so the charge uses
                 // the catalog row, not ad-hoc price_data.
-                $priceQ = StripeDb::query('StripePrice');
-                $price  = $priceQ::create()->findPk((int) $opts['price_id']);
-                if ($price === null || (string) $price->getStripePriceId() === '') {
+                if ((string) $priceRow->getStripePriceId() === '') {
                     throw new \RuntimeException('Price not found or not pushed to Stripe — use the Prices screen first');
                 }
-                $params['line_items'] = [['quantity' => 1, 'price' => $price->getStripePriceId()]];
+                $params['line_items'] = [['quantity' => 1, 'price' => $priceRow->getStripePriceId()]];
             } else {
                 $params['line_items'] = [[
                     'quantity'   => 1,
@@ -235,12 +262,10 @@ final class CheckoutService
             // instead of failing the refresh.
             $params['line_items'] = [['quantity' => 1, 'price' => (string) $opts['stripe_price_id']]];
         } else {
-            $priceQ = StripeDb::query('StripePrice');
-            $price  = $priceQ::create()->findPk((int) $opts['price_id']);
-            if ($price === null || (string) $price->getStripePriceId() === '') {
+            if ($priceRow === null || (string) $priceRow->getStripePriceId() === '') {
                 throw new \RuntimeException('Price not found or not pushed to Stripe — use the Prices screen first');
             }
-            $params['line_items'] = [['quantity' => 1, 'price' => $price->getStripePriceId()]];
+            $params['line_items'] = [['quantity' => 1, 'price' => $priceRow->getStripePriceId()]];
         }
 
         return ['params' => $params, 'mode' => $mode, 'amount' => $amount, 'currency' => $currency];
