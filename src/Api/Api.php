@@ -57,6 +57,20 @@ class Api
         'IdCreation', 'IdModification', 'IdGroupCreation',
         'DateCreation', 'DateModification',
         'IdTenant', // tenant is assigned server-side on create, never client-set
+        // with_authy_user's linked-login FK (goatcheese Parameters/with_authy_user.php).
+        // Only ever present on a table that declares that behavior; it is
+        // exclusively hook-managed there (the generated Service's
+        // gcAuthyUserSync()/gcAuthyUserProvision() call $e->setIdAuthy()
+        // explicitly, never via a generic write). Without this, an API/JWT
+        // client with plain write rights on the host table could POST
+        // IdAuthy directly and relink any row (e.g. a Learner) to an
+        // arbitrary authy id — including id 1 (root) — since
+        // isWritableColumn() only rejects columns on this denylist before
+        // falling through to the per-form editable-column allowlist, which
+        // does include IdAuthy (it's a real, form-visible — if readonly —
+        // column). "API-created rows have no login" is fine for v1; the API
+        // must simply never be able to RELINK id_authy.
+        'IdAuthy',
     ];
 
     /** @var string[] */
