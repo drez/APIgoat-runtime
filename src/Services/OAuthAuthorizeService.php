@@ -16,6 +16,9 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  *   - validateAuthorizationRequest (league parses client/redirect/scopes/PKCE)
  *   - S256 PKCE guard (rejects plain / missing method)
  *   - if the CRM session is NOT connected → render the login page (no code)
+ *   - if connected AND prompt=login|select_account → forget the session and
+ *     render the login page (OIDC re-auth; required for shared-device account
+ *     switching — Chrome Custom Tabs reuse the CRM cookie after local sign-out)
  *   - if connected → render the consent page (no auto-grant, no code)
  *
  * POST /oauth/authorize  (the only path that can issue a code)
@@ -40,7 +43,27 @@ class OAuthAuthorizeService extends Service
     private const OAUTH_PARAMS = [
         'response_type', 'client_id', 'redirect_uri',
         'scope', 'state', 'code_challenge', 'code_challenge_method',
+        'prompt', // OIDC prompt=login must survive the login/consent POST round-trip
     ];
+
+    /**
+     * Should this authorize request ignore a lingering CRM session and
+     * re-prompt for credentials?
+     *
+     * OIDC `prompt=login` (and `select_account`): the Authorization Server
+     * MUST re-authenticate even if the End-User has a valid session. The
+     * mobile app sends this on every sign-in (forceFreshLogin) so kid B on a
+     * shared device cannot inherit kid A's cookie. Consent POSTs (a decision
+     * already submitted) keep the session — that's the step AFTER re-auth.
+     */
+    public static function shouldReauthenticate(array $params, string $consent = ''): bool
+    {
+        if ($consent !== '') {
+            return false;
+        }
+        $prompt = strtolower(trim((string) ($params['prompt'] ?? '')));
+        return $prompt === 'login' || $prompt === 'select_account';
+    }
 
     /**
      * Bypass the parent BuilderLayout/BuilderMenus initialization — OAuth
@@ -94,6 +117,16 @@ class OAuthAuthorizeService extends Service
 
             $session   = $_SESSION[_AUTH_VAR] ?? null;
             $connected = ($session && $session->get('connected') === 'YES');
+            $consent   = $isPost ? (string) ($body['consent'] ?? '') : '';
+            // prompt=login (Android Custom Tabs / web popup): drop the lingering
+            // CRM session BEFORE the connected-vs-login branch, otherwise GET
+            // skips the login form and a subsequent POST of credentials is
+            // misread as a consent decision for the PREVIOUS user.
+            if (self::shouldReauthenticate($params, $consent)) {
+                $this->forgetCrmSession();
+                $session   = $_SESSION[_AUTH_VAR] ?? null;
+                $connected = false;
+            }
 
             if ($isPost) {
                 $submittedCsrf = (string) ($body['csrf'] ?? '');
@@ -258,12 +291,23 @@ class OAuthAuthorizeService extends Service
         $hidden = $this->hiddenParams($params) . $this->hiddenField('csrf', $csrf);
         $action = htmlspecialchars($this->actionUrl(), ENT_QUOTES);
 
+        // Defense in depth for account switching: name the signed-in user so
+        // a lingering session cannot be Approved as someone else by mistake.
+        $who = '';
+        if ($session && method_exists($session, 'get')) {
+            $who = trim((string) ($session->get('fullname') ?: $session->get('username') ?: ''));
+        }
+        $whoHtml = $who !== ''
+            ? '<p style="color:#333;font-weight:600;">' . sprintf(_('Signed in as %s'), htmlspecialchars($who, ENT_QUOTES)) . '</p>'
+            : '';
+
         $html = '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             . '<meta name="viewport" content="width=device-width, initial-scale=1">'
             . '<title>' . _('Authorize access') . '</title></head>'
             . '<body style="font-family:Arial,Helvetica,sans-serif;background:#f4f6f8;margin:0;">'
             . '<div style="max-width:420px;margin:48px auto;background:#fff;padding:28px;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.08);">'
             . '<h2 style="margin-top:0;color:#2f2f2f;">' . sprintf(_('Authorize %s'), '<strong>' . $clientName . '</strong>') . '</h2>'
+            . $whoHtml
             . '<p style="color:#555;">' . sprintf(_('"%s" is requesting access to your CRM account.'), $clientName) . '</p>'
             . '<p style="color:#555;margin-bottom:4px;">' . _('It will be able to:') . '</p>'
             . '<ul style="color:#333;margin-top:0;">' . $scopeItems . '</ul>'
@@ -296,6 +340,22 @@ class OAuthAuthorizeService extends Service
     private function actionUrl(): string
     {
         return '/' . ltrim($this->request->getUri()->getPath(), '/');
+    }
+
+    /**
+     * Drop the CRM identity from the current PHP session without destroying
+     * the session itself (CSRF token must survive for the login POST). Used
+     * when prompt=login forces re-authentication.
+     */
+    private function forgetCrmSession(): void
+    {
+        $s = $_SESSION[_AUTH_VAR] ?? null;
+        if ($s && is_object($s) && method_exists($s, 'set')) {
+            $s->set('connected', 'NO');
+            $s->set('id', '');
+            $s->set('username', '');
+            $s->set('fullname', '');
+        }
     }
 
     private function htmlResponse(string $html): ResponseInterface
