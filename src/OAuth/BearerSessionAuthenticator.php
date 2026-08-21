@@ -73,8 +73,10 @@ final class BearerSessionAuthenticator
             return self::UNKNOWN_USER;
         }
 
-        // Already connected (idempotent) — nothing to do.
-        if (isset($_SESSION[\_AUTH_VAR]) && $_SESSION[\_AUTH_VAR]->get('connected') === 'YES') {
+        // Same user already in the session: skip the DB hydrate. A DIFFERENT
+        // user in the cookie session must NOT win — mobile sign-out drops the
+        // bearer but OkHttp still sends the previous kid's PHPSESSID.
+        if (self::shouldKeepConnectedSession($_SESSION[\_AUTH_VAR] ?? null, $authyId)) {
             return self::AUTHENTICATED;
         }
 
@@ -116,6 +118,23 @@ final class BearerSessionAuthenticator
     {
         $v = \function_exists('env') ? env('GC_BEARER_CACHE_TTL') : \getenv('GC_BEARER_CACHE_TTL');
         return ($v === false || $v === null || $v === '') ? 60 : \max(0, (int) $v);
+    }
+
+    /**
+     * Keep the cookie session only when it is already the token's user.
+     * Connected + other id → replace (account switch). No token id → keep
+     * (nothing to switch to). Not connected → do not keep.
+     */
+    public static function shouldKeepConnectedSession($session, int $tokenAuthyId): bool
+    {
+        if (!\is_object($session) || !\method_exists($session, 'get')
+            || $session->get('connected') !== 'YES') {
+            return false;
+        }
+        if ($tokenAuthyId <= 0) {
+            return true;
+        }
+        return (int) ($session->get('id') ?? 0) === $tokenAuthyId;
     }
 
     /** Active unless getDeactivate() is a truthy non-'No' value. Objects without the method are active. */

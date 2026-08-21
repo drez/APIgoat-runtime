@@ -66,10 +66,15 @@ class OAuthResourceMiddleware implements MiddlewareInterface
      * only by the legacy route, so without this the mobile bearer client cannot reach them.
      * Hydration is identity-only; RbacMiddleware (api_rbac) + Authy +
      * Api::authorize + ACL still gate the request identically to a browser session.
+     *
+     * $alreadyConnected is kept in the signature (call sites / older tests) but
+     * ignored: a Bearer token is the request's identity. React Native's OkHttp
+     * cookie jar keeps PHPSESSID after local sign-out, so skipping hydrate
+     * when a cookie session is still connected made kid B's API run as kid A.
      */
     public static function shouldAttempt(bool $isApi, bool $alreadyConnected, bool $hasBearer, bool $isLegacyBearerAction = false): bool
     {
-        return ($isApi || $isLegacyBearerAction) && !$alreadyConnected && $hasBearer;
+        return ($isApi || $isLegacyBearerAction) && $hasBearer;
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface

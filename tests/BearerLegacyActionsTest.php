@@ -59,12 +59,13 @@ check(
     ['upload', 'open', 'file', 'mass']
 );
 
-// The gate itself is unchanged: bearer identity only for API routes or a listed
-// legacy action, and never when a session is already connected.
+// The gate hydrates bearer identity for API routes or a listed legacy action.
+// A leftover cookie session must NOT skip that — mobile OkHttp keeps PHPSESSID
+// after local sign-out, and the bearer is the request's real identity.
 check('api route + bearer', OAuthResourceMiddleware::shouldAttempt(true, false, true, false), true);
 check('legacy listed + bearer', OAuthResourceMiddleware::shouldAttempt(false, false, true, true), true);
 check('legacy UNlisted + bearer', OAuthResourceMiddleware::shouldAttempt(false, false, true, false), false);
-check('already connected', OAuthResourceMiddleware::shouldAttempt(true, true, true, true), false);
+check('cookie session + bearer still attempts', OAuthResourceMiddleware::shouldAttempt(true, true, true, true), true);
 
 echo $fail === 0 ? "PASS: bearer legacy actions OK\n" : "FAILED: {$fail}\n";
 exit($fail === 0 ? 0 : 1);

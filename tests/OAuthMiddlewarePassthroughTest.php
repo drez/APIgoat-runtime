@@ -16,12 +16,12 @@ function assertTrue($c, string $m): void { if (!$c) { fwrite(STDERR, "FAIL: $m\n
 // shouldAttempt(isApi, alreadyConnected, hasBearer, isLegacyBearerAction=false)
 assertTrue(OAuthResourceMiddleware::shouldAttempt(true,  false, true)  === true,  'api + not-connected + bearer => attempt');
 assertTrue(OAuthResourceMiddleware::shouldAttempt(false, false, true)  === false, 'non-api (not file action) => skip');
-assertTrue(OAuthResourceMiddleware::shouldAttempt(true,  true,  true)  === false, 'already connected => skip');
+assertTrue(OAuthResourceMiddleware::shouldAttempt(true,  true,  true)  === true,  'cookie session + bearer => still attempt (bearer wins)');
 assertTrue(OAuthResourceMiddleware::shouldAttempt(true,  false, false) === false, 'no bearer => skip');
 // Legacy bearer actions (upload/open/file/mass) are served by the legacy is_api=false route — hydrate there too.
 assertTrue(OAuthResourceMiddleware::shouldAttempt(false, false, true,  true)  === true,  'non-api + legacy bearer action + bearer => attempt (covers mass)');
 assertTrue(OAuthResourceMiddleware::shouldAttempt(false, false, false, true)  === false, 'legacy bearer action but no bearer => skip');
-assertTrue(OAuthResourceMiddleware::shouldAttempt(false, true,  true,  true)  === false, 'legacy bearer action but already connected => skip');
+assertTrue(OAuthResourceMiddleware::shouldAttempt(false, true,  true,  true)  === true,  'legacy + cookie session + bearer => still attempt');
 
 echo "PASS: OAuthResourceMiddleware::shouldAttempt OK\n"; exit(0);
 

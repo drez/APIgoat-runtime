@@ -82,7 +82,11 @@ class JwtBeforeHandler implements BeforeHandlerInterface
         $request = $request->withAttribute('jwt_claims', $decoded);
         $routeArgs = ['decoded' => $decoded, 'token' => (string) ($arguments['token'] ?? '')];
 
-        if ($_SESSION[_AUTH_VAR]->get('connected') === 'YES') {
+        $tokenId = (int) ($decoded['authyId'] ?? 0);
+        if (\ApiGoat\OAuth\BearerSessionAuthenticator::shouldKeepConnectedSession(
+            $_SESSION[_AUTH_VAR] ?? null,
+            $tokenId
+        )) {
             return $request;
         }
 
