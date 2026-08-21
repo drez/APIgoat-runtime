@@ -24,8 +24,10 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * POST /oauth/authorize  (the only path that can issue a code)
  *   - re-validateAuthorizationRequest from the carried-over original params
  *   - re-apply the S256 guard
- *   - not connected + credentials → CSRF-verified CRM login (reuses the exact
- *     tryLog()/setSession() path the human login uses) → on success render consent
+ *   - credentials (u/p) → ALWAYS CSRF-verified CRM login for THAT user, even
+ *     if a cookie still says connected (otherwise a login form POST against a
+ *     lingering session is misread as consent and re-issues the previous kid)
+ *   - switch_account → forget session, re-show login
  *   - connected + consent decision → CSRF-verified Allow → completeAuthorizationRequest
  *     (302 + code); Deny → access_denied redirect, no code
  *
@@ -63,6 +65,19 @@ class OAuthAuthorizeService extends Service
         }
         $prompt = strtolower(trim((string) ($params['prompt'] ?? '')));
         return $prompt === 'login' || $prompt === 'select_account';
+    }
+
+    /** Login form POST — username and/or password present. */
+    public static function isCredentialSubmission(array $body): bool
+    {
+        return trim((string) ($body['u'] ?? '')) !== ''
+            || (string) ($body['p'] ?? '') !== '';
+    }
+
+    /** Consent-page "Use a different account" POST. */
+    public static function isSwitchAccount(array $body): bool
+    {
+        return (string) ($body['switch_account'] ?? '') === '1';
     }
 
     /**
@@ -131,27 +146,38 @@ class OAuthAuthorizeService extends Service
             if ($isPost) {
                 $submittedCsrf = (string) ($body['csrf'] ?? '');
 
-                // --- Not connected: treat the POST as a login submission. ---
-                if (!$connected) {
-                    $u = (string) ($body['u'] ?? '');
-                    $p = (string) ($body['p'] ?? '');
-                    if ($u === '' && $p === '') {
-                        // No credentials → just (re)render the login page, no code.
-                        return $this->renderLogin($authRequest, $params);
-                    }
-                    // CSRF gate before touching the credential path.
+                // Consent-page "Use a different account": not a consent decision.
+                if (self::isSwitchAccount($body)) {
                     if (!$this->csrfOk($session, $submittedCsrf)) {
                         return $this->renderLogin($authRequest, $params, _('Your session expired. Please try again.'));
                     }
-                    // Reuse the CRM credential path verbatim — never reimplement it.
-                    $this->crmLogin($u, $p, $submittedCsrf);
+                    $this->forgetCrmSession();
+                    return $this->renderLogin($authRequest, $params);
+                }
+
+                // Credentials always mean "log in as this user". A lingering
+                // connected cookie must not swallow u/p and render the previous
+                // kid's consent instead.
+                if (self::isCredentialSubmission($body)) {
+                    if (!$this->csrfOk($session, $submittedCsrf)) {
+                        return $this->renderLogin($authRequest, $params, _('Your session expired. Please try again.'));
+                    }
+                    $this->forgetCrmSession();
+                    $this->crmLogin(
+                        trim((string) ($body['u'] ?? '')),
+                        (string) ($body['p'] ?? ''),
+                        $submittedCsrf
+                    );
                     $session   = $_SESSION[_AUTH_VAR] ?? null;
                     $connected = ($session && $session->get('connected') === 'YES');
                     if (!$connected) {
                         return $this->renderLogin($authRequest, $params, _('Sign-in failed. Check your details and try again.'));
                     }
-                    // Logged in now → show consent (no decision submitted yet, no code).
                     return $this->renderConsent($authRequest, $params);
+                }
+
+                if (!$connected) {
+                    return $this->renderLogin($authRequest, $params);
                 }
 
                 // --- Connected: treat the POST as a consent decision. ---
@@ -315,6 +341,10 @@ class OAuthAuthorizeService extends Service
             . $hidden
             . '<button type="submit" name="consent" value="deny" style="flex:1;padding:10px;background:#eee;color:#333;border:0;border-radius:6px;cursor:pointer;font-size:15px;">' . _('Deny') . '</button>'
             . '<button type="submit" name="consent" value="allow" style="flex:1;padding:10px;background:#00d1b2;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:15px;">' . _('Allow') . '</button>'
+            . '</form>'
+            . '<form method="post" action="' . $action . '" style="margin-top:14px;text-align:center;">'
+            . $hidden
+            . '<button type="submit" name="switch_account" value="1" style="background:none;border:0;color:#06c;cursor:pointer;font-size:14px;text-decoration:underline;padding:0;">' . _('Use a different account') . '</button>'
             . '</form></div></body></html>';
 
         return $this->htmlResponse($html);
@@ -360,8 +390,12 @@ class OAuthAuthorizeService extends Service
 
     private function htmlResponse(string $html): ResponseInterface
     {
+        // Chrome Custom Tabs will otherwise restore a cached consent page for
+        // the previous kid when the authorize URL is reused after local sign-out.
         $resp = $this->response
             ->withHeader('Content-Type', 'text/html; charset=utf-8')
+            ->withHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+            ->withHeader('Pragma', 'no-cache')
             ->withStatus(200);
         $resp->getBody()->write($html);
         return $resp;

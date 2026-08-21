@@ -99,5 +99,31 @@ check(
     false
 );
 
+check(
+    'login form POST with username is a credential submission',
+    OAuthAuthorizeService::isCredentialSubmission(['u' => 'fred', 'p' => 'x']),
+    true
+);
+check(
+    'whitespace-only username without password is not credentials',
+    OAuthAuthorizeService::isCredentialSubmission(['u' => '  ']),
+    false
+);
+check(
+    'consent Allow POST is not a credential submission',
+    OAuthAuthorizeService::isCredentialSubmission(['consent' => 'allow']),
+    false
+);
+check(
+    'switch_account=1 is the consent-page account switch',
+    OAuthAuthorizeService::isSwitchAccount(['switch_account' => '1']),
+    true
+);
+check(
+    'consent=allow is not an account switch',
+    OAuthAuthorizeService::isSwitchAccount(['consent' => 'allow']),
+    false
+);
+
 echo $fail === 0 ? "ALL PASS\n" : "FAILED $fail\n";
 exit($fail === 0 ? 0 : 1);
