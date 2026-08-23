@@ -150,9 +150,25 @@ class AuthyMiddleware implements MiddlewareInterface
      *
      * @return ResponseInterface|null a 403 response, or null when allowed
      */
+    /**
+     * OAuth 2.1 PROTOCOL endpoints that are authenticated by what is IN the
+     * request (PKCE code + verifier + client_id, refresh token, or nothing for
+     * rate-limited dynamic registration) and never read the ambient session
+     * as a credential — so there is no forgeable cookie privilege to protect.
+     * Native clients (React Native okhttp) re-send the session cookie set on
+     * earlier calls; a still-connected session made the token POST look like a
+     * session-authenticated write and 403'd it without an OAuth `error` key.
+     * Exact-route match only. /oauth/authorize is deliberately NOT here: the
+     * consent form is a genuine session-authenticated browser POST.
+     */
+    private const CSRF_EXEMPT_ROUTES = ['oauth/token', 'oauth/register'];
+
     private function checkCsrf(ServerRequestInterface $request): ?ResponseInterface
     {
         $method = strtoupper($request->getMethod());
+        if (in_array(trim((string) ($this->args['route'] ?? ''), '/'), self::CSRF_EXEMPT_ROUTES, true)) {
+            return null;
+        }
         // SECURITY (review R5): exempt only genuine Bearer-token requests (no
         // ambient cookie credential to forge), NOT every is_api route. A
         // cookie-authenticated write to an API route must still carry the CSRF
