@@ -10,6 +10,7 @@ namespace ApiGoat\Services;
 use ApiGoat\Services\Service;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use ApiGoat\Api\Api;
 use ApiGoat\Api\ApiResponse;
 
 class AccountService extends Service
@@ -37,16 +38,31 @@ class AccountService extends Service
                     ->findPk($_SESSION[\_AUTH_VAR]->get('id'));
                 if ($Authy) {
                     $Authy = $Authy->toArray(\BasePeer::TYPE_FIELDNAME);
-                    // Never cross the API boundary. Mirrors Api::$outputDenyColumns
-                    // (passwdhash/resettokenhash/validationkey/googlesub) — kept in
-                    // TYPE_FIELDNAME form here — plus the non-self-service columns.
-                    // reset_token_hash/_expires + google_sub/_email were missing and
-                    // leaked the caller's own single-use reset-token hash + Google id.
-                    $systemColumns = ['validation_key', 'passwd_hash', 'passwd', 'root', 'deactivate', 'rights_all', 'rights_owner', 'rights_group', 'onglet', 'reset_token_hash', 'reset_token_expires', 'google_sub', 'google_email'];
+                    // Never cross the API boundary. Two groups, deliberately kept
+                    // apart:
+                    //  1. the credential/token columns — NOT re-listed here; they
+                    //     are matched against Api::CREDENTIAL_COLUMNS (the single
+                    //     source of truth) using that list's own normalization
+                    //     (lowercase, underscores removed), so the TYPE_FIELDNAME
+                    //     keys passwd_hash / reset_token_hash / validation_key /
+                    //     google_sub match without a snake_case fork, and a column
+                    //     added to the const is excluded here automatically.
+                    //  2. the non-self-service columns below — privilege flags,
+                    //     rights bitmaps, UI state and the reset-token expiry /
+                    //     linked Google address. These are NOT credentials, so they
+                    //     do not belong on the const; they stay listed here.
+                    // (reset_token_hash/_expires + google_sub/_email were once
+                    // missing and leaked the caller's own single-use reset-token
+                    // hash + Google id.)
+                    $nonSelfServiceColumns = ['passwd', 'root', 'deactivate', 'rights_all', 'rights_owner', 'rights_group', 'onglet', 'reset_token_expires', 'google_email'];
                     foreach ($Authy as $column => $value) {
-                        if (!in_array($column, $systemColumns)) {
-                            $data[$column] = $value;
+                        if (in_array($column, $nonSelfServiceColumns)) {
+                            continue;
                         }
+                        if (in_array(strtolower(str_replace('_', '', (string) $column)), Api::CREDENTIAL_COLUMNS, true)) {
+                            continue;
+                        }
+                        $data[$column] = $value;
                     }
                     $this->body = ['status' => 'success', 'data' => $data];
                 } else {

@@ -77,6 +77,20 @@ class Api
     protected $denyColumns = self::SYSTEM_COLUMNS;
 
     /**
+     * Columns that hold a credential or a single-use token, normalized to
+     * lowercase with underscores removed (so both `passwd_hash` and
+     * `PasswdHash` match the same entry). Single source of truth — read by
+     * $outputDenyColumns / stripSensitiveOutput() (response stripping),
+     * QueryBuilder::isSensitiveSelectColumn() (select-clause rejection),
+     * AccountService (self-service payload) and isCredentialTable() (the
+     * public-read gate), so what counts as a credential cannot drift from any
+     * one of the enforcement points.
+     *
+     * @var string[]
+     */
+    public const CREDENTIAL_COLUMNS = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
+
+    /**
      * Memo for i18nColumns() — phpNames of add_i18n columns proxied onto this
      * model (null until first use).
      *
@@ -99,10 +113,11 @@ class Api
      * single-use tokens — a user with mere `:r` on Authy could otherwise read
      * every account's password hash / reset token. Matched case-insensitively,
      * underscores ignored (covers both PhpName and snake_case keys).
+     * The list itself lives on self::CREDENTIAL_COLUMNS.
      *
      * @var array
      */
-    protected $outputDenyColumns = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
+    protected $outputDenyColumns = self::CREDENTIAL_COLUMNS;
 
     /**
      * Strip outputDenyColumns from an API result set (array of row arrays, or a
@@ -262,6 +277,75 @@ class Api
     }
 
     /**
+     * SECURITY: does the resolved table physically hold credentials?
+     *
+     * True iff the model's TableMap carries any column on
+     * self::CREDENTIAL_COLUMNS, matched with the same normalization
+     * stripSensitiveOutput() uses (lowercase, underscores removed) so both
+     * `passwd_hash` and `PasswdHash` hit the same entry. `authy` qualifies by
+     * construction (passwd_hash); any project table that later grows a
+     * password or token column is covered automatically, so there is no
+     * table list to remember to update.
+     *
+     * FAILS CLOSED. If the TableMap cannot be resolved — no such Query class,
+     * a renamed/absent getTableMap(), Propel not initialized, a map builder
+     * that throws — the table is reported as credential-bearing. An
+     * unresolvable table must never be handed the public read waiver on the
+     * strength of "we could not check".
+     *
+     * @return boolean
+     */
+    public function isCredentialTable()
+    {
+        $queryClass = $this->queryObjName;
+        $columns = null;
+        try {
+            if (!\class_exists($queryClass) || !\method_exists($queryClass, 'create')) {
+                return true;
+            }
+            $Query = $queryClass::create();
+            if (!\is_object($Query) || !\method_exists($Query, 'getTableMap')) {
+                return true;
+            }
+            $TableMap = $Query->getTableMap();
+            if (!\is_object($TableMap) || !\method_exists($TableMap, 'getColumns')) {
+                return true;
+            }
+            $columns = $TableMap->getColumns();
+        } catch (\Throwable $x) {
+            // Catch Error too, not just Exception: an autoload / map-builder
+            // failure surfaces as an Error and must still fail closed.
+            return true;
+        }
+        if (!\is_array($columns) && !($columns instanceof \Traversable)) {
+            return true;
+        }
+        foreach ($columns as $key => $Column) {
+            // Propel keys getColumns() by physical column name; read the
+            // ColumnMap's own names too so a map that keys differently (or a
+            // PhpName-only view) is still matched.
+            $names = [$key];
+            if (\is_object($Column)) {
+                if (\method_exists($Column, 'getName')) {
+                    $names[] = $Column->getName();
+                }
+                if (\method_exists($Column, 'getPhpName')) {
+                    $names[] = $Column->getPhpName();
+                }
+            }
+            foreach ($names as $name) {
+                if (!\is_string($name) && !\is_int($name)) {
+                    continue;
+                }
+                if (\in_array(\strtolower(\str_replace('_', '', (string) $name)), self::CREDENTIAL_COLUMNS, true)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Update/create one or multiple entry
      *
      * @param array $request
@@ -393,8 +477,23 @@ class Api
      */
     public function getJson($data, $QueryBuilder = null)
     {
-
-        if ($data['rbac_public'] != 'passed') {
+        // SECURITY: a Public+Allow api_rbac rule (rbac_public == 'passed') may
+        // waive the owner/tenant ACL on READS of ordinary tables — that carve-out
+        // is load-bearing for anonymous public content lists (Category/Faq/Banner)
+        // and is deliberately kept (see setJson: writes are never waived). It must
+        // NEVER extend to a table that holds credentials. Skipping authorize()
+        // leaves $this->aclGroup null, so setAclFilter()'s isset() guard drops the
+        // Owner/Group row filter, and an anonymous caller has no id_tenant either:
+        // net zero row filtering, i.e. the whole table. On `authy` that is full
+        // account enumeration (username/email/rights/tenant — stripSensitiveOutput
+        // removes the hashes but nothing else), plus a blind extraction oracle,
+        // since QueryBuilder::setFilters() will happily filter on passwd_hash and
+        // report the row `count`. Reached in practice when a suffixed path
+        // (GET /api/v1/Authy/confirm/<anything>) falls past the pinned route into
+        // the generated catch-all CRUD route carrying rbac_public == 'passed'.
+        // The invariant: a Public rule may waive owner/tenant ACL on reads of
+        // ordinary tables, never on a table that holds credentials.
+        if ($data['rbac_public'] != 'passed' || $this->isCredentialTable()) {
             $acls = $this->authorize($this->tablename, 'r');
             if (!$acls) {
                 $this->response['status'] = "failure";
@@ -460,8 +559,25 @@ class Api
      */
     public function getOneJson($data)
     {
-
-        if ($data['rbac_public'] != 'passed') {
+        // SECURITY: a Public+Allow api_rbac rule (rbac_public == 'passed') may
+        // waive the owner/tenant ACL on READS of ordinary tables — that carve-out
+        // is load-bearing for anonymous public content lists (Category/Faq/Banner)
+        // and is deliberately kept (see setJson: writes are never waived). It must
+        // NEVER extend to a table that holds credentials. Skipping authorize()
+        // leaves $this->aclGroup null, so setAclFilter()'s isset() guard drops the
+        // Owner/Group row filter, and an anonymous caller has no id_tenant either:
+        // net zero row filtering, i.e. the whole table. On `authy` that is full
+        // account enumeration (username/email/rights/tenant — stripSensitiveOutput
+        // removes the hashes but nothing else), plus a blind extraction oracle,
+        // since QueryBuilder::setFilters() will happily filter on passwd_hash and
+        // report the row `count`. Reached in practice when a suffixed path
+        // (GET /api/v1/Authy/confirm/<anything>) falls past the pinned route into
+        // the generated catch-all CRUD route carrying rbac_public == 'passed'.
+        // The invariant: a Public rule may waive owner/tenant ACL on reads of
+        // ordinary tables, never on a table that holds credentials.
+        // Identical hole to getJson's — the single-row read is reached by the
+        // same catch-all route with an id segment, so it carries the same gate.
+        if ($data['rbac_public'] != 'passed' || $this->isCredentialTable()) {
             $acls = $this->authorize($this->tablename, 'r');
             if (!$acls) {
                 $ret['status'] = "failure";

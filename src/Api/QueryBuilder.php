@@ -317,14 +317,15 @@ class QueryBuilder
      * select produced an output key that normalization missed — so a caller with
      * mere `:r` could read the raw hash. Reject at the source instead. The base
      * column is extracted (aggregate wrapper + table qualifier stripped) and
-     * normalized the same way as Api::$outputDenyColumns.
+     * normalized the same way as Api::CREDENTIAL_COLUMNS, which is also the list
+     * itself — this used to be a hand-kept copy of it.
      *
      * @param string $clause
      * @return boolean
      */
     private function isSensitiveSelectColumn($clause)
     {
-        static $deny = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
+        $deny = \ApiGoat\Api\Api::CREDENTIAL_COLUMNS;
         $c = trim((string) $clause);
         if (preg_match('/^(?:COUNT|SUM|AVG|MIN|MAX)\(\s*(?:DISTINCT\s+)?(.+?)\s*\)$/i', $c, $m)) {
             $c = $m[1];
