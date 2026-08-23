@@ -6,12 +6,15 @@
  * (e.g. `openai` from a project's AI gateway). Read it with
  * `curl -sD - -o /dev/null ... | grep -i server-timing`.
  *
- * Position: right after the security-headers add(), which leaves it inside
- * Slim's error middleware. That does NOT skew the number — the total is
- * measured from REQUEST_TIME_FLOAT, not from when this middleware starts —
- * but it does mean a request that ends in a THROWN exception unwinds past
- * here and its 500 carries no header. Normal responses, including the app's
- * own 4xx JSON envelopes, all get one.
+ * Position: add() it AFTER addErrorMiddleware so it is the OUTERMOST
+ * middleware and wraps the error middleware. It first sat inside, which
+ * did not skew the number — the total is measured from REQUEST_TIME_FLOAT,
+ * not from when this middleware starts — but a request ending in a THROWN
+ * exception unwound straight past it, so every 401 from JwtAuthentication
+ * and every 500 left with no header: precisely the requests worth timing,
+ * since an auth failure still runs the whole stack. Wrapping the error
+ * middleware means the response it builds gets stamped too.
+ * ServerTimingMiddlewareTest pins both orders.
  */
 
 namespace ApiGoat\Middlewares;
