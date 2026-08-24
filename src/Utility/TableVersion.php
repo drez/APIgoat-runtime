@@ -2,6 +2,8 @@
 // /var/www/gc/vendor/apigoat/runtime/src/Utility/TableVersion.php
 namespace ApiGoat\Utility;
 
+use ApiGoat\Realtime;
+
 /**
  * Per-table generation tokens for write-through cache invalidation.
  *
@@ -24,6 +26,20 @@ final class TableVersion
             MicroCache::increment(self::genKey($tableName));
         } catch (\Throwable $e) {
             // invalidation is best-effort; the consumer TTLs are the backstop
+        }
+
+        // Same event, second consumer: tell the realtime sidecar something
+        // changed so subscribed clients can re-fetch. Inert unless the project
+        // sets GC_RT_ENABLED=1 — enabled() is a memoised bool, so the off path
+        // costs one static read on a code path that runs on EVERY write.
+        // Wrapped separately from the cache bump so a signalling problem can
+        // never cost us the invalidation, and never throws either way.
+        try {
+            if (Realtime\Signal::enabled()) {
+                Realtime\Signal::emit($tableName, self::get($tableName), self::tenantToken());
+            }
+        } catch (\Throwable $e) {
+            // a notification is never worth failing a write over
         }
     }
 
