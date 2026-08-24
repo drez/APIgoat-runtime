@@ -62,4 +62,18 @@ $host = (string) (env('GC_RT_HOST') ?: '127.0.0.1');
 $sock = \ApiGoat\Realtime\Signal::socketPath();
 $log  = $adminDir . '/tmp/rt.log';
 
-(new \ApiGoat\Realtime\Server($host, $port, $sock, $log))->run();
+// The FPM user must be able to write the signal socket. Default to the GROUP OF
+// THE PROJECT .env — gc deliberately keeps that file owned <deploy-user>:<web
+// group> with mode 0640 (see Project\SecretProvisioner), so it is already this
+// codebase's marker for "the group the web server runs as", and it stays correct
+// if the deployment's users change. GC_RT_SOCK_GROUP overrides.
+$sockGroup = (string) (env('GC_RT_SOCK_GROUP') ?: '');
+if ($sockGroup === '') {
+    $gid = @\filegroup($envFile);
+    if ($gid !== false && \function_exists('posix_getgrgid')) {
+        $grp = @\posix_getgrgid($gid);
+        $sockGroup = \is_array($grp) ? (string) $grp['name'] : '';
+    }
+}
+
+(new \ApiGoat\Realtime\Server($host, $port, $sock, $log, $sockGroup))->run();

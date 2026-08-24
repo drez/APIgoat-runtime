@@ -31,11 +31,18 @@ final class Server
     /** @var array<int,array{u:int,tn:string,tables:array<string,true>}> keyed by fd */
     private array $clients = [];
 
+    /**
+     * @param string $sockGroup group to own the signal socket. The sidecar runs
+     *        as the developer/deploy user while PHP-FPM runs as the web-server
+     *        user, so a socket left at 0600 is unwritable by the very process
+     *        that needs to signal it. '' leaves ownership untouched.
+     */
     public function __construct(
         private string $host,
         private int $port,
         private string $sockPath,
-        private string $logPath
+        private string $logPath,
+        private string $sockGroup = ''
     ) {
     }
 
@@ -69,9 +76,18 @@ final class Server
         $listener->set(['open_websocket_protocol' => false]);
 
         $server->on('Start', function () {
-            // The socket must not be world-writable: anyone who can write to it
-            // can make every connected client re-fetch at will.
-            @\chmod($this->sockPath, 0600);
+            // The socket must be writable by the FPM user and NOBODY else:
+            // anyone who can write to it can make every connected client
+            // re-fetch at will. Group-writable, never world-writable.
+            if ($this->sockGroup !== '' && @\chgrp($this->sockPath, $this->sockGroup)) {
+                @\chmod($this->sockPath, 0660);
+            } else {
+                @\chmod($this->sockPath, 0600);
+                if ($this->sockGroup !== '') {
+                    $this->log("WARNING: could not chgrp {$this->sockPath} to '{$this->sockGroup}'"
+                        . " — PHP-FPM will not be able to send change signals.");
+                }
+            }
             $this->log("listening ws://{$this->host}:{$this->port} signal={$this->sockPath}");
         });
 
