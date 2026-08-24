@@ -15,6 +15,15 @@ namespace ApiGoat\Realtime;
  * blocking) and is silently discarded when nobody is listening — exactly the
  * required semantics.
  *
+ * It uses ext-sockets' socket_sendto() rather than stream_socket_client('udg://'),
+ * deliberately. The stream transport must CONNECT, which gives the handle
+ * lifecycle state we do not want: under OpenSwoole's coroutine runtime hooks a
+ * hooked unix-dgram stream unlinks the peer path when it is closed, which
+ * deletes the sidecar's own socket out from under it. socket_sendto() names the
+ * destination on every send and owns no connection, so there is nothing to
+ * close and nothing to clean up. ext-sockets is not in composer.json, so a
+ * stream fallback remains for hosts without it.
+ *
  * Knobs (project .env):
  *   GC_RT_ENABLED  0/1   master switch, default 0 (inert)
  *   GC_RT_SOCK     path  socket path, relative to _BASE_DIR; default tmp/rt.sock
@@ -26,8 +35,11 @@ namespace ApiGoat\Realtime;
  */
 final class Signal
 {
-    /** @var resource|false|null null = not yet resolved, false = unavailable this request */
+    /** @var \Socket|resource|false|null null = not yet resolved, false = unavailable this request */
     private static $sock = null;
+
+    /** true when self::$sock is an ext-sockets socket (sendto), false when a stream (fwrite). */
+    private static bool $useSendto = false;
 
     private static ?bool $enabled = null;
 
@@ -46,11 +58,14 @@ final class Signal
             if ($payload === false) {
                 return;
             }
-            // A dgram write to a socket whose reader has gone away fails rather
+            // A dgram send to a socket whose reader has gone away fails rather
             // than blocking; memoise the failure so a burst of writes in one
             // request does not retry per row.
-            if (@\fwrite($sock, $payload) === false) {
-                @\fclose($sock);
+            $ok = self::$useSendto
+                ? @\socket_sendto($sock, $payload, \strlen($payload), 0, self::socketPath()) !== false
+                : @\fwrite($sock, $payload) !== false;
+            if (!$ok) {
+                self::close();
                 self::$sock = false;
             }
         } catch (\Throwable $e) {
@@ -80,7 +95,7 @@ final class Signal
         return $base . DIRECTORY_SEPARATOR . $v;
     }
 
-    /** @return resource|false */
+    /** @return \Socket|resource|false */
     private static function socket()
     {
         if (self::$sock !== null) {
@@ -90,21 +105,42 @@ final class Signal
         if (!\file_exists($path)) {
             return self::$sock = false; // sidecar not running
         }
+
+        if (\function_exists('socket_create')) {
+            $sock = @\socket_create(AF_UNIX, SOCK_DGRAM, 0);
+            if ($sock !== false) {
+                @\socket_set_nonblock($sock);
+                self::$useSendto = true;
+                return self::$sock = $sock;
+            }
+        }
+
         $sock = @\stream_socket_client('udg://' . $path, $errno, $errstr, 1, STREAM_CLIENT_CONNECT);
         if ($sock === false) {
             return self::$sock = false;
         }
         \stream_set_blocking($sock, false);
+        self::$useSendto = false;
         return self::$sock = $sock;
+    }
+
+    private static function close(): void
+    {
+        if (self::$useSendto) {
+            if (self::$sock instanceof \Socket) {
+                @\socket_close(self::$sock);
+            }
+        } elseif (\is_resource(self::$sock)) {
+            @\fclose(self::$sock);
+        }
     }
 
     /** Test seam: drop memoised state so a test can flip the knobs. */
     public static function reset(): void
     {
-        if (\is_resource(self::$sock)) {
-            @\fclose(self::$sock);
-        }
+        self::close();
         self::$sock = null;
+        self::$useSendto = false;
         self::$enabled = null;
     }
 }
