@@ -75,6 +75,8 @@ final class Server
         }
         $listener->set(['open_websocket_protocol' => false]);
 
+        Hooks::setLogger(function (string $line): void { $this->log($line); });
+
         $server->on('Start', function () {
             // The socket must be writable by the FPM user and NOBODY else:
             // anyone who can write to it can make every connected client
@@ -89,12 +91,17 @@ final class Server
                 }
             }
             $this->log("listening ws://{$this->host}:{$this->port} signal={$this->sockPath}");
+            if (Hooks::present()) {
+                $this->log('project handler active: ' . Hooks::HANDLER);
+                Hooks::call('onStart', []);
+            }
         });
 
         $server->on('Open', fn($srv, $req) => $this->onOpen($srv, $req));
         $server->on('Message', fn($srv, $frame) => $this->onMessage($srv, $frame));
         $server->on('Close', function ($srv, $fd) {
             unset($this->clients[$fd]);
+            Hooks::call('onClose', [$fd]);
         });
         $server->on('Packet', fn($srv, $data, $info) => $this->onSignal($srv, (string) $data));
 
@@ -119,6 +126,7 @@ final class Server
         }
 
         $this->clients[$req->fd] = ['u' => $claims['u'], 'tn' => $claims['tn'], 'tables' => []];
+        Hooks::call('onOpen', [$req->fd, $claims]);
         $srv->push($req->fd, (string) \json_encode(['op' => 'ready']));
     }
 
@@ -134,9 +142,19 @@ final class Server
             return;
         }
 
+        // A project handler gets first refusal on every frame, so it can add
+        // custom ops without the built-in ones needing to know about them.
+        $claims = ['u' => $this->clients[$fd]['u'], 'tn' => $this->clients[$fd]['tn']];
+        if (Hooks::call('onMessage', [$srv, $fd, $msg, $claims], false) === true) {
+            return;
+        }
+
         switch ($msg['op'] ?? '') {
             case 'sub':
                 foreach ($this->tableList($msg) as $t) {
+                    if (Hooks::call('allowSubscribe', [$t, $claims], true) === false) {
+                        continue;
+                    }
                     $this->clients[$fd]['tables'][$t] = true;
                 }
                 break;
@@ -183,10 +201,18 @@ final class Server
             if (!isset($c['tables'][$table])) {
                 continue;
             }
-            // 'all' on the signal = a root / unscoped write, visible to everyone.
-            // 'all' on the client = a root / single-tenant viewer, who sees everything.
-            if ($tenant !== 'all' && $c['tn'] !== 'all' && $c['tn'] !== $tenant) {
+            // A project handler may override the tenant rule per client; null
+            // (the default) keeps the built-in behaviour below.
+            $override = Hooks::call('allowPush', [$table, $tenant, $c], null);
+            if ($override === false) {
                 continue;
+            }
+            if ($override !== true) {
+                // 'all' on the signal = a root / unscoped write, visible to everyone.
+                // 'all' on the client = a root / single-tenant viewer, who sees everything.
+                if ($tenant !== 'all' && $c['tn'] !== 'all' && $c['tn'] !== $tenant) {
+                    continue;
+                }
             }
             if ($srv->isEstablished($fd)) {
                 $srv->push($fd, $frame);
