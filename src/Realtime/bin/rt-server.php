@@ -30,10 +30,20 @@ if (!\is_file($autoload)) {
 }
 require $autoload;
 
-// The project .env sits at the project ROOT, one level above .admin.
-$envFile = \dirname($adminDir) . '/.env';
-if (!\is_file($envFile)) {
-    \fwrite(STDERR, "rt-server: no .env at {$envFile}\n");
+// Where the .env lives depends on the layout:
+//   local  — project root, one level ABOVE .admin (p/<name>/.env)
+//   prod   — inside .admin (gc deploy's getRemoteAdminEnvPath())
+// Check both and take the first non-empty one, so the same entry point works
+// on a dev box and on a deployed site without being told which it is.
+$envFile = '';
+foreach ([\dirname($adminDir) . '/.env', $adminDir . '/.env'] as $candidate) {
+    if (\is_file($candidate) && \filesize($candidate) > 0) {
+        $envFile = $candidate;
+        break;
+    }
+}
+if ($envFile === '') {
+    \fwrite(STDERR, 'rt-server: no .env found at ' . \dirname($adminDir) . '/.env or ' . $adminDir . "/.env\n");
     exit(1);
 }
 (new \Ahc\Env\Loader())->load($envFile);
