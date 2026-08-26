@@ -41,6 +41,13 @@ class ToolRegistry
         return $this->manifestCache;
     }
 
+    /** Any scalar from the config/mcp.php manifest (null when absent) — e.g. 'name', 'title'. */
+    public function manifestValue(string $key)
+    {
+        $v = $this->manifest()[$key] ?? null;
+        return is_scalar($v) ? $v : null;
+    }
+
     /** Project-authored model guidance from config/mcp.php 'instructions' (null = none). */
     public function instructions(): ?string
     {

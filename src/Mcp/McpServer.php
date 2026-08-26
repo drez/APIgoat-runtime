@@ -63,9 +63,29 @@ class McpServer
             // TODO: negotiate against $params['protocolVersion'] when we support multiple versions
             'protocolVersion' => self::PROTOCOL,
             'capabilities' => ['tools' => ['listChanged' => false]],
-            'serverInfo' => ['name' => 'apicrm-mcp', 'version' => '1'],
+            'serverInfo' => self::serverInfo($this->registry->manifestValue('name'), $this->registry->manifestValue('title')),
             'instructions' => $this->registry->instructions() ?? self::DEFAULT_INSTRUCTIONS,
         ];
+    }
+
+    /**
+     * Per-project server identity. Every GoatCheese project runs this same
+     * runtime, so the name MUST come from the project, not a constant here —
+     * connectors listed side by side (apigtbot, apichatbot, apicrm, …) are
+     * otherwise indistinguishable. Precedence: config/mcp.php 'name' /
+     * 'title' → _PROJECT_NAME (config/Built/config.php) → 'apigoat'.
+     * The name is slugged to [A-Za-z0-9_.-] (MCP clients use it as an
+     * identifier); the title is free text shown to humans.
+     *
+     * @return array{name:string,title:string,version:string}
+     */
+    public static function serverInfo($manifestName = null, $manifestTitle = null): array
+    {
+        $project = defined('_PROJECT_NAME') && trim((string) _PROJECT_NAME) !== '' ? trim((string) _PROJECT_NAME) : 'apigoat';
+        $name = is_string($manifestName) && trim($manifestName) !== '' ? trim($manifestName) : $project . '-mcp';
+        $name = trim(preg_replace('/[^A-Za-z0-9_.-]+/', '-', $name), '-') ?: 'apigoat-mcp';
+        $title = is_string($manifestTitle) && trim($manifestTitle) !== '' ? trim($manifestTitle) : $project . ' MCP';
+        return ['name' => $name, 'title' => mb_substr($title, 0, 100), 'version' => '1'];
     }
 
     private function call(array $params, AuthySession $session): array
