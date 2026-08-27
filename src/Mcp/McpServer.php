@@ -59,12 +59,26 @@ class McpServer
 
     private function initialize(array $params): array
     {
+        // Build-time tool-list stamp (config/Built/mcp.version.php): drives the
+        // reported version and prefixes the instructions with a what's-new notice
+        // so connectors already installed on a client learn about new tools —
+        // the stateless POST transport cannot push tools/list_changed.
+        $stamp        = VersionStamp::read();
+        $instructions = $this->registry->instructions() ?? self::DEFAULT_INSTRUCTIONS;
+        $whatsNew     = VersionStamp::whatsNew($stamp);
+        if ($whatsNew !== null) {
+            $instructions = $whatsNew . "\n\n" . $instructions;
+        }
         return [
             // TODO: negotiate against $params['protocolVersion'] when we support multiple versions
             'protocolVersion' => self::PROTOCOL,
             'capabilities' => ['tools' => ['listChanged' => false]],
-            'serverInfo' => self::serverInfo($this->registry->manifestValue('name'), $this->registry->manifestValue('title')),
-            'instructions' => $this->registry->instructions() ?? self::DEFAULT_INSTRUCTIONS,
+            'serverInfo' => self::serverInfo(
+                $this->registry->manifestValue('name'),
+                $this->registry->manifestValue('title'),
+                $stamp['version'] ?? $this->registry->manifestValue('version')
+            ),
+            'instructions' => $instructions,
         ];
     }
 
@@ -77,15 +91,19 @@ class McpServer
      * The name is slugged to [A-Za-z0-9_.-] (MCP clients use it as an
      * identifier); the title is free text shown to humans.
      *
+     * The version is the build-time tool-list stamp (VersionStamp) when one
+     * exists, else config/mcp.php 'version', else '1'.
+     *
      * @return array{name:string,title:string,version:string}
      */
-    public static function serverInfo($manifestName = null, $manifestTitle = null): array
+    public static function serverInfo($manifestName = null, $manifestTitle = null, $version = null): array
     {
         $project = defined('_PROJECT_NAME') && trim((string) _PROJECT_NAME) !== '' ? trim((string) _PROJECT_NAME) : 'apigoat';
         $name = is_string($manifestName) && trim($manifestName) !== '' ? trim($manifestName) : $project . '-mcp';
         $name = trim(preg_replace('/[^A-Za-z0-9_.-]+/', '-', $name), '-') ?: 'apigoat-mcp';
         $title = is_string($manifestTitle) && trim($manifestTitle) !== '' ? trim($manifestTitle) : $project . ' MCP';
-        return ['name' => $name, 'title' => mb_substr($title, 0, 100), 'version' => '1'];
+        $version = is_scalar($version) && trim((string) $version) !== '' ? trim((string) $version) : '1';
+        return ['name' => $name, 'title' => mb_substr($title, 0, 100), 'version' => $version];
     }
 
     private function call(array $params, AuthySession $session): array
