@@ -625,6 +625,14 @@ class QueryBuilder
                     }
 
                     $addOr = false;
+                    // Reset for EVERY filter. $useQuery is assigned only in the
+                    // dotted branch below but was initialised once per filter
+                    // GROUP, so after any dotted filter it stayed set for every
+                    // later filter in that group: the reset below never fired
+                    // ($lastUseQuery === $useQuery) and base-model filters were
+                    // dispatched into the still-open child query, silently
+                    // filtering the JOINED table instead of the base one.
+                    $useQuery = '';
                     $filter[1] = ($filter[1] ?? null) == 'null' ? null : ($filter[1] ?? null);
                     if (strpos($filter[0], '.') === false) {
                         $filterStr = "filterBy" . \camelize($filter[0], true);
@@ -636,6 +644,26 @@ class QueryBuilder
                         $fTable = \camelize($prefix, true);
                         $fClass = "App\\" . $fTable;
                         $useQuery = $this->getUseClause($fClass, $fTable, $table);
+                    }
+
+                    // Close the child query a previous dotted filter opened, and
+                    // do it BEFORE the method_exists() guard below: that guard
+                    // tests $this->Query, so with the child still open a
+                    // base-model column would not be found on it and the filter
+                    // would be dropped as "Field not found".
+                    //
+                    // endUse() merges the child into the primary criteria and
+                    // RETURNS the primary — it does not mutate $this — so the
+                    // return value has to be rebound. Discarding it left
+                    // $this->Query pointing at the child; a following
+                    // use<Rel>Query() then nested a SECOND child under the first
+                    // and the loop-exit endUse() rebound $this->Query to that
+                    // first child, changing the table the whole query selects
+                    // from (two dotted filters on different relations turned
+                    // "SELECT FROM contact" into "SELECT FROM company").
+                    if ($lastUseQuery && $lastUseQuery !== $useQuery) {
+                        $this->Query = $this->Query->endUse();
+                        $lastUseQuery = null;
                     }
 
                     $criteria = Criteria::EQUAL;
@@ -704,20 +732,14 @@ class QueryBuilder
                         // dispatched into. Non-ENUM columns take no different
                         // path at all.
                         //
-                        // empty($useQuery) is required for a NON-dotted column
-                        // only: $useQuery is function-scoped and is assigned in
-                        // the dotted branch WITHOUT being reset per iteration,
-                        // so after a dotted filter it is stale — and the
-                        // dispatch below then sends the following base-model
-                        // filter into that still-open child query. Resolving
-                        // such a filter against the base map would read the
-                        // labels off the wrong table, so it keeps its old
-                        // behaviour. A dotted column carries its own prefix and
-                        // can never be stale.
-                        $isDotted = \strpos($filter[0], '.') !== false;
+                        // No staleness caveat is needed on the condition:
+                        // $useQuery is reset for every filter, so it is always
+                        // '' for a non-dotted column, and any child query a
+                        // previous dotted filter opened has already been closed
+                        // and rebound above — $this->Query is the base query and
+                        // $this->baseTableMap is the right map to read.
                         if (($criteria === Criteria::LIKE || $criteria === Criteria::NOT_LIKE)
                             && \is_string($filter[1])
-                            && ($isDotted || empty($useQuery))
                         ) {
                             $enumSet = $this->enumValueSetForColumn($filter[0], $useQuery);
                             if ($enumSet !== null) {
@@ -743,11 +765,12 @@ class QueryBuilder
                             }
                         }
 
-                        if ($lastUseQuery && $lastUseQuery != $useQuery) {
-                            $this->Query->endUse();
-                            $lastUseQuery = null;
-                        }
-
+                        // A still-open child from a previous dotted filter was
+                        // closed above, before the method_exists() guard.
+                        // $lastUseQuery is null here unless this filter targets
+                        // the SAME relation as the previous one, which is what
+                        // keeps consecutive dotted filters sharing one
+                        // use<Rel>Query() instead of reopening it per filter.
                         if ($useQuery && !$lastUseQuery) {
                             $this->Query = $this->Query->$useQuery();
                             $this->Query->$filterStr($filter[1], $criteria);
