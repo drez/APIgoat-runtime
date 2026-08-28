@@ -412,15 +412,48 @@ class QueryBuilder
     }
 
     /**
-     * ValueSet (ordered list of labels) of a base-model ENUM column, or NULL
-     * when the column is unknown or is not an ENUM.
+     * ValueSet (ordered list of labels) of an ENUM filter column, or NULL when
+     * the column is unknown or is not an ENUM.
      *
-     * @param string $column raw filter column (snake_case or PhpName)
+     * A dotted column ("Company.status") is resolved against the table the
+     * criterion is ACTUALLY dispatched to: the use<X>Query() getUseClause()
+     * picked, which for an aliased filter group is the alias target rather than
+     * the prefix. Resolving from the prefix alone could therefore read the
+     * labels off a different table than the one the filter lands on. Anything
+     * that does not resolve to a generated Peer — a join alias, a relation
+     * whose phpName is not a model name — returns NULL, leaving that filter to
+     * behave exactly as it did before.
+     *
+     * @param string $column   filter column (snake_case or PhpName; may be dotted)
+     * @param string $useQuery use<X>Query() this filter is dispatched through, if any
      * @return array|null
      */
-    private function enumValueSetForColumn($column)
+    private function enumValueSetForColumn($column, $useQuery = '')
     {
         $tableMap = $this->baseTableMap;
+
+        if (\strpos($column, '.') !== false) {
+            list($prefix, $column) = \explode('.', $column, 2);
+            // The prefix may be a class name or a table name — camelize() covers
+            // both. getUseClause() wins when it named a relation, because that
+            // is where the criterion actually goes.
+            $related = \camelize($prefix, true);
+            if (\is_string($useQuery) && \preg_match('/^use(.+)Query$/', $useQuery, $m)) {
+                $related = \camelize($m[1], true);
+            }
+            $peer = 'App\\' . $related . 'Peer';
+            if (!\class_exists($peer) || !\method_exists($peer, 'getTableMap')) {
+                return null;
+            }
+            try {
+                $tableMap = $peer::getTableMap();
+            } catch (\Exception $e) {
+                // Table not registered in the database map — same answer as an
+                // unknown relation: leave the filter alone.
+                return null;
+            }
+        }
+
         if (!\is_object($tableMap)) {
             return null;
         }
@@ -665,17 +698,28 @@ class QueryBuilder
                         // a pattern — so `[["type","%Client%"]]` 500'd the whole
                         // request. Expand the pattern against the column's label
                         // set and rewrite the criterion to IN / NOT_IN over the
-                        // matching labels. Base-model (non-dotted) columns only:
-                        // a dotted filter is evaluated against the FOREIGN
-                        // table's map, which is not resolved here — that case is
-                        // a known remaining gap and is left untouched. Non-ENUM
-                        // columns take no different path at all.
+                        // matching labels. Works for a base-model column and
+                        // for a dotted one ("Company.status"), which the helper
+                        // resolves through the use<Rel>Query() this filter is
+                        // dispatched into. Non-ENUM columns take no different
+                        // path at all.
+                        //
+                        // empty($useQuery) is required for a NON-dotted column
+                        // only: $useQuery is function-scoped and is assigned in
+                        // the dotted branch WITHOUT being reset per iteration,
+                        // so after a dotted filter it is stale — and the
+                        // dispatch below then sends the following base-model
+                        // filter into that still-open child query. Resolving
+                        // such a filter against the base map would read the
+                        // labels off the wrong table, so it keeps its old
+                        // behaviour. A dotted column carries its own prefix and
+                        // can never be stale.
+                        $isDotted = \strpos($filter[0], '.') !== false;
                         if (($criteria === Criteria::LIKE || $criteria === Criteria::NOT_LIKE)
                             && \is_string($filter[1])
-                            && empty($useQuery)
-                            && \strpos($filter[0], '.') === false
+                            && ($isDotted || empty($useQuery))
                         ) {
-                            $enumSet = $this->enumValueSetForColumn($filter[0]);
+                            $enumSet = $this->enumValueSetForColumn($filter[0], $useQuery);
                             if ($enumSet !== null) {
                                 if (\in_array($filter[1], $enumSet, true)) {
                                     // The "pattern" is itself a literal label —
