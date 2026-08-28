@@ -38,6 +38,15 @@ class QueryBuilder
     private $selectKeyMap;
 
     /**
+     * TableMap of the base model, captured before any use<Rel>Query() call
+     * mutates $this->Query. setFilters() needs it to know whether a base-model
+     * filter column is an ENUM.
+     *
+     * @var \TableMap|null
+     */
+    private $baseTableMap;
+
+    /**
      * Request Select key
      *
      * @var array
@@ -134,6 +143,12 @@ class QueryBuilder
         if (\is_object($query)) {
             $this->objectName = get_class($query);
             $this->Query = $query;
+            // Capture the base TableMap now: a dotted filter later swaps
+            // $this->Query for a use<Rel>Query() child, so reading it from
+            // $this->Query inside the filter loop is not reliable.
+            if (\method_exists($query, 'getTableMap')) {
+                $this->baseTableMap = $query->getTableMap();
+            }
         } else {
             throw new Exception("Bad object");
         }
@@ -396,6 +411,81 @@ class QueryBuilder
         return false;
     }
 
+    /**
+     * ValueSet (ordered list of labels) of a base-model ENUM column, or NULL
+     * when the column is unknown or is not an ENUM.
+     *
+     * @param string $column raw filter column (snake_case or PhpName)
+     * @return array|null
+     */
+    private function enumValueSetForColumn($column)
+    {
+        $tableMap = $this->baseTableMap;
+        if (!\is_object($tableMap)) {
+            return null;
+        }
+
+        $col = null;
+        $phpName = \camelize($column, true);
+        if ($tableMap->hasColumnByPhpName($phpName)) {
+            $col = $tableMap->getColumnByPhpName($phpName);
+        } elseif ($tableMap->hasColumn($column, false)) {
+            $col = $tableMap->getColumn($column, false);
+        }
+
+        if (!\is_object($col) || $col->getType() !== 'ENUM') {
+            return null;
+        }
+
+        $set = $col->getValueSet();
+
+        return \is_array($set) ? $set : null;
+    }
+
+    /**
+     * Labels of $valueSet matched by a SQL LIKE $pattern, case-insensitively.
+     * '%' matches any run (including empty), '_' matches a single character;
+     * every other character is matched literally (regex metacharacters in a
+     * label or a pattern cannot misbehave).
+     *
+     * @param string $pattern
+     * @param array  $valueSet
+     * @return array
+     */
+    private static function matchEnumLabels($pattern, array $valueSet)
+    {
+        $re = '';
+        $len = \strlen($pattern);
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $pattern[$i];
+            if ($ch === '%') {
+                $re .= '.*';
+            } elseif ($ch === '_') {
+                $re .= '.';
+            } else {
+                // Byte-wise quoting is UTF-8 safe: preg_quote() leaves high
+                // bytes untouched, so the sequence re-assembles unchanged.
+                $re .= \preg_quote($ch, '/');
+            }
+        }
+        // /u only when the pattern really is valid UTF-8, else preg_match()
+        // returns false for every label and the filter would match nothing.
+        $mods = (\preg_match('//u', $pattern) === 1) ? 'iu' : 'i';
+        $re = '/^' . $re . '$/' . $mods;
+
+        $matched = [];
+        foreach ($valueSet as $label) {
+            if (!\is_string($label)) {
+                continue;
+            }
+            if (\preg_match($re, $label) === 1) {
+                $matched[] = $label;
+            }
+        }
+
+        return $matched;
+    }
+
     private function getUseClause($Class, $Table, $table)
     {
         $useQuery = '';
@@ -527,7 +617,10 @@ class QueryBuilder
                                 if (is_array($filter[1])) {
                                     $criteria = Criteria::NOT_IN;
                                 }
-                                if (\strstr($filter[1], "%")) {
+                                // is_string(): the branch above sets NOT_IN for
+                                // an array value and then fell through to
+                                // strstr(array, …) — a TypeError on PHP 8.
+                                if (\is_string($filter[1]) && \strstr($filter[1], "%")) {
                                     $criteria = Criteria::NOT_LIKE;
                                 }
                                 break;
@@ -564,6 +657,47 @@ class QueryBuilder
                         }
 
                         $filter[1] = $this->setVariablesValue($filter[1]);
+
+                        // ENUM + LIKE: the documented filter syntax says a "%"
+                        // in the value means LIKE, but propel1's
+                        // filterBy<Col>() sends a scalar through
+                        // getSqlValueForEnum(), which throws PropelException on
+                        // a pattern — so `[["type","%Client%"]]` 500'd the whole
+                        // request. Expand the pattern against the column's label
+                        // set and rewrite the criterion to IN / NOT_IN over the
+                        // matching labels. Base-model (non-dotted) columns only:
+                        // a dotted filter is evaluated against the FOREIGN
+                        // table's map, which is not resolved here — that case is
+                        // a known remaining gap and is left untouched. Non-ENUM
+                        // columns take no different path at all.
+                        if (($criteria === Criteria::LIKE || $criteria === Criteria::NOT_LIKE)
+                            && \is_string($filter[1])
+                            && empty($useQuery)
+                            && \strpos($filter[0], '.') === false
+                        ) {
+                            $enumSet = $this->enumValueSetForColumn($filter[0]);
+                            if ($enumSet !== null) {
+                                if (\in_array($filter[1], $enumSet, true)) {
+                                    // The "pattern" is itself a literal label —
+                                    // e.g. the '%' member of enum($, %). An exact
+                                    // label beats expansion; never widen.
+                                    $criteria = ($criteria === Criteria::NOT_LIKE)
+                                        ? Criteria::NOT_EQUAL : Criteria::EQUAL;
+                                } else {
+                                    $matched = self::matchEnumLabels($filter[1], $enumSet);
+                                    if (!$matched) {
+                                        // Nothing matched: the filter must match
+                                        // NOTHING. filterBy<Col>([], Criteria::IN)
+                                        // renders "1<>1" (Criterion::appendInToPs),
+                                        // i.e. a reliably always-false condition.
+                                        $this->messages[] = "Filter: no ({$filter[0]}) value matches the pattern on ({$table})";
+                                    }
+                                    $criteria = ($criteria === Criteria::NOT_LIKE)
+                                        ? Criteria::NOT_IN : Criteria::IN;
+                                    $filter[1] = $matched;
+                                }
+                            }
+                        }
 
                         if ($lastUseQuery && $lastUseQuery != $useQuery) {
                             $this->Query->endUse();
@@ -722,9 +856,20 @@ class QueryBuilder
             // for each Selected column
             foreach ($this->Query->getSelect() as $phpName) {
                 $col = $this->getColumnFromName($this->Query, $phpName);
-                if (isset($col) && $col->getType() == 'ENUM') {
+                // Key the valueSet by the SAME string the rows are keyed by.
+                // Propel keys select() rows by exactly what was passed to
+                // select(), and setSelect() only camelizes a DOTTED select — so
+                // a snake_case select survived uncamelize() by accident, while a
+                // PhpName select ('Type', which is how every other field name in
+                // the API/MCP surface is written) uncamelized to 'type', missed
+                // the row key, and leaked the raw ordinal. An ordinal cannot be
+                // fed back into crm_update / filterBy<Col>() (both take the
+                // label only), so the read/write round-trip was broken.
+                // getColumnFromName() may also return array(null, null) for an
+                // unresolvable prefix — guard on the object, not on isset().
+                if (\is_object($col) && $col->getType() == 'ENUM') {
                     // collect required ENUM valueSet
-                    $enumVal[uncamelize($phpName)] = $col->getValueSet();
+                    $enumVal[$phpName] = $col->getValueSet();
                 }
             }
 
@@ -734,9 +879,11 @@ class QueryBuilder
                         if (!in_array($key, $this->selectKey)) {
                             // remove unwanted Key
                             unset($row[$key]);
-                        } elseif (isset($enumVal[$key])) {
-                            // Set the ENUM value
-                            $value = $enumVal[$key][$value];
+                        } elseif (isset($enumVal[$key]) && $value !== null) {
+                            // Set the ENUM value. A NULL (nullable ENUM column)
+                            // stays NULL, and an ordinal outside the value set
+                            // stays as stored — neither warns nor nulls the row.
+                            $value = $enumVal[$key][$value] ?? $value;
                         }
 
                         if (!empty($this->selectKeyMap[$key])) {
@@ -751,9 +898,11 @@ class QueryBuilder
                     if (!in_array($key, $this->selectKey)) {
                         // remove unwanted Key
                         unset($this->Data[$key]);
-                    } elseif (isset($enumVal[$key])) {
-                        // Set the ENUM value
-                        $value = $enumVal[$key][$value];
+                    } elseif (isset($enumVal[$key]) && $value !== null) {
+                        // Set the ENUM value. A NULL (nullable ENUM column)
+                        // stays NULL, and an ordinal outside the value set
+                        // stays as stored — neither warns nor nulls the row.
+                        $value = $enumVal[$key][$value] ?? $value;
                     }
 
                     if (!empty($this->selectKeyMap[$key])) {
