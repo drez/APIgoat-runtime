@@ -44,11 +44,18 @@ final class PresetRenderer
             // richer resolution (a custom quote/invoice renderer also falls
             // back through contact/company language when the record's own lang
             // is empty — 6 live quotes have no lang); null means "record's own
-            // language" per the interface contract. The reported `lang` is
-            // resolved the same way the preset branch reports it
-            // (TemplateRenderer::lang(): override → lang_source → fr_CA); it
-            // touches no templates, so it is cheap to instantiate.
-            $lang = (new TemplateRenderer($record, $entry, null, $langOverride))->lang();
+            // language" per the interface contract.
+            //
+            // The reported/stored `lang` must name what the renderer actually
+            // produced: a renderer with its own resolution declares it via
+            // PdfLangResolverInterface; otherwise fall back to the preset
+            // branch's resolution (TemplateRenderer::lang(): override →
+            // lang_source → fr_CA — cheap, touches no templates). Without the
+            // renderer's answer the two resolutions can disagree and pdf_lang
+            // records the wrong language for the produced document.
+            $lang = $renderer instanceof PdfLangResolverInterface
+                ? $renderer->resolveLang($record, $langOverride)
+                : (new TemplateRenderer($record, $entry, null, $langOverride))->lang();
             return [
                 'html'           => $renderer->render($record, $langOverride),
                 'templates_used' => [],
