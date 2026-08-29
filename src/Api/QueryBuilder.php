@@ -633,7 +633,11 @@ class QueryBuilder
                     // dispatched into the still-open child query, silently
                     // filtering the JOINED table instead of the base one.
                     $useQuery = '';
-                    $filter[1] = ($filter[1] ?? null) == 'null' ? null : ($filter[1] ?? null);
+                    // Strict compare: only the literal string 'null' means NULL.
+                    // With loose ==, a JSON boolean true matched too (true ==
+                    // 'null' — any non-empty string), silently turning
+                    // [["is_active", true]] into WHERE is_active IS NULL.
+                    $filter[1] = ($filter[1] ?? null) === 'null' ? null : ($filter[1] ?? null);
                     if (strpos($filter[0], '.') === false) {
                         $filterStr = "filterBy" . \camelize($filter[0], true);
                     } else {
