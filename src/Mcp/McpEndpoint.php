@@ -55,8 +55,14 @@ class McpEndpoint
 
     private function unauthorized(): Response
     {
+        // Advertise the discovery document where it is actually reachable: for a
+        // sub-directory install that is the origin root, not _SITE_URL (Apache
+        // denies /<dot-subdir>/.well-known/ before any rewrite can run).
+        // See OAuthMetadataService::issuer().
+        $meta = rtrim(\ApiGoat\Services\OAuthMetadataService::issuer(), '/')
+            . '/.well-known/oauth-protected-resource';
         return $this->response
-            ->withHeader('WWW-Authenticate', 'Bearer resource_metadata="' . (defined('_SITE_URL') ? _SITE_URL : '') . '.well-known/oauth-protected-resource"')
+            ->withHeader('WWW-Authenticate', 'Bearer resource_metadata="' . $meta . '"')
             ->withStatus(401);
     }
 
