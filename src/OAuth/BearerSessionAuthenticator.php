@@ -23,7 +23,8 @@ use Psr\Http\Message\ServerRequestInterface;
 final class BearerSessionAuthenticator
 {
     public const AUTHENTICATED = 'authenticated';
-    public const NOT_OAUTH     = 'not_oauth';     // not a valid OAuth2 token / OAuth not configured
+    public const NOT_OAUTH     = 'not_oauth';     // not an OAuth-shaped token / OAuth not configured
+    public const INVALID_OAUTH = 'invalid_oauth'; // RS256-shaped token that failed validation (expired/revoked/forged)
     public const UNKNOWN_USER  = 'unknown_user';  // valid token but no Authy row
     public const INACTIVE      = 'inactive';      // valid token but account deactivated
 
@@ -64,8 +65,17 @@ final class BearerSessionAuthenticator
         try {
             $validated = $factory->resourceServer()->validateAuthenticatedRequest($request);
         } catch (\Throwable $e) {
-            // Not a valid OAuth2 RS256 token (incl. HS256 tokens) — caller falls through.
-            return self::NOT_OAUTH;
+            // An RS256-SHAPED token that fails validation is an expired /
+            // revoked / forged OAuth credential, not a legacy HS256 token —
+            // report it as invalid so the caller answers 401 and the client
+            // re-authenticates. (2026-08-31 incident: falling through sent it
+            // into HS256 JwtAuthentication, whose decode failure surfaced as
+            // 400 — a status no client reads as "sign in again", so devices
+            // holding a dead token showed empty data forever.) Everything
+            // else — HS256 tokens, opaque strings — still falls through.
+            return self::looksLikeRs256Jwt(self::rawBearerToken($request))
+                ? self::INVALID_OAUTH
+                : self::NOT_OAUTH;
         }
 
         $authyId = (int) $validated->getAttribute('oauth_user_id');
@@ -105,6 +115,21 @@ final class BearerSessionAuthenticator
         }
 
         return $ok ? self::AUTHENTICATED : self::UNKNOWN_USER;
+    }
+
+    /** True when the bearer parses as a JWT whose header declares RS256. */
+    public static function looksLikeRs256Jwt(string $token): bool
+    {
+        $parts = \explode('.', $token);
+        if (\count($parts) !== 3) {
+            return false;
+        }
+        $json = \base64_decode(\strtr($parts[0], '-_', '+/'), true);
+        if (!\is_string($json)) {
+            return false;
+        }
+        $header = \json_decode($json, true);
+        return \is_array($header) && ($header['alg'] ?? '') === 'RS256';
     }
 
     private static function rawBearerToken(ServerRequestInterface $request): string
