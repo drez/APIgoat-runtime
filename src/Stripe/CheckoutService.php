@@ -12,7 +12,12 @@ final class CheckoutService
     /**
      * @param object $rec   the payable Propel record (already ACL/tenant-loaded by the caller)
      * @param string $table payable table plain name (manifest key)
-     * @param array  $opts  ['price_id' => int] → subscription mode using that stripe_price row
+     * @param array  $opts  ['price_id' => int] → subscription mode using that stripe_price row;
+     *                      ['return_path' => string] → relative app path (validated) the payer is
+     *                      sent back to after Checkout, instead of STRIPE_RETURN_URL's static path —
+     *                      lets a purchase started mid-flow (e.g. a posting wizard) resume where it
+     *                      left off. Carried as an `rp` query param on the success/cancel URLs so it
+     *                      round-trips through Stripe with no ledger/schema change.
      * @return array{url: string, pay_url: string, payment_id: int}
      */
     public static function createForRecord(object $rec, string $table, array $opts = []): array
@@ -223,11 +228,13 @@ final class CheckoutService
 
         $mode    = $isSubscription ? 'subscription' : 'payment';
         $baseUrl = \defined('_SITE_URL') ? _SITE_URL : '';
+        $rp      = self::sanitizeReturnPath($opts['return_path'] ?? null);
+        $rpQuery = $rp !== null ? '&rp=' . \rawurlencode($rp) : '';
         $params  = [
             'mode'        => $mode,
             'customer'    => $customer->getStripeCustomerId(),
-            'success_url' => $baseUrl . 'stripe/return/' . $rawToken . '?s=success&sid={CHECKOUT_SESSION_ID}',
-            'cancel_url'  => $baseUrl . 'stripe/return/' . $rawToken . '?s=cancel',
+            'success_url' => $baseUrl . 'stripe/return/' . $rawToken . '?s=success&sid={CHECKOUT_SESSION_ID}' . $rpQuery,
+            'cancel_url'  => $baseUrl . 'stripe/return/' . $rawToken . '?s=cancel' . $rpQuery,
             'metadata'    => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $rec->getPrimaryKey()],
         ];
         if ($mode === 'payment') {
@@ -269,5 +276,33 @@ final class CheckoutService
         }
 
         return ['params' => $params, 'mode' => $mode, 'amount' => $amount, 'currency' => $currency];
+    }
+
+    /**
+     * Validate a caller-supplied post-checkout return path. Only a same-site
+     * RELATIVE path is ever accepted — it is later joined to STRIPE_RETURN_URL's
+     * origin by PayPage, so an absolute URL, protocol-relative //host, backslash
+     * trickery, or control characters must all die here (and again on the way
+     * back in, since the value round-trips through Stripe's redirect).
+     */
+    public static function sanitizeReturnPath($path): ?string
+    {
+        if (!\is_string($path)) {
+            return null;
+        }
+        $path = \trim($path);
+        if ($path === '' || \strlen($path) > 512) {
+            return null;
+        }
+        if ($path[0] !== '/' || (isset($path[1]) && $path[1] === '/')) {
+            return null;
+        }
+        if (\strpos($path, '\\') !== false || \strpos($path, '://') !== false) {
+            return null;
+        }
+        if (\preg_match('/[\x00-\x1f\x7f]/', $path)) {
+            return null;
+        }
+        return $path;
     }
 }

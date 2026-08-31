@@ -78,8 +78,11 @@ final class PayPage
         }
         $params = $request->getQueryParams();
         $base   = \getenv('STRIPE_RETURN_URL') ?: ($_ENV['STRIPE_RETURN_URL'] ?? '');
+        // Optional per-checkout return path (rp) minted by CheckoutService —
+        // re-sanitized here because it round-tripped through Stripe's redirect.
+        $rp = CheckoutService::sanitizeReturnPath($params['rp'] ?? null);
         if (($params['s'] ?? '') === 'cancel') {
-            $target = self::returnTarget('cancel', $base ?: null);
+            $target = self::returnTarget('cancel', $base ?: null, $rp);
             return $target !== null
                 ? $response->withStatus(302)->withHeader('Location', $target)
                 : self::html($response, 200, 'Payment canceled', '<p>The payment was canceled. You can retry from the same link at any time.</p>');
@@ -97,7 +100,7 @@ final class PayPage
             }
         }
         $status = $paid ? 'success' : 'processing';
-        $target = self::returnTarget($status, $base ?: null);
+        $target = self::returnTarget($status, $base ?: null, $rp);
         if ($target !== null) {
             return $response->withStatus(302)->withHeader('Location', $target);
         }
@@ -106,11 +109,27 @@ final class PayPage
             : self::html($response, 200, 'Payment processing', '<p>Your payment is being processed. This page does not update automatically — you will receive a Stripe receipt by email once it completes.</p>');
     }
 
-    /** Redirect target back into the app, or null to keep the built-in HTML page. */
-    public static function returnTarget(string $status, ?string $base): ?string
+    /**
+     * Redirect target back into the app, or null to keep the built-in HTML page.
+     *
+     * With a sanitized per-checkout $returnPath, the payer goes back to that
+     * path on STRIPE_RETURN_URL's ORIGIN (so a purchase started mid-flow
+     * resumes where it left off) instead of the env var's static path. The
+     * origin always comes from the configured base, never from the request.
+     */
+    public static function returnTarget(string $status, ?string $base, ?string $returnPath = null): ?string
     {
         if ($base === null || $base === '') {
             return null;
+        }
+        if ($returnPath !== null) {
+            $parts = \parse_url($base);
+            if (isset($parts['scheme'], $parts['host'])) {
+                $origin = $parts['scheme'] . '://' . $parts['host']
+                    . (isset($parts['port']) ? ':' . $parts['port'] : '');
+                $sep = \strpos($returnPath, '?') !== false ? '&' : '?';
+                return $origin . $returnPath . $sep . 'billing=' . $status;
+            }
         }
         return \rtrim($base, '/') . '?billing=' . $status;
     }
