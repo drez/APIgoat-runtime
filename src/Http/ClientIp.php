@@ -69,9 +69,17 @@ final class ClientIp
             if ($raw === '') {
                 continue;
             }
-            // X-Forwarded-For is a chain: the left-most entry is the original
-            // client, the rest are proxies that appended themselves.
-            foreach (explode(',', $raw) as $candidate) {
+            // X-Forwarded-For is a chain each proxy APPENDS to, so the
+            // right-most entry is the one our own nearest trusted hop wrote,
+            // and everything left of it may have been supplied by the client.
+            // Read from the right: trusting the left-most would let a caller
+            // invent an address per request and evade the limits this exists
+            // to enforce. (X-Client-Ip is a single value we set ourselves.)
+            $chain = explode(',', $raw);
+            if ($header === 'HTTP_X_FORWARDED_FOR') {
+                $chain = array_reverse($chain);
+            }
+            foreach ($chain as $candidate) {
                 $candidate = trim($candidate);
                 // Strip an IPv6 bracket/port form such as [::1]:1234.
                 if (preg_match('/^\[(.+)\](?::\d+)?$/', $candidate, $m)) {
