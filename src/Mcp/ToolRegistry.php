@@ -79,6 +79,11 @@ class ToolRegistry
             $tools[] = new Tools\GcStripePaymentLink();
             $tools[] = new Tools\GcStripeStatus();
         }
+        // Telemetry rollup — present exactly when the project generated the
+        // ClientEvent model (some table declares with_client_telemetry).
+        if (\class_exists('\\App\\ClientEventQuery')) {
+            $tools[] = new Tools\GcTelemetrySummary();
+        }
         return $tools;
     }
 
