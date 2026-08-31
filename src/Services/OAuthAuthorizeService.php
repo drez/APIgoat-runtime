@@ -306,9 +306,19 @@ class OAuthAuthorizeService extends Service
         $csrf       = $this->ensureCsrf($session);
         $clientName = htmlspecialchars((string) $authRequest->getClient()->getName(), ENT_QUOTES);
 
+        // Children (and most adults) read this page: say what each scope
+        // MEANS, never the raw identifier — "crm:write" on a kid's consent
+        // screen was UX audit finding #10 (apigTutor, 2026-08-31). Unknown
+        // scopes still show their identifier rather than hiding a grant.
+        $scopeWords = [
+            'crm:read'       => _('See your account and your progress'),
+            'crm:write'      => _('Save your progress as you play and learn'),
+            'offline_access' => _('Keep you signed in so you don\'t have to log in every time'),
+        ];
         $scopeItems = '';
         foreach ($authRequest->getScopes() as $scope) {
-            $scopeItems .= '<li style="padding:4px 0;">' . htmlspecialchars((string) $scope->getIdentifier(), ENT_QUOTES) . '</li>';
+            $id = (string) $scope->getIdentifier();
+            $scopeItems .= '<li style="padding:4px 0;">' . htmlspecialchars($scopeWords[$id] ?? $id, ENT_QUOTES) . '</li>';
         }
         if ($scopeItems === '') {
             $scopeItems = '<li style="padding:4px 0;">' . _('Basic access') . '</li>';
@@ -334,7 +344,7 @@ class OAuthAuthorizeService extends Service
             . '<div style="max-width:420px;margin:48px auto;background:#fff;padding:28px;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.08);">'
             . '<h2 style="margin-top:0;color:#2f2f2f;">' . sprintf(_('Authorize %s'), '<strong>' . $clientName . '</strong>') . '</h2>'
             . $whoHtml
-            . '<p style="color:#555;">' . sprintf(_('"%s" is requesting access to your CRM account.'), $clientName) . '</p>'
+            . '<p style="color:#555;">' . sprintf(_('"%s" wants to connect to your account.'), $clientName) . '</p>'
             . '<p style="color:#555;margin-bottom:4px;">' . _('It will be able to:') . '</p>'
             . '<ul style="color:#333;margin-top:0;">' . $scopeItems . '</ul>'
             . '<form method="post" action="' . $action . '" style="display:flex;gap:12px;margin-top:18px;">'
