@@ -142,10 +142,43 @@ final class WebklexTransport implements ImapTransport
                     'has_attachments' => (bool) $m->hasAttachments(),
                     'seen'            => in_array('Seen', $flags, true),
                     'flags'           => $flags,
+                    'thread_id'       => '',
                 ];
+            }
+            foreach ($this->gmailThreadIds($folder, array_keys($out)) as $uid => $thrid) {
+                $out[$uid]['thread_id'] = $thrid;
             }
             return $out;
         }, "fetch headers {$folder}");
+    }
+
+    /**
+     * Gmail's conversation id (the X-GM-THRID IMAP extension) for a batch of
+     * uids in ONE read-only FETCH — best effort: a server without the Gmail
+     * extensions answers BAD, which is swallowed here (no thread ids, rows
+     * unaffected). Verified live against imap.gmail.com 2026-09-01 with the
+     * batch form of fetch(); the single-uid form leaves the protocol reader
+     * out of step, so even one uid goes through as a one-element array.
+     *
+     * @param int[] $uids
+     * @return array<int,string> uid => thread id (digits)
+     */
+    private function gmailThreadIds(string $folder, array $uids): array
+    {
+        if ($uids === []) return [];
+        try {
+            $this->client->openFolder($folder);
+            $resp = $this->client->getConnection()->fetch(['X-GM-THRID'], array_values(array_map('intval', $uids)), null, \Webklex\PHPIMAP\IMAP::ST_UID);
+            $out = [];
+            foreach ((array) $resp->data() as $uid => $v) {
+                if (is_array($v)) $v = $v['X-GM-THRID'] ?? reset($v);
+                $v = trim((string) $v);
+                if ($v !== '' && ctype_digit($v)) $out[(int) $uid] = $v;
+            }
+            return $out;
+        } catch (\Throwable) {
+            return []; // not Gmail (or a transient hiccup): thread_id stays ''
+        }
     }
 
     public function raw(string $folder, int $uid): string

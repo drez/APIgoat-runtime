@@ -87,6 +87,15 @@ final class ImapConnectorTest extends TestCase
         $this->assertNull($h['thread_id']);
     }
 
+    public function testGmailThreadIdFromTheTransportIsPassedThrough(): void
+    {
+        $this->imap->add('INBOX', 3, ['thread_id' => '1872447076284731937']);
+        $this->imap->add('INBOX', 4, ['thread_id' => '']);
+        $r = $this->connector()->fetchHeaders('INBOX', null, 50);
+        $this->assertSame('1872447076284731937', $r->headers[0]['thread_id']);
+        $this->assertNull($r->headers[1]['thread_id'], 'an empty X-GM-THRID (non-Gmail server) stays null');
+    }
+
     public function testColdStartTakesTheNewestMaxOfTheWindow(): void
     {
         foreach ([1, 2, 3, 4] as $u) $this->imap->add('INBOX', $u);

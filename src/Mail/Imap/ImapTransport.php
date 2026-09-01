@@ -16,7 +16,8 @@ namespace ApiGoat\Mail\Imap;
  * normalises them via HeaderRecord. Shape:
  *   uid:int, message_id:string, in_reply_to:string, from:string (raw header),
  *   to:string, cc:string, subject:string, date:string|int|\DateTimeInterface,
- *   size:int, has_attachments:bool, seen:bool, flags:string[], snippet?:string
+ *   size:int, has_attachments:bool, seen:bool, flags:string[], snippet?:string,
+ *   thread_id?:string (Gmail X-GM-THRID; '' or absent elsewhere)
  */
 interface ImapTransport
 {

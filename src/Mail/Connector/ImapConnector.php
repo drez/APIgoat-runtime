@@ -200,7 +200,7 @@ class ImapConnector extends BaseConnector
         $from = HeaderRecord::parseAddress((string) ($r['from'] ?? ''));
         return HeaderRecord::normalise([
             'provider_message_id' => self::makeId((int) $r['uid'], $folder),
-            'thread_id'           => null,
+            'thread_id'           => $r['thread_id'] ?? null, // Gmail X-GM-THRID when the transport could read it
             'message_id_header'   => $r['message_id'] ?? null,
             'in_reply_to'         => $r['in_reply_to'] ?? null,
             'from_addr'           => $from['addr'],
