@@ -73,6 +73,12 @@ final class HtmlSanitizer
     private const ALLOWED_STYLE_PROPS = [
         'text-align', 'text-decoration', 'font-weight', 'font-style', 'font-size',
         'color', 'background-color', 'vertical-align', 'width', 'height',
+        // max-width is what makes an email fluid: width:100% + max-width:600px
+        // fills a phone screen yet stays boxed on desktop. Mail clients drop
+        // <style> (and so every media query), so this is the only responsive
+        // primitive stored HTML can carry. Plain lengths only — the value
+        // filter below still refuses url(), expression and the like.
+        'max-width', 'min-width',
         'margin', 'margin-left', 'margin-right', 'margin-top', 'margin-bottom',
         'padding', 'padding-left', 'padding-right', 'padding-top', 'padding-bottom',
         'border', 'border-color', 'border-width', 'border-style', 'list-style-type',
