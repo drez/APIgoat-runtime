@@ -21,7 +21,13 @@
         "jimtools/jwt-auth": "^3.0",
         "league/oauth2-server": "^8.5",
         "stripe/stripe-php": "^16 || ^17"
-    }, "repositories": [
+    },
+    "suggest": {
+        "webklex/php-imap": "Required by ApiGoat\\Mail\\Connector\\ImapConnector (pure-PHP IMAP; ext-imap is not needed)",
+        "zbateson/mail-mime-parser": "Preferred RFC 822 parser for ApiGoat\\Mail\\MimeBodyParser (a small built-in parser is the fallback)",
+        "firebase/php-jwt": "Required by ApiGoat\\Google\\JwtSigner (already pulled in by jimtools/jwt-auth)"
+    },
+    "repositories": [
         {
             "type": "git",
             "url": "https://github.com/drez/conditional-middleware"
