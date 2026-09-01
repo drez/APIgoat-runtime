@@ -105,8 +105,12 @@ final class WebklexTransport implements ImapTransport
             }
             $ids = $q->search();
             $uids = [];
-            foreach ($ids as $k => $v) {
-                $u = is_int($k) && !is_int($v) ? (int) $k : (int) $v;
+            // webklex Query::search() returns a Collection whose KEYS are
+            // positions (0,1,2…) and whose VALUES are the UIDs as strings
+            // ("38055"). Verified live against Gmail 2026-09-01: reading the
+            // keys fetched UIDs 1,2,3 and every poll came back empty.
+            foreach ($ids as $v) {
+                $u = is_numeric($v) ? (int) $v : 0;
                 if ($u > 0 && ($minUid === null || $u >= $minUid)) $uids[] = $u;
             }
             sort($uids);
