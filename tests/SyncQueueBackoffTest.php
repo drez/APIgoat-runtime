@@ -1,6 +1,7 @@
 <?php
 // tests/SyncQueueBackoffTest.php — Run: php tests/SyncQueueBackoffTest.php
 require __DIR__ . '/../src/Sync/SyncMap.php';
+require __DIR__ . '/../src/Queue/JobQueue.php';
 require __DIR__ . '/../src/Sync/SyncQueue.php';
 require __DIR__ . '/../src/Sync/Hooks.php';
 
