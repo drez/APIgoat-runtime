@@ -46,7 +46,9 @@ final class AiGateway
      * POST a JSON body to $path (relative to the manifest base URL).
      *
      * @param array<string,mixed> $body
-     * @param array<string,mixed> $opts timeout, retries, api_key, cost
+     * @param array<string,mixed> $opts timeout, retries, api_key, cost,
+     *   base_url (overrides the manifest), auth (bearer|x-api-key|none),
+     *   headers (extra header lines), throttle (float seconds, this call only)
      * @return array{0:int,1:mixed} [http status, decoded JSON body (or null)]
      */
     public static function post(string $path, array $body, array $opts = []): array
@@ -58,16 +60,13 @@ final class AiGateway
 
         $attempt = 0;
         while (true) {
-            self::throttle();
-            $ch = self::handle(\rtrim(AiManifest::baseUrl(), '/') . $path);
+            self::throttle(isset($opts['throttle']) ? (float) $opts['throttle'] : null);
+            $ch = self::handle(self::urlFor($path, $opts));
             \curl_setopt_array($ch, [
                 CURLOPT_POST           => true,
                 CURLOPT_POSTFIELDS     => \json_encode($body),
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_HTTPHEADER     => [
-                    'Authorization: Bearer ' . $apiKey,
-                    'Content-Type: application/json',
-                ],
+                CURLOPT_HTTPHEADER     => self::headersFor($apiKey, $opts),
                 CURLOPT_TIMEOUT => $timeout,
                 CURLOPT_HEADER  => true,
             ]);
@@ -97,6 +96,48 @@ final class AiGateway
             \usleep((int) \round($wait * 1_000_000));
             $attempt++;
         }
+    }
+
+    /**
+     * Absolute URL for $path: $opts['base_url'] when given (a per-tenant
+     * provider, or the LAN Ollama box), else the build-time manifest.
+     *
+     * @param array<string,mixed> $opts
+     */
+    public static function urlFor(string $path, array $opts = []): string
+    {
+        $base = isset($opts['base_url']) && \is_string($opts['base_url']) && $opts['base_url'] !== ''
+            ? $opts['base_url']
+            : AiManifest::baseUrl();
+
+        return \rtrim($base, '/') . $path;
+    }
+
+    /**
+     * Request headers. $opts['auth'] picks how the key travels — `bearer`
+     * (default: OpenAI, Ollama), `x-api-key` (Anthropic) or `none` — and
+     * $opts['headers'] appends extra lines (e.g. `anthropic-version: ...`).
+     *
+     * @param array<string,mixed> $opts
+     * @return string[]
+     */
+    public static function headersFor(string $apiKey, array $opts = []): array
+    {
+        $auth = (string) ($opts['auth'] ?? 'bearer');
+        $headers = [];
+        if ($auth === 'x-api-key') {
+            $headers[] = 'x-api-key: ' . $apiKey;
+        } elseif ($auth !== 'none') {
+            $headers[] = 'Authorization: Bearer ' . $apiKey;
+        }
+        $headers[] = 'Content-Type: application/json';
+        foreach ((array) ($opts['headers'] ?? []) as $line) {
+            if (\is_string($line) && $line !== '') {
+                $headers[] = $line;
+            }
+        }
+
+        return $headers;
     }
 
     /**
@@ -154,9 +195,9 @@ final class AiGateway
      * allows. Best-effort — an unwritable directory must never break a call,
      * only its pacing.
      */
-    private static function throttle(): void
+    private static function throttle(?float $spacing = null): void
     {
-        $spacing = AiManifest::throttleSeconds();
+        $spacing = $spacing ?? AiManifest::throttleSeconds();
         if ($spacing <= 0) {
             return;
         }
