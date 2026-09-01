@@ -201,6 +201,11 @@ final class WebklexTransport implements ImapTransport
     private static function addr(mixed $list): string
     {
         $parts = [];
+        // webklex hands back a Webklex\PHPIMAP\Attribute (not iterable by
+        // is_iterable()) wrapping Address objects — unwrap it first.
+        if (is_object($list) && method_exists($list, 'toArray')) {
+            $list = $list->toArray();
+        }
         foreach ((is_iterable($list) ? $list : []) as $a) {
             $mail = (string) ($a->mail ?? '');
             $name = (string) ($a->personal ?? '');
