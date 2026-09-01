@@ -81,6 +81,8 @@ keep('mailto link',      '<a href="mailto:a@b.com">x</a>',        'mailto:a@b.co
 keep('safe img',         '<img src="https://ok.com/a.png" alt="pic">', 'https://ok.com/a.png');
 keep('data:image ok',    '<img src="data:image/png;base64,iVBORw0KGgo=">', 'data:image/png;base64');
 keep('safe css',         '<div style="text-align:center;color:red">x</div>', 'text-align: center');
+keep('fluid email width', '<div style="width:100%;max-width:600px">x</div>', 'max-width: 600px');
+refuse('max-width fetch',  '<div style="max-width:url(javascript:1)">x</div>', 'url(');
 keep('table',            '<table><tr><td colspan="2">c</td></tr></table>', '<td colspan="2">');
 keep('unknown unwrapped text', '<foo>keep this</foo>',            'keep this');
 keep('target gets rel',  '<a href="https://x.com" target="_blank">x</a>', 'noopener');
