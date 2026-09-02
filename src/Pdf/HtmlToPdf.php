@@ -36,14 +36,143 @@ final class HtmlToPdf
         $options->setAllowedProtocols([
             'http://'  => ['rules' => [[self::class, 'assertPublicUrl']]],
             'https://' => ['rules' => [[self::class, 'assertPublicUrl']]],
+            // file:// only for the project's own font files: dompdf routes a
+            // local registerFont() through the same protocol gate, and
+            // nothing outside public/fonts is ever readable this way.
+            'file://'  => ['rules' => [[self::class, 'assertProjectFontPath']]],
         ]);
 
+        // Project fonts (public/fonts/**/<Family>-<Style>.ttf) are registered
+        // from disk so the PDF embeds the same faces the browser gets via
+        // @font-face; dompdf needs a writable font dir for its metrics cache.
+        $fontDir = self::fontDir();
+        if ($fontDir !== null) {
+            $options->set('fontDir', $fontDir);
+            $options->set('fontCache', $fontDir);
+        }
+
         $dompdf = new \Dompdf\Dompdf($options);
+        if ($fontDir !== null) {
+            $families = self::registerProjectFonts($dompdf);
+            if ($families !== []) {
+                // The document's @font-face rules point at http(s) URLs for
+                // browsers; dompdf already has those families from disk, so
+                // drop the rules rather than let it re-fetch them over HTTP.
+                $html = self::stripFontFace($html, $families);
+            }
+        }
         $dompdf->setPaper('letter', 'portrait');
         $dompdf->loadHtml($html, 'UTF-8');
         $dompdf->render();
 
         return (string) $dompdf->output();
+    }
+
+    /**
+     * dompdf allowed-protocol rule for file://: only a .ttf that really lives
+     * under <project>/public/fonts (realpath, so ../ and symlink tricks fail).
+     *
+     * @return array{0: bool, 1: string}
+     */
+    public static function assertProjectFontPath(string $url): array
+    {
+        if (!defined('_BASE_DIR')) {
+            return [false, 'Blocked local resource: no project base'];
+        }
+        $path = preg_replace('#^file://#', '', $url);
+        $real = realpath((string) $path);
+        $root = realpath(rtrim((string) _BASE_DIR, '/') . '/public/fonts');
+        if ($real === false || $root === false || !str_starts_with($real, $root . DIRECTORY_SEPARATOR)
+            || strtolower(pathinfo($real, PATHINFO_EXTENSION)) !== 'ttf') {
+            return [false, 'Blocked local resource: not a project font'];
+        }
+        return [true, ''];
+    }
+
+    /** Writable dir for dompdf's font copies + metrics cache; null = keep dompdf defaults. */
+    private static function fontDir(): ?string
+    {
+        if (!defined('_BASE_DIR')) {
+            return null;
+        }
+        $dir = rtrim((string) _BASE_DIR, '/') . '/tmp/dompdf';
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
+            return null;
+        }
+        return is_writable($dir) ? $dir : null;
+    }
+
+    /**
+     * Register every public/fonts/**\/<Family>-<Style>.ttf (Style: Regular |
+     * Bold | Italic | BoldItalic) with dompdf. Returns the family names
+     * registered. A font that fails to register is skipped — the PDF then
+     * falls back to DejaVu for that family, never fails.
+     *
+     * @return string[]
+     */
+    private static function registerProjectFonts(\Dompdf\Dompdf $dompdf): array
+    {
+        $families = [];
+        foreach (self::projectFontFiles(rtrim((string) _BASE_DIR, '/') . '/public/fonts') as $font) {
+            try {
+                $ok = $dompdf->getFontMetrics()->registerFont(
+                    ['family' => $font['family'], 'style' => $font['style'], 'weight' => $font['weight']],
+                    $font['path']
+                );
+            } catch (\Throwable $e) {
+                $ok = false;
+            }
+            if ($ok) {
+                $families[$font['family']] = true;
+            }
+        }
+        return array_keys($families);
+    }
+
+    /**
+     * Font files under $dir (one level of subdirectories), parsed from their
+     * name: "Inter-Bold.ttf" → family Inter, weight bold, style normal.
+     *
+     * @return array<int, array{path:string, family:string, style:string, weight:string}>
+     */
+    public static function projectFontFiles(string $dir): array
+    {
+        static $styles = [
+            'regular'     => ['normal', 'normal'],
+            'normal'      => ['normal', 'normal'],
+            'bold'        => ['normal', 'bold'],
+            'italic'      => ['italic', 'normal'],
+            'oblique'     => ['italic', 'normal'],
+            'bolditalic'  => ['italic', 'bold'],
+            'boldoblique' => ['italic', 'bold'],
+        ];
+        $out = [];
+        foreach (array_merge(glob($dir . '/*.ttf') ?: [], glob($dir . '/*/*.ttf') ?: []) as $path) {
+            if (!preg_match('/^(.+)-([A-Za-z]+)\.ttf$/', basename($path), $m)) {
+                continue;
+            }
+            $key = strtolower($m[2]);
+            if (!isset($styles[$key])) {
+                continue;
+            }
+            [$style, $weight] = $styles[$key];
+            $out[] = ['path' => $path, 'family' => $m[1], 'style' => $style, 'weight' => $weight];
+        }
+        return $out;
+    }
+
+    /** Remove @font-face rules whose font-family is one of $families. */
+    public static function stripFontFace(string $html, array $families): string
+    {
+        if ($families === []) {
+            return $html;
+        }
+        $alt = implode('|', array_map(static fn($f) => preg_quote($f, '/'), $families));
+        return (string) preg_replace(
+            '/@font-face\s*\{[^{}]*font-family\s*:\s*[\'"]?(?:' . $alt . ')[\'"]?\s*;[^{}]*\}/i',
+            '',
+            $html
+        );
     }
 
     /**
