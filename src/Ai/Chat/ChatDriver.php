@@ -16,7 +16,7 @@ interface ChatDriver
 {
     /**
      * @param array<int,array{role:string,content:string}> $messages
-     * @param array<string,mixed> $opts max_tokens, temperature, json_schema
+     * @param array<string,mixed> $opts model (override of $profile->model()), max_tokens, temperature, json_schema
      *   (array), json_schema_name, format (bool: Ollama-native `format`
      *   instead of `response_format`), timeout
      */

@@ -79,6 +79,26 @@ final class AiManifest
         return (string) (self::all()['key_config'] ?? 'openai_api_key');
     }
 
+    /**
+     * The with_ai `chat` declaration, or null when the project declared none.
+     *
+     * @return array{table:string,model:string,label:string,persona:string}|null
+     */
+    public static function chat(): ?array
+    {
+        $c = self::all()['chat'] ?? null;
+        if (!\is_array($c) || empty($c['model'])) {
+            return null;
+        }
+
+        return [
+            'table'   => (string) ($c['table'] ?? ''),
+            'model'   => (string) $c['model'],
+            'label'   => (string) ($c['label'] ?? 'Ask AI'),
+            'persona' => (string) ($c['persona'] ?? ''),
+        ];
+    }
+
     /** Test seam. */
     public static function reset(): void
     {

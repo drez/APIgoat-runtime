@@ -18,6 +18,8 @@ namespace ApiGoat\Ai;
  *              resolver → AiConfig::apiKey()                 (openai)
  *              resolver → env ANTHROPIC_API_KEY              (anthropic)
  *   model      resolver → config('<provider>_model') → env <PROVIDER>_MODEL
+ *   chat_model resolver → config('<provider>_chat_model') → env <PROVIDER>_CHAT_MODEL
+ *              → 'hermes3:8b' (ollama) / model() (cloud providers)
  *   timeout / retries / throttle   resolver → AiManifest
  *
  * The ollama key ladder deliberately skips AiConfig::apiKey(): that row is the
@@ -31,6 +33,8 @@ final class AiProfile
 {
     public const PROVIDERS = ['ollama', 'openai', 'anthropic'];
     public const POLICIES  = ['none', 'cloud_if_configured'];
+    /** Free-form chat model when nothing else names one and the provider is a local Ollama. */
+    public const DEFAULT_OLLAMA_CHAT_MODEL = 'hermes3:8b';
 
     /** @var callable|null fn(?int $idTenant): array */
     private static $resolver = null;
@@ -41,6 +45,7 @@ final class AiProfile
     private string $provider;
     private string $baseUrl;
     private string $model;
+    private string $chatModel;
     private string $apiKey;
     private string $auth;
     private int $timeout;
@@ -62,7 +67,7 @@ final class AiProfile
      * Register (or clear, with null) the per-tenant resolver.
      *
      * The callable receives ?int $idTenant and returns a partial array with
-     * any of: provider, base_url, model, api_key, auth, timeout, retries,
+     * any of: provider, base_url, model, chat_model, api_key, auth, timeout, retries,
      * throttle, prices{input_per_m,output_per_m}, fallback_policy,
      * prompt_version, fallback{provider,base_url,model,api_key,auth,prices}.
      * Registering clears the memo.
@@ -112,6 +117,14 @@ final class AiProfile
             ?? AiConfig::config($p->provider . '_model')
             ?? self::str(AiConfig::fromEnv(\strtoupper($p->provider) . '_MODEL'))
             ?? '';
+        // The conversational model is a separate knob: a project's triage
+        // model is typically a Modelfile that bakes a JSON-only system prompt
+        // (apigmail's gm-triage:v1), so it can never answer a free-form
+        // question. Cloud providers answer both with one model.
+        $p->chatModel = self::str($spec['chat_model'] ?? null)
+            ?? AiConfig::config($p->provider . '_chat_model')
+            ?? self::str(AiConfig::fromEnv(\strtoupper($p->provider) . '_CHAT_MODEL'))
+            ?? ($p->provider === 'ollama' ? self::DEFAULT_OLLAMA_CHAT_MODEL : $p->model);
         $p->apiKey = self::str($spec['api_key'] ?? null)
             ?? ($fallback ? '' : self::defaultApiKey($p->provider));
         $p->auth = \in_array($spec['auth'] ?? null, ['bearer', 'x-api-key', 'none'], true)
@@ -182,6 +195,12 @@ final class AiProfile
     public function model(): string
     {
         return $this->model;
+    }
+
+    /** The model for free-form chat (ChatAssistant), never the triage Modelfile. */
+    public function chatModel(): string
+    {
+        return $this->chatModel;
     }
 
     public function apiKey(): string

@@ -52,7 +52,10 @@ final class OpenAiChat implements ChatDriver
     public static function buildBody(AiProfile $profile, array $messages, array $opts = []): array
     {
         $body = [
-            'model'    => $profile->model(),
+            // $opts['model'] lets a caller pick another model on the same
+            // profile (ChatAssistant uses $profile->chatModel()).
+            'model'    => isset($opts['model']) && \is_string($opts['model']) && $opts['model'] !== ''
+                ? $opts['model'] : $profile->model(),
             'messages' => \array_values($messages),
         ];
         if (isset($opts['max_tokens'])) {

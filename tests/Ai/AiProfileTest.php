@@ -15,7 +15,7 @@ require_once __DIR__ . '/../../src/Ai/AiProfile.php';
 
 final class AiProfileTest extends TestCase
 {
-    private const ENV = ['OLLAMA_BASE_URL', 'OLLAMA_API_KEY', 'OLLAMA_MODEL', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_MODEL'];
+    private const ENV = ['OLLAMA_BASE_URL', 'OLLAMA_API_KEY', 'OLLAMA_MODEL', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_MODEL', 'OLLAMA_CHAT_MODEL', 'OPENAI_CHAT_MODEL'];
 
     protected function setUp(): void
     {
@@ -171,5 +171,31 @@ final class AiProfileTest extends TestCase
         // a "cloud" fallback onto another ollama box is refused
         AiProfile::setResolver(fn () => ['fallback_policy' => 'cloud_if_configured', 'fallback' => ['provider' => 'ollama', 'api_key' => 'x']]);
         self::assertNull(AiProfile::forTenant(1)->cloudFallback());
+    }
+
+    public function testChatModelLadderForOllamaDefaultsToHermesNeverTheTriageModel(): void
+    {
+        \putenv('OLLAMA_MODEL=gm-triage:v1');
+        $p = AiProfile::forTenant(1);
+        self::assertSame('gm-triage:v1', $p->model());
+        self::assertSame(AiProfile::DEFAULT_OLLAMA_CHAT_MODEL, $p->chatModel());
+        self::assertSame('hermes3:8b', $p->chatModel());
+
+        AiProfile::reset();
+        \putenv('OLLAMA_CHAT_MODEL=llama3.1:8b');
+        self::assertSame('llama3.1:8b', AiProfile::forTenant(1)->chatModel(), 'env beats the default');
+
+        AiProfile::setResolver(fn () => ['model' => 'gm-triage:v1', 'chat_model' => 'hermes3:70b']);
+        self::assertSame('hermes3:70b', AiProfile::forTenant(1)->chatModel(), 'resolver beats env');
+        self::assertSame('gm-triage:v1', AiProfile::forTenant(1)->model());
+    }
+
+    public function testChatModelForCloudProviderFallsBackToModel(): void
+    {
+        AiProfile::setResolver(fn () => ['provider' => 'openai', 'model' => 'gpt-4o-mini', 'api_key' => 'k']);
+        self::assertSame('gpt-4o-mini', AiProfile::forTenant(2)->chatModel());
+
+        AiProfile::setResolver(fn () => ['provider' => 'openai', 'model' => 'gpt-4o-mini', 'chat_model' => 'gpt-4o', 'api_key' => 'k']);
+        self::assertSame('gpt-4o', AiProfile::forTenant(2)->chatModel());
     }
 }

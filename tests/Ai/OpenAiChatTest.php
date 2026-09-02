@@ -93,4 +93,14 @@ final class OpenAiChatTest extends TestCase
         self::assertTrue($bad->ok());
         self::assertFalse($bad->jsonValid());
     }
+
+    public function testModelOptOverridesTheProfileModel(): void
+    {
+        $msgs = [['role' => 'user', 'content' => 'u']];
+        $body = OpenAiChat::buildBody(AiProfile::forTenant(1), $msgs, ['model' => 'hermes3:8b']);
+        self::assertSame('hermes3:8b', $body['model']);
+        self::assertArrayNotHasKey('response_format', $body);
+        $body = OpenAiChat::buildBody(AiProfile::forTenant(1), $msgs, ['model' => '']);
+        self::assertSame('gm-triage:v1', $body['model'], 'an empty override is ignored');
+    }
 }
