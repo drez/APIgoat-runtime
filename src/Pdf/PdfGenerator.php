@@ -119,6 +119,17 @@ final class PdfGenerator
     /** Canonical current-copy filename for the record. */
     public static function canonicalName(object $record, array $entry): string
     {
+        // A custom renderer that knows the document's real name wins
+        // (PdfNameResolverInterface); then the with_pdf filename template.
+        if (($entry['type'] ?? '') === 'custom') {
+            $class = (string) ($entry['class'] ?? '');
+            if ($class !== '' && class_exists($class) && is_subclass_of($class, PdfNameResolverInterface::class)) {
+                $resolved = trim((new $class())->resolveName($record));
+                if ($resolved !== '') {
+                    return PdfNaming::fromTemplate($resolved);
+                }
+            }
+        }
         $tplName = (string) ($entry['filename'] ?? '');
         if ($tplName !== '') {
             return PdfNaming::fromTemplate(self::resolvePlaceholders($tplName, $record));
