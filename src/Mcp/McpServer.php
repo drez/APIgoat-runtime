@@ -55,6 +55,8 @@ class McpServer
         . 'the user for values, never invent them) and executes only with confirm:true: show the '
         . 'user the pending record and get their approval first. crm_delete is gated the same way '
         . '— never delete without the user\'s explicit approval of that specific delete. '
+        . 'To page through a long list pass page:N (with limit as the page size): the answer becomes '
+        . '{rows, page, per_page, total, last_page}. '
         . 'Prefer this server\'s custom (non-crm_) tools whenever one matches the task.';
 
     private function initialize(array $params): array

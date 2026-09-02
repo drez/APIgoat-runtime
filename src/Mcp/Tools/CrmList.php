@@ -6,7 +6,7 @@ use ApiGoat\Sessions\AuthySession;
 class CrmList extends AbstractCrmTool
 {
     public function name(): string { return 'crm_list'; }
-    public function description(): string { return 'List/search rows of a CRM entity with filter/order/select/pagination. Without page: a bare row array (at most limit rows). With page: {rows, page, per_page, total, last_page} — keep calling with page+1 until page == last_page; a primary-key tiebreaker keeps the sequence stable. add_i18n columns are included per row — pass lang to read a specific locale.'; }
+    public function description(): string { return 'List/search rows of a CRM entity with filter/order/select/pagination. Without page: a bare row array (at most limit rows). With page: {rows, page, per_page, total, last_page} — keep calling with page+1 until page == last_page (a page beyond last_page returns the last page — check the returned page); a primary-key tiebreaker keeps the sequence stable. add_i18n columns are included per row — pass lang to read a specific locale.'; }
     public function inputSchema(): array
     {
         return ['type' => 'object', 'required' => ['entity'], 'properties' => [

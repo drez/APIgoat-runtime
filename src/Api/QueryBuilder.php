@@ -1087,7 +1087,18 @@ class QueryBuilder
         if ($map === null) {
             return;
         }
+        // Columns the caller already ordered by (snake or camel form) need no tiebreaker.
+        $ordered = [];
+        foreach ((array) ($this->request['order'] ?? []) as $o) {
+            if (\is_array($o) && isset($o[0]) && \is_string($o[0])) {
+                $ordered[\strtolower(\str_replace('_', '', $o[0]))] = true;
+            }
+        }
         foreach ($map->getPrimaryKeys() as $col) {
+            if (isset($ordered[\strtolower(\str_replace('_', '', $col->getName()))])
+                || isset($ordered[\strtolower($col->getPhpName())])) {
+                continue;
+            }
             $this->Query->orderBy($col->getPhpName(), 'ASC');
         }
     }
