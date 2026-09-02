@@ -64,27 +64,61 @@ final class HtmlToPdf
         return 'dompdf';
     }
 
-    /** Absolute path of an engine's binary (PDF_<ENGINE>_BIN env, then the usual locations), or null. */
+    /**
+     * An engine's executable (PDF_<ENGINE>_BIN env, else the usual names
+     * resolved through PATH), or null. Probed by RUNNING `<bin> --version`
+     * rather than is_file(): shared hosts (ISPConfig) put an open_basedir on
+     * PHP that hides /usr/bin from stat() while exec is still allowed.
+     * Memoized per request.
+     */
     public static function binary(string $engine): ?string
     {
+        static $memo = [];
+        if (array_key_exists($engine, $memo)) {
+            return $memo[$engine];
+        }
         $env = getenv('PDF_' . strtoupper($engine) . '_BIN') ?: ($_ENV['PDF_' . strtoupper($engine) . '_BIN'] ?? '');
         $names = match ($engine) {
             'wkhtmltopdf' => ['wkhtmltopdf'],
             'chrome'      => ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'chrome'],
             default       => [],
         };
-        $candidates = $env !== '' ? [$env] : [];
-        foreach ($names as $n) {
-            foreach (['/usr/bin/', '/usr/local/bin/', '/opt/homebrew/bin/', '/snap/bin/'] as $dir) {
-                $candidates[] = $dir . $n;
+        foreach ($env !== '' ? [$env] : $names as $c) {
+            if (self::runs($c)) {
+                return $memo[$engine] = $c;
             }
         }
-        foreach ($candidates as $c) {
-            if ($c !== '' && is_file($c) && is_executable($c)) {
-                return $c;
+        return $memo[$engine] = null;
+    }
+
+    /** True when `<bin> --version` starts and exits 0 (PATH-resolved when $bin is a bare name). */
+    private static function runs(string $bin): bool
+    {
+        if ($bin === '' || !function_exists('proc_open')) {
+            return false;
+        }
+        $spec = [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        $proc = @proc_open([$bin, '--version'], $spec, $pipes, null, self::env([]));
+        if (!is_resource($proc)) {
+            return false;
+        }
+        foreach ($pipes as $p) {
+            stream_get_contents($p);
+            fclose($p);
+        }
+        return proc_close($proc) === 0;
+    }
+
+    /** Environment for the CLI engines: a sane PATH + UTF-8 locale + overrides. */
+    private static function env(array $extra): array
+    {
+        $path = getenv('PATH') ?: '';
+        foreach (['/usr/local/bin', '/usr/bin', '/bin', '/opt/homebrew/bin', '/snap/bin'] as $d) {
+            if (!in_array($d, explode(':', $path), true)) {
+                $path = ($path === '' ? '' : $path . ':') . $d;
             }
         }
-        return null;
+        return array_merge(['PATH' => $path, 'LANG' => 'C.UTF-8'], $extra);
     }
 
     // ── wkhtmltopdf (WebKit) ─────────────────────────────────────────────
@@ -284,11 +318,12 @@ final class HtmlToPdf
     private static function run(array $cmd, array $env): string
     {
         $timeout = (int) (getenv('PDF_TIMEOUT') ?: 90);
-        if (is_file('/usr/bin/timeout')) {
-            array_unshift($cmd, '/usr/bin/timeout', (string) $timeout);
+        static $hasTimeout = null;
+        $hasTimeout ??= self::runs('timeout');
+        if ($hasTimeout) {
+            array_unshift($cmd, 'timeout', (string) $timeout);
         }
-        $env = array_merge(['PATH' => getenv('PATH') ?: '/usr/local/bin:/usr/bin:/bin', 'LANG' => 'C.UTF-8'], $env);
-        $proc = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);
+        $proc = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, self::env($env));
         if (!is_resource($proc)) {
             throw new \RuntimeException('Cannot start ' . basename((string) $cmd[0]));
         }
