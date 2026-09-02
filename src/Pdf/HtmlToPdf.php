@@ -21,7 +21,288 @@ namespace ApiGoat\Pdf;
  */
 final class HtmlToPdf
 {
+    /** Engines in auto-selection order; first whose binary exists wins, dompdf last. */
+    public const ENGINES = ['wkhtmltopdf', 'chrome', 'dompdf'];
+
+    /**
+     * HTML → PDF bytes. Engine: PDF_ENGINE env (wkhtmltopdf | chrome | dompdf |
+     * auto, default auto). Browser engines (wkhtmltopdf = WebKit, chrome) lay
+     * the page out exactly like the printable page in a browser; dompdf is the
+     * pure-PHP fallback with its own, coarser CSS engine.
+     */
     public function render(string $html): string
+    {
+        return match (self::engine()) {
+            'wkhtmltopdf' => $this->renderWkhtmltopdf($html),
+            'chrome'      => $this->renderChrome($html),
+            default       => $this->renderDompdf($html),
+        };
+    }
+
+    /** Resolved engine name for this host (PDF_ENGINE env, then binary discovery). */
+    public static function engine(): string
+    {
+        return self::engineFor(getenv('PDF_ENGINE') ?: ($_ENV['PDF_ENGINE'] ?? null), fn(string $e) => self::binary($e) !== null);
+    }
+
+    /**
+     * Engine choice for a preference + "is this engine available" probe.
+     * Unknown/unavailable preferences fall through to auto; dompdf always wins last.
+     */
+    public static function engineFor(?string $pref, callable $available): string
+    {
+        $pref = strtolower(trim((string) $pref));
+        if ($pref !== '' && $pref !== 'auto' && in_array($pref, self::ENGINES, true)
+            && ($pref === 'dompdf' || $available($pref))) {
+            return $pref;
+        }
+        foreach (self::ENGINES as $e) {
+            if ($e === 'dompdf' || $available($e)) {
+                return $e;
+            }
+        }
+        return 'dompdf';
+    }
+
+    /** Absolute path of an engine's binary (PDF_<ENGINE>_BIN env, then the usual locations), or null. */
+    public static function binary(string $engine): ?string
+    {
+        $env = getenv('PDF_' . strtoupper($engine) . '_BIN') ?: ($_ENV['PDF_' . strtoupper($engine) . '_BIN'] ?? '');
+        $names = match ($engine) {
+            'wkhtmltopdf' => ['wkhtmltopdf'],
+            'chrome'      => ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'chrome'],
+            default       => [],
+        };
+        $candidates = $env !== '' ? [$env] : [];
+        foreach ($names as $n) {
+            foreach (['/usr/bin/', '/usr/local/bin/', '/opt/homebrew/bin/', '/snap/bin/'] as $dir) {
+                $candidates[] = $dir . $n;
+            }
+        }
+        foreach ($candidates as $c) {
+            if ($c !== '' && is_file($c) && is_executable($c)) {
+                return $c;
+            }
+        }
+        return null;
+    }
+
+    // ── wkhtmltopdf (WebKit) ─────────────────────────────────────────────
+
+    /**
+     * wkhtmltopdf renders like a browser, with two quirks handled here:
+     *  - @font-face is broken in the (unpatched-Qt) Debian build — text set in
+     *    a web font silently disappears — so every @font-face rule is dropped
+     *    and the project's fonts (public/fonts/**\/*.ttf) are handed to
+     *    fontconfig through a per-project FONTCONFIG_FILE instead; the same
+     *    family names then resolve on screen (via @font-face) and on paper.
+     *  - the SSRF/local-file posture matches dompdf's: JavaScript off, file://
+     *    off (the document is rendered from a temp file, fonts come from
+     *    fontconfig, images stay http(s)/data:).
+     */
+    private function renderWkhtmltopdf(string $html): string
+    {
+        $bin  = self::binary('wkhtmltopdf');
+        $work = self::workDir('wkhtmltopdf');
+        if ($bin === null || $work === null) {
+            return $this->renderDompdf($html);
+        }
+        $html = (string) preg_replace('/@font-face\s*\{[^{}]*\}/i', '', $html);
+        [$size, $margins] = self::paper();
+        $html = self::fitToPaper($html, self::contentWidthPx($size, $margins), self::wkScale());
+
+        $fontsDir = defined('_BASE_DIR') ? rtrim((string) _BASE_DIR, '/') . '/public/fonts' : '';
+        $conf = $work . '/fonts.conf';
+        file_put_contents($conf, self::fontsConf(is_dir($fontsDir) ? $fontsDir : null, $work . '/fc-cache'));
+        if (!is_dir($work . '/fc-cache')) {
+            @mkdir($work . '/fc-cache', 0775, true);
+        }
+
+        $in  = $work . '/' . uniqid('doc_', true) . '.html';
+        $out = substr($in, 0, -5) . '.pdf';
+        file_put_contents($in, $html);
+        $cmd = [
+            $bin, '-q', '--disable-javascript', '--disable-local-file-access',
+            '--load-error-handling', 'ignore', '--load-media-error-handling', 'ignore',
+            '--encoding', 'utf-8', '--page-size', $size,
+            '-T', $margins[0], '-R', $margins[1], '-B', $margins[2], '-L', $margins[3],
+            $in, $out,
+        ];
+        try {
+            $err = self::run($cmd, ['FONTCONFIG_FILE' => $conf, 'XDG_RUNTIME_DIR' => $work, 'HOME' => $work]);
+            $bytes = is_file($out) ? (string) file_get_contents($out) : '';
+        } finally {
+            @unlink($in);
+            @unlink($out);
+        }
+        if (!str_starts_with($bytes, '%PDF')) {
+            throw new \RuntimeException('wkhtmltopdf produced no PDF: ' . trim($err));
+        }
+        return $bytes;
+    }
+
+    /**
+     * The Debian (unpatched-Qt) wkhtmltopdf ignores --zoom/--dpi and draws
+     * CSS px at PDF_WK_SCALE × 1/96 in (0.725 measured; a patched build is 1),
+     * then "smart-shrinks" anything wider than the printable area. Pinning the
+     * layout to the printable width and zooming by 1/scale makes 1 CSS px =
+     * 1/96 in on paper — the same font size, padding and margins as the
+     * printable page in a browser.
+     */
+    public static function wkScale(): float
+    {
+        $v = (float) (getenv('PDF_WK_SCALE') ?: ($_ENV['PDF_WK_SCALE'] ?? 0.725));
+        return $v > 0.1 && $v <= 1.0 ? $v : 0.725;
+    }
+
+    public static function fitToPaper(string $html, int $contentWidthPx, float $scale): string
+    {
+        $zoom = round(1 / $scale, 4);
+        $layoutWidth = (int) round($contentWidthPx * $scale); // in zoomed px, so it fills the page exactly
+        $css = '<style>html{zoom:' . $zoom . '}html,body{margin:0;padding:0}body{width:' . $layoutWidth . 'px}</style>';
+        return str_contains($html, '</head>') ? preg_replace('#</head>#i', $css . '</head>', $html, 1) : $css . $html;
+    }
+
+    /** Printable width in CSS px (96/in) for a paper size and [top, right, bottom, left] margins. */
+    public static function contentWidthPx(string $size, array $margins): int
+    {
+        $widthMm = match (strtolower($size)) {
+            'a4'     => 210.0,
+            'a5'     => 148.0,
+            'legal'  => 215.9,
+            'letter' => 215.9,
+            default  => 215.9,
+        };
+        $mm = $widthMm - self::toMm((string) ($margins[1] ?? '0')) - self::toMm((string) ($margins[3] ?? '0'));
+        return (int) round($mm / 25.4 * 96);
+    }
+
+    /** "16mm" | "1.5cm" | "0.5in" | "48px" | "12pt" | bare number (mm) → mm. */
+    public static function toMm(string $v): float
+    {
+        if (!preg_match('/^\s*([0-9.]+)\s*(mm|cm|in|px|pt)?\s*$/i', $v, $m)) {
+            return 0.0;
+        }
+        $n = (float) $m[1];
+        return match (strtolower($m[2] ?? 'mm')) {
+            'cm' => $n * 10,
+            'in' => $n * 25.4,
+            'px' => $n / 96 * 25.4,
+            'pt' => $n / 72 * 25.4,
+            default => $n,
+        };
+    }
+
+    /** fontconfig config: the system fonts plus the project's fonts dir, cache under the project. */
+    public static function fontsConf(?string $fontsDir, string $cacheDir): string
+    {
+        $dir = $fontsDir !== null ? '<dir>' . htmlspecialchars($fontsDir, ENT_XML1) . '</dir>' : '';
+        return '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
+            . '<include ignore_missing="yes">/etc/fonts/fonts.conf</include>'
+            . $dir
+            . '<cachedir>' . htmlspecialchars($cacheDir, ENT_XML1) . '</cachedir>'
+            . '</fontconfig>';
+    }
+
+    // ── headless Chrome ──────────────────────────────────────────────────
+
+    /**
+     * Chrome prints the document exactly as the browser shows it. Project
+     * font URLs are rewritten to file:// (Chrome is allowed to read those
+     * files only), @page margins come from the document's own CSS.
+     */
+    private function renderChrome(string $html): string
+    {
+        $bin  = self::binary('chrome');
+        $work = self::workDir('chrome');
+        if ($bin === null || $work === null) {
+            return $this->renderDompdf($html);
+        }
+        if (defined('_BASE_DIR')) {
+            $base = rtrim((string) _BASE_DIR, '/');
+            $html = (string) preg_replace('#url\([\'"]?[^\'")]*?/public/fonts/#i', 'url(file://' . $base . '/public/fonts/', $html);
+        }
+        $in  = $work . '/' . uniqid('doc_', true) . '.html';
+        $out = substr($in, 0, -5) . '.pdf';
+        file_put_contents($in, $html);
+        $cmd = [
+            $bin, '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-pdf-header-footer',
+            '--allow-file-access-from-files', '--user-data-dir=' . $work . '/profile',
+            '--virtual-time-budget=5000', '--print-to-pdf=' . $out, 'file://' . $in,
+        ];
+        try {
+            $err = self::run($cmd, ['HOME' => $work, 'XDG_RUNTIME_DIR' => $work]);
+            $bytes = is_file($out) ? (string) file_get_contents($out) : '';
+        } finally {
+            @unlink($in);
+            @unlink($out);
+        }
+        if (!str_starts_with($bytes, '%PDF')) {
+            throw new \RuntimeException('chrome produced no PDF: ' . trim($err));
+        }
+        return $bytes;
+    }
+
+    // ── shared plumbing ──────────────────────────────────────────────────
+
+    /** Writable <project>/tmp/pdf/<engine> dir; null when there is no project or it is not writable. */
+    private static function workDir(string $engine): ?string
+    {
+        if (!defined('_BASE_DIR')) {
+            return null;
+        }
+        $dir = rtrim((string) _BASE_DIR, '/') . '/tmp/pdf/' . $engine;
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
+            return null;
+        }
+        return is_writable($dir) ? $dir : null;
+    }
+
+    /**
+     * Paper for the CLI engines: PDF_PAGE_SIZE (default Letter) and
+     * PDF_MARGINS ("top right bottom left", 1–4 CSS-style values, default
+     * "18mm 16mm" — the same @page the documents declare).
+     *
+     * @return array{0: string, 1: array{0: string, 1: string, 2: string, 3: string}}
+     */
+    public static function paper(): array
+    {
+        $size = getenv('PDF_PAGE_SIZE') ?: ($_ENV['PDF_PAGE_SIZE'] ?? 'Letter');
+        $m = preg_split('/\s+/', trim((string) (getenv('PDF_MARGINS') ?: ($_ENV['PDF_MARGINS'] ?? '18mm 16mm')))) ?: [];
+        $m = array_values(array_filter($m, static fn($v) => $v !== ''));
+        $m = match (count($m)) {
+            0 => ['18mm', '16mm', '18mm', '16mm'],
+            1 => [$m[0], $m[0], $m[0], $m[0]],
+            2 => [$m[0], $m[1], $m[0], $m[1]],
+            3 => [$m[0], $m[1], $m[2], $m[1]],
+            default => [$m[0], $m[1], $m[2], $m[3]],
+        };
+        return [(string) $size, $m];
+    }
+
+    /** Run a CLI engine with a hard timeout; returns its stderr (the PDF is read from disk). */
+    private static function run(array $cmd, array $env): string
+    {
+        $timeout = (int) (getenv('PDF_TIMEOUT') ?: 90);
+        if (is_file('/usr/bin/timeout')) {
+            array_unshift($cmd, '/usr/bin/timeout', (string) $timeout);
+        }
+        $env = array_merge(['PATH' => getenv('PATH') ?: '/usr/local/bin:/usr/bin:/bin', 'LANG' => 'C.UTF-8'], $env);
+        $proc = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);
+        if (!is_resource($proc)) {
+            throw new \RuntimeException('Cannot start ' . basename((string) $cmd[0]));
+        }
+        $err = stream_get_contents($pipes[2]) . stream_get_contents($pipes[1]);
+        foreach ($pipes as $p) {
+            fclose($p);
+        }
+        proc_close($proc);
+        return (string) $err;
+    }
+
+    // ── dompdf (pure PHP fallback) ───────────────────────────────────────
+
+    private function renderDompdf(string $html): string
     {
         if (!class_exists(\Dompdf\Dompdf::class)) {
             throw new \RuntimeException(

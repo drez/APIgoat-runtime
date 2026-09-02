@@ -1,7 +1,7 @@
 <?php
 // Run: php tests/Pdf/HtmlToPdfFontsTest.php
 //
-// HtmlToPdf project-font support: files under public/fonts/**/<Family>-<Style>.ttf
+// HtmlToPdf engines + project-font support: files under public/fonts/**/<Family>-<Style>.ttf
 // are parsed into dompdf font registrations, and the document's @font-face
 // rules for those families are stripped before dompdf sees them (browsers use
 // the rules; dompdf gets the same files from disk and must not re-fetch them
@@ -47,6 +47,27 @@ namespace {
     $check('other family kept', str_contains($out, "font-family: 'Other'"));
     $check('font stack + body untouched', str_contains($out, "font-family: Inter, 'DejaVu Sans'") && str_contains($out, 'Inter stays in the stack'));
     $check('no families → unchanged', HtmlToPdf::stripFontFace($html, []) === $html);
+
+    // engine selection: preference wins when available, auto walks the order, dompdf is the floor
+    $has = fn(array $avail) => fn(string $e) => in_array($e, $avail, true);
+    $check('auto → wkhtmltopdf when present', HtmlToPdf::engineFor('auto', $has(['wkhtmltopdf', 'chrome'])) === 'wkhtmltopdf');
+    $check('auto → chrome when only chrome', HtmlToPdf::engineFor(null, $has(['chrome'])) === 'chrome');
+    $check('auto → dompdf when nothing', HtmlToPdf::engineFor('', $has([])) === 'dompdf');
+    $check('explicit chrome honoured', HtmlToPdf::engineFor('chrome', $has(['wkhtmltopdf', 'chrome'])) === 'chrome');
+    $check('explicit but missing falls back to auto', HtmlToPdf::engineFor('chrome', $has(['wkhtmltopdf'])) === 'wkhtmltopdf');
+    $check('explicit dompdf always allowed', HtmlToPdf::engineFor('dompdf', $has(['wkhtmltopdf'])) === 'dompdf');
+    $check('garbage preference → auto', HtmlToPdf::engineFor('foo', $has(['wkhtmltopdf'])) === 'wkhtmltopdf');
+
+    // paper geometry
+    $check('toMm units', abs(HtmlToPdf::toMm('1in') - 25.4) < 0.001 && abs(HtmlToPdf::toMm('2cm') - 20) < 0.001 && abs(HtmlToPdf::toMm('96px') - 25.4) < 0.001 && HtmlToPdf::toMm('16') == 16.0 && HtmlToPdf::toMm('x') == 0.0);
+    $check('Letter 16mm sides → 695 px', HtmlToPdf::contentWidthPx('Letter', ['18mm', '16mm', '18mm', '16mm']) === 695);
+    $check('A4 10mm sides → 718 px', HtmlToPdf::contentWidthPx('A4', ['10mm', '10mm', '10mm', '10mm']) === 718);
+    $fit = HtmlToPdf::fitToPaper('<html><head><title>t</title></head><body>x</body></html>', 695, 0.725);
+    $check('fitToPaper zooms 1/scale and pins body width', str_contains($fit, 'html{zoom:1.3793}') && str_contains($fit, 'body{width:504px}') && substr_count($fit, '</head>') === 1);
+    $check('fitToPaper without <head> prepends', str_starts_with(HtmlToPdf::fitToPaper('<p>x</p>', 695, 1.0), '<style>html{zoom:1}'));
+    $conf = HtmlToPdf::fontsConf('/p/public/fonts', '/p/tmp/pdf/fc');
+    $check('fontsConf includes system + project dir + cache', str_contains($conf, '/etc/fonts/fonts.conf') && str_contains($conf, '<dir>/p/public/fonts</dir>') && str_contains($conf, '<cachedir>/p/tmp/pdf/fc</cachedir>'));
+    $check('fontsConf without project dir', !str_contains(HtmlToPdf::fontsConf(null, '/c'), '<dir>'));
 
     array_map('unlink', glob($dir . '/inter/*') ?: []);
     array_map('unlink', glob($dir . '/*.ttf') ?: []);
