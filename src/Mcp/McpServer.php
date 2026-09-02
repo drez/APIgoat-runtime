@@ -87,7 +87,10 @@ class McpServer
      * runtime, so the name MUST come from the project, not a constant here —
      * connectors listed side by side (apigtbot, apichatbot, apicrm, …) are
      * otherwise indistinguishable. Precedence: config/mcp.php 'name' /
-     * 'title' → _PROJECT_NAME (config/Built/config.php) → 'apigoat'.
+     * 'title' → GC_MCP_NAME (.env; deploy pins it so every checkout that
+     * deploys to the same host serves the same identity) → _PROJECT_NAME
+     * (config/Built/config.php, i.e. the LOCAL checkout's folder name) →
+     * 'apigoat'.
      * The name is slugged to [A-Za-z0-9_.-] (MCP clients use it as an
      * identifier); the title is free text shown to humans.
      *
@@ -99,11 +102,32 @@ class McpServer
     public static function serverInfo($manifestName = null, $manifestTitle = null, $version = null): array
     {
         $project = defined('_PROJECT_NAME') && trim((string) _PROJECT_NAME) !== '' ? trim((string) _PROJECT_NAME) : 'apigoat';
-        $name = is_string($manifestName) && trim($manifestName) !== '' ? trim($manifestName) : $project . '-mcp';
+        $envName = self::envMcpName();
+        if ($envName !== '') {
+            $project = $envName;
+        }
+        $name = is_string($manifestName) && trim($manifestName) !== '' ? trim($manifestName)
+              : ($envName !== '' ? $envName : $project . '-mcp');
         $name = trim(preg_replace('/[^A-Za-z0-9_.-]+/', '-', $name), '-') ?: 'apigoat-mcp';
         $title = is_string($manifestTitle) && trim($manifestTitle) !== '' ? trim($manifestTitle) : $project . ' MCP';
         $version = is_scalar($version) && trim((string) $version) !== '' ? trim((string) $version) : '1';
         return ['name' => $name, 'title' => mb_substr($title, 0, 100), 'version' => $version];
+    }
+
+    /** GC_MCP_NAME from the loaded .env (env() helper, $_ENV, then getenv); '' when unset. */
+    public static function envMcpName(): string
+    {
+        $v = null;
+        if (\function_exists('env')) {
+            $v = env('GC_MCP_NAME');
+        }
+        if (!\is_string($v) || trim($v) === '') {
+            $v = $_ENV['GC_MCP_NAME'] ?? null;
+        }
+        if (!\is_string($v) || trim($v) === '') {
+            $v = \getenv('GC_MCP_NAME');
+        }
+        return \is_string($v) ? trim($v) : '';
     }
 
     private function call(array $params, AuthySession $session): array

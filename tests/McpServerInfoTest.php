@@ -35,4 +35,18 @@ $i = McpServer::serverInfo('   ', ['not' => 'a string']);
 assertEq($i['name'], 'apichatbot-mcp', 'blank manifest name ignored');
 assertEq($i['title'], 'apichatbot MCP', 'non-string manifest title ignored');
 
+// GC_MCP_NAME (.env) beats the project constant — the same value is pinned on
+// prod by gc deploy, so two differently-named checkouts serve one identity.
+putenv('GC_MCP_NAME=LL-TEQ CRM');
+$i = McpServer::serverInfo();
+assertEq($i['name'], 'LL-TEQ-CRM', 'GC_MCP_NAME → slugged name');
+assertEq($i['title'], 'LL-TEQ CRM MCP', 'GC_MCP_NAME → title');
+$i = McpServer::serverInfo('manifest-name', 'Manifest Title');
+assertEq($i['name'], 'manifest-name', 'manifest name still wins over GC_MCP_NAME');
+assertEq($i['title'], 'Manifest Title', 'manifest title still wins over GC_MCP_NAME');
+putenv('GC_MCP_NAME=   ');
+$i = McpServer::serverInfo();
+assertEq($i['name'], 'apichatbot-mcp', 'blank GC_MCP_NAME ignored');
+putenv('GC_MCP_NAME');
+
 echo "OK McpServerInfoTest\n";
