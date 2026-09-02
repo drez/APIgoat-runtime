@@ -70,6 +70,13 @@ class Api
         // does include IdAuthy (it's a real, form-visible — if readonly —
         // column). "API-created rows have no login" is fine for v1; the API
         // must simply never be able to RELINK id_authy.
+        //
+        // SCOPE: the constructor drops this entry from the effective denylist
+        // when the service does NOT declare with_authy_user (see
+        // authyUserLinked()). On every other table id_authy is an ordinary
+        // "which user" FK (time_line.id_authy, transportation.id_authy …) that
+        // the form exposes as an editable select; denying it there made the
+        // generic create path INSERT without id_authy and fail the FK.
         'IdAuthy',
     ];
 
@@ -158,6 +165,29 @@ class Api
             $this->ServiceWrapper = $ServiceWrapper;
         }
         $this->editableFields = $editableFields;
+        if (!self::authyUserLinked($ServiceWrapper)) {
+            $this->denyColumns = array_values(array_diff($this->denyColumns, ['IdAuthy']));
+        }
+    }
+
+    /**
+     * Whether the generated service carries the with_authy_user hooks, i.e.
+     * its id_authy is a hook-managed linked-login FK the API body must never
+     * relink. Fail-closed: no service handed in (or a class name that cannot
+     * be inspected) keeps IdAuthy on the denylist.
+     *
+     * @param string|object|null $service
+     */
+    public static function authyUserLinked($service): bool
+    {
+        if ($service === null || $service === '') {
+            return true;
+        }
+        if (is_string($service) && !class_exists($service)) {
+            return true;
+        }
+        return \method_exists($service, 'gcAuthyUserSync')
+            || \method_exists($service, 'gcAuthyUserProvision');
     }
 
     /**
