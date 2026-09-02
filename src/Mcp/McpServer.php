@@ -92,7 +92,9 @@ class McpServer
      * 'title' → GC_MCP_NAME (.env; deploy pins it so every checkout that
      * deploys to the same host serves the same identity) → _PROJECT_NAME
      * (config/Built/config.php, i.e. the LOCAL checkout's folder name) →
-     * 'apigoat'.
+     * 'apigoat'. GC_MCP_NAME is the project LABEL: it yields the same
+     * "<label>-mcp" / "<label> MCP" pair _PROJECT_NAME did, so pinning it to
+     * the name a host already served changes nothing for connected clients.
      * The name is slugged to [A-Za-z0-9_.-] (MCP clients use it as an
      * identifier); the title is free text shown to humans.
      *
@@ -108,8 +110,7 @@ class McpServer
         if ($envName !== '') {
             $project = $envName;
         }
-        $name = is_string($manifestName) && trim($manifestName) !== '' ? trim($manifestName)
-              : ($envName !== '' ? $envName : $project . '-mcp');
+        $name = is_string($manifestName) && trim($manifestName) !== '' ? trim($manifestName) : $project . '-mcp';
         $name = trim(preg_replace('/[^A-Za-z0-9_.-]+/', '-', $name), '-') ?: 'apigoat-mcp';
         $title = is_string($manifestTitle) && trim($manifestTitle) !== '' ? trim($manifestTitle) : $project . ' MCP';
         $version = is_scalar($version) && trim((string) $version) !== '' ? trim((string) $version) : '1';
