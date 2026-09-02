@@ -146,7 +146,9 @@ final class HtmlToPdf
         }
         $html = (string) preg_replace('/@font-face\s*\{[^{}]*\}/i', '', $html);
         [$size, $margins] = self::paper();
-        $html = self::fitToPaper($html, self::contentWidthPx($size, $margins), self::wkScale());
+        $scale = self::wkScale();
+        $html = self::fitToPaper($html, self::contentWidthPx($size, $margins), $scale);
+        $wkMargins = self::wkMargins($margins, $scale); // the build inflates margins by 1/scale too
 
         $fontsDir = defined('_BASE_DIR') ? rtrim((string) _BASE_DIR, '/') . '/public/fonts' : '';
         $conf = $work . '/fonts.conf';
@@ -162,7 +164,7 @@ final class HtmlToPdf
             $bin, '-q', '--disable-javascript', '--disable-local-file-access',
             '--load-error-handling', 'ignore', '--load-media-error-handling', 'ignore',
             '--encoding', 'utf-8', '--page-size', $size,
-            '-T', $margins[0], '-R', $margins[1], '-B', $margins[2], '-L', $margins[3],
+            '-T', $wkMargins[0], '-R', $wkMargins[1], '-B', $wkMargins[2], '-L', $wkMargins[3],
             $in, $out,
         ];
         try {
@@ -194,10 +196,26 @@ final class HtmlToPdf
 
     public static function fitToPaper(string $html, int $contentWidthPx, float $scale): string
     {
+        // Layout in zoomed px = printable width: paper px = width × zoom × scale = width.
         $zoom = round(1 / $scale, 4);
-        $layoutWidth = (int) round($contentWidthPx * $scale); // in zoomed px, so it fills the page exactly
-        $css = '<style>html{zoom:' . $zoom . '}html,body{margin:0;padding:0}body{width:' . $layoutWidth . 'px}</style>';
+        $css = '<style>html{zoom:' . $zoom . '}html,body{margin:0;padding:0}body{width:' . $contentWidthPx . 'px}</style>';
         return str_contains($html, '</head>') ? preg_replace('#</head>#i', $css . '</head>', $html, 1) : $css . $html;
+    }
+
+    /**
+     * Margins to hand to wkhtmltopdf so the printed margins come out as
+     * requested: the same DPI quirk that shrinks CSS px inflates the margin
+     * options by 1/scale, so pre-shrink them. ["18mm", …] × 0.725 → "13.05mm".
+     *
+     * @return array{0: string, 1: string, 2: string, 3: string}
+     */
+    public static function wkMargins(array $margins, float $scale): array
+    {
+        $out = [];
+        foreach ([0, 1, 2, 3] as $i) {
+            $out[$i] = round(self::toMm((string) ($margins[$i] ?? '0')) * $scale, 2) . 'mm';
+        }
+        return $out;
     }
 
     /** Printable width in CSS px (96/in) for a paper size and [top, right, bottom, left] margins. */

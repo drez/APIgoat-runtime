@@ -63,7 +63,8 @@ namespace {
     $check('Letter 16mm sides → 695 px', HtmlToPdf::contentWidthPx('Letter', ['18mm', '16mm', '18mm', '16mm']) === 695);
     $check('A4 10mm sides → 718 px', HtmlToPdf::contentWidthPx('A4', ['10mm', '10mm', '10mm', '10mm']) === 718);
     $fit = HtmlToPdf::fitToPaper('<html><head><title>t</title></head><body>x</body></html>', 695, 0.725);
-    $check('fitToPaper zooms 1/scale and pins body width', str_contains($fit, 'html{zoom:1.3793}') && str_contains($fit, 'body{width:504px}') && substr_count($fit, '</head>') === 1);
+    $check('fitToPaper zooms 1/scale and pins body width to the printable width', str_contains($fit, 'html{zoom:1.3793}') && str_contains($fit, 'body{width:695px}') && substr_count($fit, '</head>') === 1);
+    $check('wkMargins pre-shrinks by scale', HtmlToPdf::wkMargins(['18mm', '16mm', '18mm', '16mm'], 0.725) === ['13.05mm', '11.6mm', '13.05mm', '11.6mm']);
     $check('fitToPaper without <head> prepends', str_starts_with(HtmlToPdf::fitToPaper('<p>x</p>', 695, 1.0), '<style>html{zoom:1}'));
     $conf = HtmlToPdf::fontsConf('/p/public/fonts', '/p/tmp/pdf/fc');
     $check('fontsConf includes system + project dir + cache', str_contains($conf, '/etc/fonts/fonts.conf') && str_contains($conf, '<dir>/p/public/fonts</dir>') && str_contains($conf, '<cachedir>/p/tmp/pdf/fc</cachedir>'));
