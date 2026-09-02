@@ -97,15 +97,18 @@ final class HtmlToPdf
         if ($bin === '' || !function_exists('proc_open')) {
             return false;
         }
-        $spec = [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        $spec = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $proc = @proc_open([$bin, '--version'], $spec, $pipes, null, self::env([]));
         if (!is_resource($proc)) {
             return false;
         }
-        foreach ($pipes as $p) {
-            stream_get_contents($p);
-            fclose($p);
-        }
+        // stdin is a pipe (closed at once), not /dev/null: open_basedir on
+        // shared hosts forbids opening /dev/null and proc_open would fail.
+        fclose($pipes[0]);
+        stream_get_contents($pipes[1]);
+        stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
         return proc_close($proc) === 0;
     }
 
@@ -323,14 +326,14 @@ final class HtmlToPdf
         if ($hasTimeout) {
             array_unshift($cmd, 'timeout', (string) $timeout);
         }
-        $proc = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, self::env($env));
+        $proc = proc_open($cmd, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, self::env($env));
         if (!is_resource($proc)) {
             throw new \RuntimeException('Cannot start ' . basename((string) $cmd[0]));
         }
+        fclose($pipes[0]);
         $err = stream_get_contents($pipes[2]) . stream_get_contents($pipes[1]);
-        foreach ($pipes as $p) {
-            fclose($p);
-        }
+        fclose($pipes[1]);
+        fclose($pipes[2]);
         proc_close($proc);
         return (string) $err;
     }
