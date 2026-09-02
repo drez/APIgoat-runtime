@@ -532,13 +532,16 @@ class Api
             }
         }
 
-        if ($QueryBuilder === null) {
-            $ModelQuery = $this->queryObjName::create();
-            $ModelQuery = $this->setAclFilter($ModelQuery);
-            $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $data);
-        }
-
         try {
+            // Built inside the try: the constructor runs the query, so a bad
+            // select/order column surfaced as an uncaught exception ("Internal
+            // error" over MCP) instead of the "Invalid parameter" failure below.
+            if ($QueryBuilder === null) {
+                $ModelQuery = $this->queryObjName::create();
+                $ModelQuery = $this->setAclFilter($ModelQuery);
+                $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $data);
+            }
+
             // Add a global settings permit whole object
             /* if (!$QueryBuilder->selectIsSet()) {
                 $ret['status'] = 'failure';
@@ -566,7 +569,11 @@ class Api
                 // if select is set, lower case field name is ok
                 $ret['data'] = $this->stripSensitiveOutput($Data); // review M1
                 $ret['count'] = count($Data);
-            } else {
+            }
+            if (is_array($Data) && ($pageInfo = $QueryBuilder->getPageInfo()) !== null) {
+                $ret['page'] = $pageInfo;   // {page, per_page, total, last_page}
+            }
+            if (!is_array($Data)) {
                 $ret['status'] = 'failure';
                 $ret['error'] = $QueryBuilder->getMessages();
             }

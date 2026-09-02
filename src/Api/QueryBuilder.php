@@ -22,6 +22,10 @@ class QueryBuilder
 {
     const _DEFAULT_LIMIT = 30;
     public $debug = false;
+    /** @var \PropelModelPager|null set when the request paged (page=N) */
+    private $pager = null;
+    /** True once a select carries a function/aggregate expression (withColumn). */
+    private $aggregateSelect = false;
     private $info = [];
     public $Query;
     private $data;
@@ -254,8 +258,14 @@ class QueryBuilder
     {
         if (!$this->isInfo()) {
             if (!empty($this->request['page'])) {
-                $this->request['max_page'] = !empty($this->request['max_page']) ? $this->request['max_page'] : 50;
-                $pmpo = $this->Query->paginate($this->request['page'], $this->request['max_page']);
+                // Page size = `limit` (the documented knob). `max_page` is a legacy
+                // alias of the page size — it used to silently win with a hidden
+                // default of 50, so `limit:3, page:1` returned 50 rows.
+                $perPage = self::pageSize($this->request['max_page'] ?? null, (int) $this->request['limit']);
+                $this->request['max_page'] = $perPage;
+                $this->addPagingTiebreaker();
+                $pmpo = $this->Query->paginate((int) $this->request['page'], $perPage);
+                $this->pager = $pmpo;
                 // Symmetry with the find() branch below: expose the result collection via
                 // DataObj too. Api::getJson() gates data extraction on getDataObj(), so
                 // without this every paginated list fell through to a "failure" response
@@ -379,6 +389,9 @@ class QueryBuilder
                     $select[0] = camelize($select[0], true);
                 }
 
+                if (strpos((string) $select[0], '(') !== false) {
+                    $this->aggregateSelect = true;
+                }
                 $this->Query->withColumn($select[0], $select[1]);
                 $selectVal[] = $select[1];
                 $this->selectKey[] = $select[1];
@@ -1011,10 +1024,71 @@ class QueryBuilder
 
     private function validateLimit($value)
     {
-        if (v::alnum()->noWhitespace()->length(1, 100)->validate($value)) {
-            return $value;
-        } else {
-            return self::_DEFAULT_LIMIT;
+        return self::normalizeLimit($value);
+    }
+
+    /**
+     * A positive integer limit, else the default. The old check was
+     * alnum()->length(1, 100) — a STRING-length test that accepted "abc", 0
+     * and 5000 — so a caller's cap was never enforced here. Pure.
+     */
+    public static function normalizeLimit($value, int $default = self::_DEFAULT_LIMIT): int
+    {
+        if (\is_int($value) || (\is_string($value) && \preg_match('/^\\s*\\d+\\s*$/', $value))) {
+            $n = (int) $value;
+            if ($n > 0) {
+                return $n;
+            }
+        }
+        return $default;
+    }
+
+    /** Rows per page when paging: `max_page` (legacy alias) if a positive int, else `limit`. Pure. */
+    public static function pageSize($maxPage, int $limit): int
+    {
+        $n = self::normalizeLimit($maxPage, 0);
+        return $n > 0 ? $n : \max(1, $limit);
+    }
+
+    /**
+     * Paging metadata of the last paged run, or NULL when the request did not
+     * page. Surfaced by Api::getJson as `page` so a caller knows when to stop.
+     *
+     * @return array{page:int,per_page:int,total:int,last_page:int}|null
+     */
+    public function getPageInfo(): ?array
+    {
+        if ($this->pager === null) {
+            return null;
+        }
+        return [
+            'page'      => (int) $this->pager->getPage(),
+            'per_page'  => (int) $this->pager->getMaxPerPage(),
+            'total'     => (int) $this->pager->getNbResults(),
+            'last_page' => (int) $this->pager->getLastPage(),
+        ];
+    }
+
+    /**
+     * OFFSET paging is only stable under a total order. Append the base table's
+     * primary key(s) as a tiebreaker after whatever the caller ordered by (or
+     * as the sole order when they did not). Skipped for grouped / aggregate
+     * selects, where an extra ORDER BY column breaks ONLY_FULL_GROUP_BY.
+     */
+    private function addPagingTiebreaker(): void
+    {
+        if (!empty($this->request['groupby']) || $this->aggregateSelect) {
+            return;
+        }
+        $map = $this->baseTableMap;
+        if ($map === null && \method_exists($this->Query, 'getTableMap')) {
+            $map = $this->Query->getTableMap();
+        }
+        if ($map === null) {
+            return;
+        }
+        foreach ($map->getPrimaryKeys() as $col) {
+            $this->Query->orderBy($col->getPhpName(), 'ASC');
         }
     }
 
