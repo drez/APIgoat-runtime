@@ -254,19 +254,11 @@ class AuthyMiddleware implements MiddlewareInterface
             return null;
         }
 
-        // The shipped client reaches a few writes over GET — see the constants
-        // on ApiGoat\Services\Service. The XHR set additionally has to prove it
-        // is a script-initiated same-origin call (a cross-site navigation can
-        // never set X-Requested-With, and a cross-origin fetch that tried would
-        // be preflighted away by CorsMiddleware). ONE copy of that rule, shared
-        // with the guard the emitter puts in every generated getResponse().
-        if (\ApiGoat\Services\Service::isGetExemptMutation(
-            $action,
-            $request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest'
-        )) {
-            return null;
-        }
-
+        // No exemptions: a mutating action is POST-only. The first-party GET
+        // escapes this branch used to allow (generatepdf via window.open;
+        // opengdrive / stripecheckout / stripecharge via an XHR-marked GET
+        // fetch) went away when the template client switched them to POST
+        // (F3, review #13).
         error_log('mutating GET refused: ' . ($this->args['route'] ?? '')
             . ' action=' . $action
             . ' from ' . ($_SERVER['REMOTE_ADDR'] ?? '?')

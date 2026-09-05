@@ -107,31 +107,6 @@ class Service
     public const MUTATING_ACTION_PREFIXES = ['ntnsave', 'busave'];
 
     /**
-     * Mutations the FIRST-PARTY client legitimately reaches over GET, as XHR:
-     * template .admin/public/js/app/pdfmenu.js and app/stripe.js call them with
-     * fetch(..., {headers:{'X-Requested-With':'XMLHttpRequest'}}). That header
-     * cannot be set by a cross-site <a href>/<img>/<form> navigation, and a
-     * cross-origin fetch that tried would be preflighted (CorsMiddleware allows
-     * no credentialed CORS) — so requiring it keeps the CSRF property while the
-     * shipped UI keeps working. Move an entry out of here as soon as the client
-     * switches it to POST.
-     *
-     * @var string[]
-     */
-    public const GET_XHR_MUTATIONS = ['opengdrive', 'stripecheckout', 'stripecharge'];
-
-    /**
-     * Mutations the first-party client reaches by a TOP-LEVEL GET navigation —
-     * pdfmenu.js does `window.open(<model>/generatepdf?i=…)`, which carries no
-     * XHR header. Unconditionally exempt from the mutating-GET refusal, so this
-     * list must stay minimal and low-impact: generatepdf only (re)renders the
-     * saved PDF of a record the caller can already read.
-     *
-     * @var string[]
-     */
-    public const GET_NAV_MUTATIONS = ['generatepdf'];
-
-    /**
      * Does this URL action segment dispatch to a write?
      */
     public static function isMutatingAction(?string $a): bool
@@ -152,29 +127,49 @@ class Service
     }
 
     /**
-     * Is this mutating action one the FIRST-PARTY client legitimately reaches
-     * over GET? The single decision shared by the middleware (AuthyMiddleware::
-     * checkMutatingGet) and the defence-in-depth guard the emitter puts at the
-     * top of every generated Service::getResponse(), so the two exemption sets
-     * can never drift apart.
+     * Decode the bulk-edit row selection carried by the panel's hidden `idPk`
+     * field into a flat list of primary keys (F4, review #13).
      *
-     * GET_NAV_MUTATIONS are exempt unconditionally (a top-level window.open
-     * carries no XHR header); GET_XHR_MUTATIONS only when the caller proved it
-     * is a script-initiated same-origin call — a cross-site navigation can never
-     * set X-Requested-With, and a cross-origin fetch that tried would be
-     * preflighted away by CorsMiddleware.
+     * The list client builds the value as a urlencoded query string of the
+     * checked row checkboxes — `check_<pk>=<pk>&check_<pk>=<pk>` — so the PKs
+     * are the parsed VALUES. Two other shapes reach here and used to yield an
+     * EMPTY selection (a silent no-op bulk update):
+     *   - a bare primary key (`2`), which parse_str turns into ['2' => ''];
+     *   - the `idPk[]=…` array form.
+     * Both are accepted now; the bare-key case falls back to the parsed KEY,
+     * but only when the value is empty (parse_str rewrites '.'/'[' in keys, so
+     * a key is never trusted when a value is present).
+     *
+     * @param mixed $raw the raw (urlencoded) field value
+     * @return string[] primary keys, in selection order, never empty strings
      */
-    public static function isGetExemptMutation(?string $a, bool $isXhr): bool
+    public static function bulkSelection($raw): array
     {
-        $a = strtolower(trim((string) $a));
-        if ($a === '') {
-            return false;
+        $decoded = urldecode(trim((string) $raw));
+        if ($decoded === '') {
+            return [];
         }
-        if (in_array($a, self::GET_NAV_MUTATIONS, true)) {
-            return true;
+        $parsed = [];
+        parse_str($decoded, $parsed);
+
+        $out = [];
+        foreach ($parsed as $key => $value) {
+            if (is_array($value)) {
+                foreach ($value as $one) {
+                    if (! is_array($one) && (string) $one !== '') {
+                        $out[] = (string) $one;
+                    }
+                }
+                continue;
+            }
+            if ((string) $value !== '') {
+                $out[] = (string) $value;
+            } elseif ((string) $key !== '') {
+                $out[] = (string) $key;
+            }
         }
 
-        return $isXhr && in_array($a, self::GET_XHR_MUTATIONS, true);
+        return $out;
     }
 
     /**
@@ -184,8 +179,14 @@ class Service
      * that hold the RouteHelper $args array rather than the PSR-7 request — i.e.
      * the emitted Service::getResponse() (the generated controller), which the
      * emitter guards as defence in depth behind the middleware. Same action
-     * inventory (isMutatingAction) and the same two exemption sets
-     * (isGetExemptMutation) — nothing is re-derived here.
+     * inventory (isMutatingAction) — nothing is re-derived here.
+     *
+     * There are NO exemptions: every mutating action is POST-only. The two
+     * first-party GET escapes that existed here (generatepdf by top-level
+     * window.open; opengdrive / stripecheckout / stripecharge by XHR-marked GET
+     * fetch) were removed once the template client switched them to POST
+     * (F3, review #13). An un-rebuilt project simply gets the 405 — the safe
+     * direction — so no compatibility fallback is kept.
      *
      * $args['method'] is the route layer's TRUSTED method (RouteHelper snapshots
      * it before the user query/body merge and reasserts it afterwards, so a
@@ -223,12 +224,7 @@ class Service
             return false;
         }
 
-        $action = (string) ($args['a'] ?? ($args['action'] ?? ''));
-        if (! self::isMutatingAction($action)) {
-            return false;
-        }
-
-        return ! self::isGetExemptMutation($action, $header('X-Requested-With') === 'XMLHttpRequest');
+        return self::isMutatingAction((string) ($args['a'] ?? ($args['action'] ?? '')));
     }
 
     /**

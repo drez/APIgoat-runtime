@@ -51,6 +51,52 @@ class ReferentialGuard
     }
 
     /**
+     * Name the table that blocked a delete InnoDB refused (F5, review #13).
+     *
+     * A39 deliberately leaves the AUDIT foreign keys (id_creation /
+     * id_modification / id_group_creation) out of the pre-delete probe list —
+     * probing them on every delete costs a query per hub relation for a case
+     * that almost never fires. The price is that a row referenced ONLY from an
+     * audit trail is refused by the database instead of by firstBlocker(), and
+     * the emitted service could then only answer "still referenced by other
+     * records". MySQL does say which table it was:
+     *
+     *   SQLSTATE[23000]: Integrity constraint violation: 1451 Cannot delete or
+     *   update a parent row: a foreign key constraint fails (`db`.`audit_log`,
+     *   CONSTRAINT `audit_log_FK_1` FOREIGN KEY (`id_creation`) REFERENCES …)
+     *
+     * so parse the child table out of it and map it to the same human label the
+     * guard would have returned. Returns null when the message is not a
+     * recognisable FK violation or the table is not in $labels — the caller then
+     * keeps the generic wording rather than showing a raw table name.
+     *
+     * MySQL 8 renames a table under DDL to `#sql-…`/`#sql2-…`; such a name is
+     * never a useful label and is rejected.
+     *
+     * @param string               $message exception message (with any previous
+     *                                      exception messages appended)
+     * @param array<string,string> $labels  child table name => human description
+     */
+    public static function blockerFromMessage(string $message, array $labels = []): ?string
+    {
+        // `db`.`child` (both quoted, db optional) directly before CONSTRAINT.
+        if (! preg_match(
+            '/foreign key constraint fails\s*\(\s*(?:`[^`]*`\.)?`([^`]+)`\s*,\s*CONSTRAINT/i',
+            $message,
+            $m
+        )) {
+            return null;
+        }
+        $table = $m[1];
+        if ($table === '' || strpos($table, '#sql') === 0) {
+            return null;
+        }
+        $label = (string) ($labels[$table] ?? '');
+
+        return $label === '' ? null : $label;
+    }
+
+    /**
      * One referrer probe: `SELECT <pk> FROM child WHERE fk = … LIMIT 1`.
      *
      * Falls back to the generated `count<Rel>()` when the query class / filter
