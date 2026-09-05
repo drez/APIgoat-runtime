@@ -2,13 +2,16 @@
 // Run: php tests/Builder/NotOkEnvelopeTest.php
 //
 // handleNotOkResponse() is the path that the generated Service.php FK
-// delete-refusal die()s through (bypassing renderXHR). With the S4 envelope on
-// (GC_ENVELOPE=1 + X-GC-Envelope header) it must die with the canonical
+// delete-refusal halt()s through (bypassing renderXHR). With the S4 envelope on
+// (GC_ENVELOPE=1 + X-GC-Envelope header) it must stop with the canonical
 // {status:'refused', messages[]} envelope instead of the legacy <script> body;
-// with it off it must keep returning the legacy onReadyJs. Each case runs in a
-// child process because handleNotOkResponse die()s.
+// with it off it must keep returning the legacy onReadyJs. Since T11 it throws
+// an ApiGoat\Http\HaltResponse instead of die()ing (so the route closure can
+// send the payload back out through the middleware stack); the child echoes the
+// halt body so the assertions below are unchanged.
 
 if (($argv[1] ?? '') === 'child') {
+    require __DIR__ . '/../../src/Http/HaltResponse.php';
     require __DIR__ . '/../../src/Utility/Legacy/html_helper.php';
     if (!function_exists('env')) { function env($k) { return getenv($k); } }
     if (!defined('_AUTH_VAR')) { define('_AUTH_VAR', 'av'); }
@@ -20,9 +23,15 @@ if (($argv[1] ?? '') === 'child') {
         $_SERVER['HTTP_X_GC_ENVELOPE'] = '1';
     }
     // The FK delete-refusal call shape (goatcheese Service.php:509, $print=true).
-    $ret = handleNotOkResponse("This entry cannot be deleted. It is in use in 'Contact'.", '', true, 'Company');
+    try {
+        $ret = handleNotOkResponse("This entry cannot be deleted. It is in use in 'Contact'.", '', true, 'Company');
+    } catch (\ApiGoat\Http\HaltResponse $halt) {
+        // Envelope ON: stand in for the route closure and emit the halt body.
+        echo $halt->getBodyText();
+        return;
+    }
     // Reached only when the envelope is OFF (the legacy branch returns instead
-    // of dying); echo the legacy script so the parent can assert the fallback.
+    // of halting); echo the legacy script so the parent can assert the fallback.
     if (is_array($ret) && isset($ret['onReadyJs'])) {
         echo $ret['onReadyJs'];
     }

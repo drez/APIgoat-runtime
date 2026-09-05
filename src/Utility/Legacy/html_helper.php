@@ -296,7 +296,13 @@ function optionListeSelect($options, $selectedValue, $defaultLabel = true)
         $selectedLabel = "";
         foreach ($options as $option) {
             $class = "";
-            $option[1] = (empty($option[1]) ? $option[0] : $option[1]);
+            // Only a MISSING value slot falls back to the label. empty() also
+            // matched '0'/0/false, so an option list like [["Yes",1],["No",0]]
+            // rendered "No" with data-value="No" and the row never round-tripped
+            // its real value. Strict null / '' test instead.
+            if (!isset($option[1]) || $option[1] === '') {
+                $option[1] = $option[0];
+            }
             if (is_array($selectedValue)) {
                 if (array_search($option[1], $selectedValue) !== false) {
                     $class = ' class="selected"';
@@ -351,6 +357,10 @@ function selectboxCustomArray($name, $options, $defaultLabel = '', $attr = '', $
             $valuesList[] = $value;
         }
     }
+
+    // Always defined: the loop above only runs for a non-empty selection, and
+    // json_encode($valuesList) below would otherwise read an undefined variable.
+    $valuesList = $valuesList ?? [];
 
     $attr = str_replace('otherTabs=1', '', $attr);
     if (!preg_match('/disabled/', $attr))
@@ -870,7 +880,7 @@ function message_label($label, $local = NULL)
  * GC_ENVELOPE=1 AND the client advertised support via the X-GC-Envelope header.
  * Shared by BuilderLayout::renderXHR and handleNotOkResponse so the structured
  * contract is consistent — including the paths (e.g. the FK delete-refusal in
- * the generated Service.php) that die() through handleNotOkResponse instead of
+ * the generated Service.php) that halt() through handleNotOkResponse instead of
  * going through renderXHR.
  */
 function gcEnvelopeEnabled(): bool
@@ -896,7 +906,9 @@ function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Mess
         $ret['status'] = 'error-notok';
         $ret['data']['title'] = $text_title;
         $ret['data']['msg'] = $msg;
-        die(json_encode($ret));
+        // A40/C7: unwind to the route closure instead of die()ing, so the CORS /
+        // security-header / server-timing middlewares still run on the way out.
+        throw new \ApiGoat\Http\HaltResponse(json_encode($ret), 200, ['Content-type' => 'application/json']);
     }
 
     // S4 — emit the canonical UI envelope for refusals so callers that die()
@@ -905,11 +917,10 @@ function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Mess
     // a legacy <script> the client has to scrape. 'refused' = a message-bag
     // refusal (no field-level errors).
     if (gcEnvelopeEnabled()) {
-        header('Content-type: application/json');
-        die(json_encode([
+        throw new \ApiGoat\Http\HaltResponse(json_encode([
             'status' => 'refused',
             'messages' => [['type' => 'error', 'title' => $text_title, 'text' => $msg]],
-        ]));
+        ]), 200, ['Content-type' => 'application/json']);
     }
 
     if ($print) {
@@ -964,12 +975,15 @@ function handleValidationError($objValidationFails, $ui = '', $text_title = 'Mes
     ";
 
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {
-        header('Cache-Control: no-cache, must-revalidate');
-        header('Expires: Mon, 26 Jul 1997 05:00:00 GMT');
-        header('Content-type: application/json');
         $ret['status'] = 'error-validation';
         $ret['data'] = $fields;
-        die(json_encode($ret));
+        // A40/C7: see handleNotOkResponse — halt, don't die, so the response
+        // still travels back out through the middleware stack.
+        throw new \ApiGoat\Http\HaltResponse(json_encode($ret), 200, [
+            'Cache-Control' => 'no-cache, must-revalidate',
+            'Expires'       => 'Mon, 26 Jul 1997 05:00:00 GMT',
+            'Content-type'  => 'application/json',
+        ]);
     } else {
         return $error;
     }
@@ -1126,12 +1140,12 @@ function generateData($options)
 function send404()
 {
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {
-        http_response_code(404);
-        header('Cache-Control: no-cache, must-revalidate');
-        header('Expires: Mon, 26 Jul 1997 05:00:00 GMT');
-        header('Content-type: application/json');
         $ret['status'] = 'error-notfound';
-        die(json_encode($ret));
+        throw new \ApiGoat\Http\HaltResponse(json_encode($ret), 404, [
+            'Cache-Control' => 'no-cache, must-revalidate',
+            'Expires'       => 'Mon, 26 Jul 1997 05:00:00 GMT',
+            'Content-type'  => 'application/json',
+        ]);
     } else {
         http_response_code(404);
     }

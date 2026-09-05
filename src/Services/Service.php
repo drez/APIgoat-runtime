@@ -7,6 +7,7 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use ApiGoat\Utility\BuilderLayout;
 use ApiGoat\Utility\BuilderMenus;
 use ApiGoat\Api\ApiResponse;
+use ApiGoat\Services\Concerns\HaltsResponses;
 /*
  * Base class for custom services
  * 
@@ -19,6 +20,20 @@ use ApiGoat\Api\ApiResponse;
  */
 class Service
 {
+    use HaltsResponses;
+
+    /**
+     * Hard cap on how many rows one bulk/mass request may touch.
+     *
+     * The bulk-edit and mass-action endpoints take the selection straight from
+     * the client, so without a cap a single POST could be made to load, validate
+     * and save an unbounded number of rows one at a time (a cheap request-side
+     * amplification into a very expensive server-side loop, and a transaction
+     * long enough to hold locks across the whole table). 500 is well above any
+     * realistic on-screen selection.
+     */
+    public const MAX_BULK_ROWS = 500;
+
     /**
      * Every `case '<a>':` the emitter dispatches from getResponse() that
      * WRITES, lowercased (the match is case-insensitive). Single source of

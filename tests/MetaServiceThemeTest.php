@@ -20,6 +20,8 @@ namespace ApiGoat\Services {
 }
 namespace {
 
+require __DIR__ . '/../src/Http/HaltResponse.php';
+require __DIR__ . '/../src/Services/Concerns/HaltsResponses.php';
 require __DIR__ . '/../src/Services/Service.php';
 require __DIR__ . '/../src/Services/MetaService.php';
 

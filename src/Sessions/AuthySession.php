@@ -145,6 +145,72 @@ class AuthySession
     }
 
     /**
+     * Plural loadPkScoped(): load MANY rows by primary key in ONE scoped query.
+     *
+     * Same ACL/tenant semantics as loadPkScoped() — a row the caller may not
+     * reach is simply absent from the result — but the bulk-edit / mass-action
+     * loops no longer issue one SELECT per selected row.
+     *
+     * Composite primary keys fall back to a loadPkScoped() loop: Propel 1's
+     * filterByPrimaryKeys() cannot express an IN over a composite key, and
+     * silently narrowing there would be a correctness bug, not a slow path.
+     *
+     * @param string $queryClass Fully-qualified Propel Query class (FooQuery::class)
+     * @param array  $pks        Primary keys (scalars, or arrays for composite PKs)
+     * @param string $model      RBAC model name ('' = tenant scope only)
+     * @param string $right      Right to scope by ('r', 'w', 'd', …)
+     * @return array json_encode($pk) => row, for every row the caller may reach
+     */
+    public function loadPksScoped($queryClass, array $pks, $model = '', $right = 'r')
+    {
+        if (!$pks) {
+            return [];
+        }
+
+        foreach ($pks as $pk) {
+            if (is_array($pk)) {
+                $out = [];
+                foreach ($pks as $one) {
+                    $row = $this->loadPkScoped($queryClass, $one, $model, $right);
+                    if ($row !== null) {
+                        $out[json_encode($row->getPrimaryKey())] = $row;
+                    }
+                }
+                return $out;
+            }
+        }
+
+        $q = $queryClass::create();
+        if (!method_exists($q, 'filterByPrimaryKeys')) {
+            $out = [];
+            foreach ($pks as $one) {
+                $row = $this->loadPkScoped($queryClass, $one, $model, $right);
+                if ($row !== null) {
+                    $out[json_encode($row->getPrimaryKey())] = $row;
+                }
+            }
+            return $out;
+        }
+        $q->filterByPrimaryKeys(array_values($pks));
+
+        if (! $this->isRoot()) {
+            if ($this->get('id_tenant') && method_exists($q, 'filterByIdTenant')) {
+                $q->filterByIdTenant($this->get('id_tenant'));
+            }
+            if ($model !== '') {
+                $this->applyOwnerGroupScope($q, $this->hasRights($model, $right));
+            }
+        }
+
+        $out = [];
+        foreach ($q->find() as $row) {
+            $out[json_encode($row->getPrimaryKey())] = $row;
+        }
+
+        return $out;
+    }
+
+    /**
      * Apply the Owner/Group row scope from a hasRights() result to a query.
      *
      * The single source of the Owner/Group filter, shared by AuthyACL::

@@ -158,7 +158,12 @@ class Menu
                         $class = '';
                     }
 
-                    if ($this->subTabs[$Model]) {
+                    // $subTabs only ever gains a key when addUnder() ran for that
+                    // parent, so every top-level menu entry WITHOUT children (a
+                    // plain set_menu row such as "Product") raised "Undefined array
+                    // key" here on every page render. Not an anomaly — nothing to
+                    // log; just read it defensively.
+                    if (!empty($this->subTabs[$Model])) {
                         // Parent with children → collapsible .dr-section
                         // label + .dr-sub group of .dr-item children.
                         // set_menu drives the optional icon, color accent

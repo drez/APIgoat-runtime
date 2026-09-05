@@ -160,6 +160,14 @@ class ExceptionHandler implements ErrorHandlerInterface
         bool $logErrors,
         bool $logErrorDetails
     ): ResponseInterface {
+        // A40/C7 safety net: a HaltResponse is a fully-formed response, not an
+        // error. The route closures catch it themselves (so the middlewares
+        // still run); this only fires when one escapes from a code path with no
+        // closure-level catch — render the payload, never a 500.
+        if ($exception instanceof \ApiGoat\Http\HaltResponse) {
+            return $exception->applyTo($this->responseFactory->createResponse());
+        }
+
         $this->displayErrorDetails = $displayErrorDetails;
         $this->logErrors = $logErrors;
         $this->logErrorDetails = $logErrorDetails;
