@@ -98,16 +98,36 @@ trait FormHelper
         }
         if ($values) {
             $order = json_decode($values, true);
+            if (!is_array($order) || !isset($order['col']) || !is_string($order['col'])) {
+                return $search['order'];
+            }
             // '*' clear-all sentinel: drop every stored ordering for this
             // list so it falls back to its schema default order.
-            if (($order['col'] ?? '') === '*') {
+            if ($order['col'] === '*') {
                 unset($_SESSION['mem']['order'][$model]);
                 return null;
+            }
+            // C8: whatever lands here is stored in the session and later
+            // interpolated into an ORDER BY and into the list's inline sort
+            // JS. Only accept the shape the client can legitimately send:
+            // a column identifier (optionally Relation.Column[.locale]) and
+            // one of the three sort senses. Anything else leaves the stored
+            // ordering untouched. NOT whitelisted against the model's TableMap:
+            // legitimate sort keys include dotted relation columns, child-column
+            // aliases and the virtual i18n columns, none of which are the
+            // model's own PhpNames — Propel's own orderBy() rejects a column it
+            // cannot resolve, so this guard is about the shape, not the map.
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,2}$/', $order['col'])) {
+                return $search['order'];
+            }
+            $order['sens'] = strtolower((string) ($order['sens'] ?? ''));
+            if (!in_array($order['sens'], ['', 'asc', 'desc'], true)) {
+                return $search['order'];
             }
             $found = false;
             if (is_array($search['order'])) {
                 foreach ($search['order'] as &$orders) {
-                    if ($orders[$order['col']]) {
+                    if (!empty($orders[$order['col']])) {
                         if ($order['sens'] == '') {
                             unset($orders[$order['col']]);
                         } else {
