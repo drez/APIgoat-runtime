@@ -7,7 +7,7 @@ trait AuthyACL
     private $aclGroup;
     private $modelName;
 
-    public function __construct(string $modelName = null)
+    public function __construct(?string $modelName = null)
     {
         $this->modelName = $modelName;
     }

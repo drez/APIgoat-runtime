@@ -45,7 +45,12 @@ function htmlLink($name, $link, $options = "", $title = "")
 
     $optionsContent = generateData($options);
 
-    return "<a href=\"$link\" $optionsContent $title>$name</a>";
+    // SECURITY: $link is a URL built from request/DB data on several call
+    // sites (FK edit links, file/open/download links carrying a primary key).
+    // Unescaped it breaks out of the href="" attribute. gc_attr() is
+    // double_encode=false so callers that already escaped stay byte-identical.
+    // ($name and $options stay raw: markup/attribute fragments by contract.)
+    return "<a href=\"" . gc_attr($link) . "\" $optionsContent $title>$name</a>";
 }
 
 function href($name, $link, $options = "", $title = "")
@@ -106,7 +111,8 @@ function img($path, $height = "", $width = "", $options = "", $alt = "", $title 
         $alt = ' alt="' . $alt . '" ';
     }
 
-    return "<img src=\"" . $path . "\" $width  $height $optionsContent $alt $title />";
+    // SECURITY: same as htmlLink() — $path is frequently _SITE_URL . <db value>.
+    return "<img src=\"" . gc_attr($path) . "\" $width  $height $optionsContent $alt $title />";
 }
 
 function p($content, $options = "")
@@ -245,21 +251,25 @@ function select($name, $options, $selOption = "", $idSelected = "", $id = "", $o
         }
     }
     if (is_array($options)) {
+        $option = '';
         for ($i = 0, $c = count($options); $i < $c; $i++) {
             if (!empty($options[$i][0])) {
+                // Option rows are 3-tuples [caption, value, v-attr] on the FK/enum
+                // selects, but the mass-action and prune option lists the emitter
+                // builds are 2-tuples — reading [2] there raised an "Undefined
+                // array key 2" warning on every render. Emit the v= attribute only
+                // when the tuple actually carries the slot, so 3-tuple output
+                // (including a 3-tuple whose value is '') is byte-identical.
+                $vAttr = isset($options[$i][2]) ? "v='" . $options[$i][2] . "'" : '';
+                $selected = ' selected="yes"';
                 // handle multiple selected id
                 if (is_array($idSelected)) {
-                    if (array_search($options[$i][1], $idSelected) !== false) {
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "' selected=\"yes\"");
-                    } else
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "'");
+                    $isSel = array_search($options[$i][1], $idSelected) !== false;
                 } else {
                     // handle standard selected id
-                    if ($idSelected == $options[$i][1]) {
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "' selected=\"yes\"");
-                    } else
-                        $option .= option($options[$i][0], $options[$i][1], "v='" . $options[$i][2] . "'");
+                    $isSel = ($idSelected == $options[$i][1]);
                 }
+                $option .= option($options[$i][0], $options[$i][1], $isSel ? $vAttr . $selected : $vAttr);
             }
         }
         $options = $option;

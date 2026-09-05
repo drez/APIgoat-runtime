@@ -57,13 +57,37 @@ class BuilderReturn
     {
         $returnfunc = $this->returnFunction;
 
-        if (!empty($this->inError())) {
+        if ($this->inError()) {
             $this->return_error();
-        } else {
+        } elseif (is_string($returnfunc) && $returnfunc !== '' && method_exists($this, $returnfunc)) {
             $this->$returnfunc();
+        } else {
+            // No `<a>_return()` for this action. Before the guard this was a
+            // fatal AFTER the row had already been written (POST /X/insert
+            // created the record, then died on insert_return()). Fall back to a
+            // neutral "saved" acknowledgement in the standard content shape.
+            error_log('BuilderReturn: no return handler "' . (string) $returnfunc . '" for action "'
+                . (string) ($this->request['a'] ?? '') . '" — using the default.');
+            $this->default_return();
         }
 
         return $this->return;
+    }
+
+    /**
+     * POST /{Model}/insert. The emitted Service dispatches 'insert' to
+     * saveUpdate() exactly like 'update', so the client-side outcome is the
+     * same — reload/redirect onto the saved record.
+     */
+    private function insert_return()
+    {
+        $this->update_return();
+    }
+
+    /** Neutral success acknowledgement for an action with no *_return(). */
+    private function default_return()
+    {
+        $this->return['onReadyJs'] = "document.body.style.cursor = 'auto';" . $this->message('Saved');
     }
 
     private function delete_return()
@@ -206,19 +230,55 @@ alert_close = function (){
     {
     }
 
+    /**
+     * Error outcome. MUST keep the ['html','onReadyJs','js','json'] shape: the
+     * emitted Service does `$this->content['onReadyJs'] .= ($this->content['error']
+     * != 'yes') ? sw_message('Saved') : ''` and then renderXHR($this->content).
+     * Replacing the shape with the bare $error list made both reads land on a
+     * missing key — so a FAILED save reported "Saved" and the error text was
+     * never shown. Flatten the messages, keep them under 'messages', flag
+     * 'error' => 'yes' (BuilderLayout::buildXhrEnvelope reads the same key) and
+     * surface the text with alertb() (never a native alert/confirm).
+     */
     private function return_error()
     {
-        #popup error
-        $this->return = $this->error;
+        $messages = [];
+        $flat = (array) $this->error;
+        array_walk_recursive(
+            $flat,
+            static function ($m) use (&$messages) {
+                $m = trim((string) $m);
+                if ($m !== '') {
+                    $messages[] = $m;
+                }
+            }
+        );
+
+        $text = $this->removeNl(implode(' ', $messages));
+        if ($text === '') {
+            $text = _('The record could not be saved.');
+        }
+
+        $p = (string) ($this->request['p'] ?? '');
+
+        $this->return = ['html' => '', 'onReadyJs' => '', 'js' => '', 'json' => ''];
+        $this->return['error']    = 'yes';
+        $this->return['messages'] = $messages;
+        $this->return['onReadyJs'] =
+            "alertb('" . addslashes(_('Alert')) . "', '" . addslashes($text) . "');
+    var __saveBtn = document.querySelector('#form" . $p . " #save" . $p . "');
+    if (__saveBtn) { __saveBtn.removeAttribute('disabled'); __saveBtn.style.cursor = 'auto'; }
+    document.body.style.cursor = 'auto';";
     }
 
+    /**
+     * Whether the caller reported an error. The old body built a message from
+     * `'Error:' . $this->error` — $error is an ARRAY, so every SUCCESSFUL save
+     * raised "Array to string conversion" — and then threw the string away.
+     */
     private function inError()
     {
-        if (empty($this->error)) {
-            $this->message('Error:' . $this->error, true);
-            return false;
-        }
-        return true;
+        return ! empty($this->error);
     }
 
     private function removeNl($string)

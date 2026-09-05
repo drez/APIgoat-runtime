@@ -32,7 +32,7 @@ class RbacMiddleware implements MiddlewareInterface
     private $rbacAuditLog;
 
 
-    public function __construct(ResponseFactoryInterface $responseFactory = null)
+    public function __construct(?ResponseFactoryInterface $responseFactory = null)
     {
         $Configuration = new Configuration(\ApiGoat\Utility\Settings::load());
         $this->config = $Configuration->getArray('rbac');

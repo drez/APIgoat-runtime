@@ -68,7 +68,7 @@ class PushService extends Service
         return $this->respond(['status' => 'success', 'data' => ['registered' => true]]);
     }
 
-    private function respond(array $body, int $status = null)
+    private function respond(array $body, ?int $status = null)
     {
         $ApiResponse = new ApiResponse($this->args, $this->response, $body);
         if ($status !== null) {

@@ -157,7 +157,7 @@ class Api
      * @param string|object $ServiceWrapper
      * @param array|null $editableFields per-form editable column allowlist
      */
-    public function __construct(string $tablename, string|object $ServiceWrapper = null, array $editableFields = null)
+    public function __construct(string $tablename, string|object|null $ServiceWrapper = null, ?array $editableFields = null)
     {
         $this->tablename = \camelize($tablename, true);
         $this->queryObjName = "\App\\" . $this->tablename . "Query";
@@ -279,6 +279,27 @@ class Api
     {
         $isI18n = !in_array($cam, $fieldsName) && in_array($cam, $this->i18nColumns(), true);
         if (!$isI18n && !in_array($cam, $fieldsName)) {
+            return false;
+        }
+        // SECURITY: credential/token columns are NEVER writable through the
+        // generic API body, whatever the emitted per-form allowlist says.
+        // AuthyService::getApiResponse() ships editableFields containing
+        // PasswdHash / ResetTokenHash / ValidationKey / IsRoot (they are real
+        // form columns), so the allowlist below cannot be the gate. Normalised
+        // exactly like stripSensitiveOutput()/isCredentialTable() (lowercase,
+        // underscores dropped) so `passwd_hash`, `PasswdHash` and `passwdHash`
+        // all hit the same entry. Runtime is the single enforcement point.
+        if (in_array(strtolower(str_replace('_', '', (string) $cam)), self::CREDENTIAL_COLUMNS, true)) {
+            return false;
+        }
+        // Same normalisation for the system/privilege flags (IsRoot, IsSystem,
+        // audit stamps, IdTenant, …) so an underscored or lower-cased spelling
+        // can't slip past the exact-match denylist below.
+        $normDeny = array_map(
+            static function ($c) { return strtolower(str_replace('_', '', (string) $c)); },
+            $this->denyColumns
+        );
+        if (in_array(strtolower(str_replace('_', '', (string) $cam)), $normDeny, true)) {
             return false;
         }
         if (in_array($cam, $this->denyColumns, true)) {

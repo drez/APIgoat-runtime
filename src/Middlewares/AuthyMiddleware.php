@@ -24,7 +24,7 @@ class AuthyMiddleware implements MiddlewareInterface
     private $args;
     private $response;
 
-    public function __construct(ResponseFactoryInterface $responseFactory = null)
+    public function __construct(?ResponseFactoryInterface $responseFactory = null)
     {
         $this->privilegeMap = (require _BASE_DIR . "config/privileges.map.php");
     }
@@ -106,6 +106,11 @@ class AuthyMiddleware implements MiddlewareInterface
         $csrfFailure = $this->checkCsrf($request);
         if ($csrfFailure !== null) {
             return $csrfFailure;
+        }
+
+        $unsafeGet = $this->checkMutatingGet($request);
+        if ($unsafeGet !== null) {
+            return $unsafeGet;
         }
 
         $this->checkUserSwitch($request);
@@ -197,6 +202,79 @@ class AuthyMiddleware implements MiddlewareInterface
             . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
         $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Invalid or missing CSRF token']]);
         $ApiResponse->setStatus(403);
+        return $ApiResponse->getResponse();
+    }
+
+    /**
+     * SECURITY: refuse a state-changing action requested over GET.
+     *
+     * The generated HTML route is `[/{a}[/{params}]]` registered for GET *and*
+     * POST, and the emitted Service::getResponse() dispatches delete / update /
+     * insert / BUsave / mass / prune / NtNsave* / upload / quickadd … straight
+     * off $request['a'] without ever looking at the HTTP method. The session
+     * cookie is SameSite=Lax, which still sends the cookie on a cross-site
+     * TOP-LEVEL navigation — so `<a href="https://app/Contact/delete/42">` in an
+     * email deleted the record with no token in sight. checkCsrf() could not
+     * catch it: it passes anything that is not POST/PUT/PATCH/DELETE.
+     *
+     * Scope: cookie-authenticated GET/HEAD on an HTML route only. Bearer-token
+     * requests keep their existing exemption (no ambient cookie to forge), and
+     * so do routes excluded from privilege checks. Legitimate GET reads (list,
+     * edit, view, autoc, search, printable, pdfdownload, fieldvals,
+     * summarycards, childLinkSearch, dateCascadePeek, file/open, and the whole
+     * Authy login / logout / reset / resetConfirm / confirm / register flow)
+     * are not on Service::MUTATING_ACTIONS and pass untouched.
+     *
+     * @return ResponseInterface|null a 405 response, or null when allowed
+     */
+    private function checkMutatingGet(ServerRequestInterface $request): ?ResponseInterface
+    {
+        $method = strtoupper($request->getMethod());
+        if ($method !== 'GET' && $method !== 'HEAD') {
+            return null;
+        }
+        if (! empty($this->args['is_api'])) {
+            return null;
+        }
+        if (stripos($request->getHeaderLine('Authorization'), 'Bearer ') === 0) {
+            return null;
+        }
+        if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES') {
+            return null;
+        }
+        if ($this->checkExclude($this->args['route'])
+            || in_array(trim((string) ($this->args['route'] ?? ''), '/'), self::CSRF_EXEMPT_ROUTES, true)) {
+            return null;
+        }
+
+        // RouteParser::decodePath() puts the {a} URL segment on 'action'
+        // ('a' is only populated later, inside the route closure by RouteHelper).
+        $action = (string) ($this->args['action'] ?? ($this->args['a'] ?? ''));
+        if (! \ApiGoat\Services\Service::isMutatingAction($action)) {
+            return null;
+        }
+
+        $lower = strtolower(trim($action));
+        // The shipped client reaches a few writes over GET — see the constants
+        // on ApiGoat\Services\Service. The XHR set additionally has to prove it
+        // is a script-initiated same-origin call (a cross-site navigation can
+        // never set X-Requested-With, and a cross-origin fetch that tried would
+        // be preflighted away by CorsMiddleware).
+        if (in_array($lower, \ApiGoat\Services\Service::GET_NAV_MUTATIONS, true)) {
+            return null;
+        }
+        if (in_array($lower, \ApiGoat\Services\Service::GET_XHR_MUTATIONS, true)
+            && $request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
+            return null;
+        }
+
+        error_log('mutating GET refused: ' . ($this->args['route'] ?? '')
+            . ' action=' . $action
+            . ' from ' . ($_SERVER['REMOTE_ADDR'] ?? '?')
+            . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
+
+        $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['This action requires POST']]);
+        $ApiResponse->setStatus(405);
         return $ApiResponse->getResponse();
     }
 
