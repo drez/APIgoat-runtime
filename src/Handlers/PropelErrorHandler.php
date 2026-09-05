@@ -25,6 +25,8 @@ class PropelErrorHandler
     private $parentContainer = "";
     private $title = "";
     private $errorArray = [];
+    /** PhpName of the model being validated (emitted Service passes it). */
+    private $className = "";
 
     /**
      * 
@@ -44,9 +46,15 @@ class PropelErrorHandler
             $this->setExtendedValidationFailures($extValidationErr);
         }
 
+        $this->className = (string) $className;
         $this->setUi($ui);
         $this->setTitle($title);
-        //$this->setClassName($className);
+    }
+
+    /** PhpName of the model this handler was built for ('' when unknown). */
+    public function getClassName()
+    {
+        return $this->className;
     }
 
     /**
@@ -68,7 +76,16 @@ class PropelErrorHandler
      */
     private function setUi($ui)
     {
-        $this->parentContainer = (!empty($ui)) ? "#" . $ui : "";
+        if (!empty($ui)) {
+            $this->parentContainer = "#" . $ui;
+            return;
+        }
+        // No drawer/dialog container on the request (a full-page save). Without
+        // a scope the selectors below matched [v=COLUMN] anywhere on the page —
+        // the list behind the form included, and any same-named field of another
+        // model. The emitted Service passes its model PhpName, and the emitted
+        // form is <form id="form{PhpName}">, so scope to that when we have it.
+        $this->parentContainer = ($this->className !== "") ? "#form" . $this->className : "";
     }
 
     private function setValidationFailures()
@@ -134,12 +151,14 @@ class PropelErrorHandler
      */
     public function getValidationErrors()
     {
-        $this->errorMessage['error'] = 'yes';
+        // Seeded, not appended-to blind: 'onReadyJs' and 'txt' are only ever
+        // built with .= below, so the first concat warned on a missing key.
+        $this->errorMessage = ['error' => 'yes', 'onReadyJs' => '', 'txt' => ''];
 
         $this->errorMessage['onReadyJs'] .= "
         document.querySelectorAll('{$this->parentContainer} .error_field').forEach(function (__e) { __e.classList.remove('error_field'); });";
 
-        foreach ($this->errorArray['all'] as $error) {
+        foreach (($this->errorArray['all'] ?? []) as $error) {
             foreach ($error as $field => $msg) {
                 if (!empty($field)) {
                     $fieldName = $this->getField($field);

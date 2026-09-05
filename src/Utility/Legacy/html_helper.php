@@ -309,10 +309,12 @@ function optionListeSelect($options, $selectedValue, $defaultLabel = true)
                 }
             }
             $safeLabel = gc_attr(ucfirst($option[0]));
+            // [2] is the optional per-option `v=` marker (set_input_options
+            // colour/icon rows); most option tuples are [label, value] only.
             $optionsList .=
                 li(
                     strong($safeLabel, 'unselectable="on" title="' . $safeLabel . '"'),
-                    'v=\'' . gc_attr($option[2]) . '\' unselectable="on" data-label="' . $safeLabel . '" data-value="' . gc_attr($option[1]) . '"' . $class
+                    'v=\'' . gc_attr($option[2] ?? '') . '\' unselectable="on" data-label="' . $safeLabel . '" data-value="' . gc_attr($option[1]) . '"' . $class
                 );
         }
     }
@@ -364,6 +366,7 @@ function selectboxCustomArray($name, $options, $defaultLabel = '', $attr = '', $
         $safeDefault = gc_attr(ucfirst($defaultLabel));
         $defaultLabel = li(span(_('Clear'), 'unselectable="on" title="' . $safeDefault . '"'), 'class="default" unselectable="on" data-label="' . gc_attr($defaultLabel) . '" data-value="default"');
     }
+    $emptyLabel = '';
     if ($null_in_sel) {
         $safeEmpty = gc_attr(_('Empty value'));
         $emptyLabel = li(span(_('Empty value'), 'unselectable="off" title="' . gc_attr(ucfirst(_('Empty value'))) . '"'), 'class="null" unselectable="off" data-label="' . $safeEmpty . '" data-value="_null"');
@@ -669,9 +672,30 @@ function createRandomKey($amount, $options = [])
         $keyset .= "!@#$%^&*()_+=-<>";
     }
 
+    $amount = (int) $amount;
+    if ($amount <= 0) {
+        return "";
+    }
+
+    // CSPRNG. These keys are the password-reset / e-mail-validation tokens and
+    // the placeholder password hash for OAuth accounts; rand() is a seeded
+    // Mersenne Twister, so a few observed keys predict the rest. Rejection
+    // sampling (drop the byte values above the last whole multiple of the
+    // keyset size) keeps every character equally likely — the alphabet and the
+    // length are exactly what the caller asked for, as before.
+    $len     = strlen($keyset);
+    $limit   = intdiv(256, $len) * $len;
     $randkey = "";
-    for ($i = 0; $i < $amount; $i++)
-        $randkey .= substr($keyset, rand(0, strlen($keyset) - 1), 1);
+    while (strlen($randkey) < $amount) {
+        $bytes = random_bytes($amount);
+        for ($i = 0; $i < $amount && strlen($randkey) < $amount; $i++) {
+            $b = ord($bytes[$i]);
+            if ($b >= $limit) {
+                continue; // biased tail — draw again
+            }
+            $randkey .= $keyset[$b % $len];
+        }
+    }
     return $randkey;
 }
 
