@@ -137,6 +137,86 @@ class Service
     }
 
     /**
+     * Is this mutating action one the FIRST-PARTY client legitimately reaches
+     * over GET? The single decision shared by the middleware (AuthyMiddleware::
+     * checkMutatingGet) and the defence-in-depth guard the emitter puts at the
+     * top of every generated Service::getResponse(), so the two exemption sets
+     * can never drift apart.
+     *
+     * GET_NAV_MUTATIONS are exempt unconditionally (a top-level window.open
+     * carries no XHR header); GET_XHR_MUTATIONS only when the caller proved it
+     * is a script-initiated same-origin call — a cross-site navigation can never
+     * set X-Requested-With, and a cross-origin fetch that tried would be
+     * preflighted away by CorsMiddleware.
+     */
+    public static function isGetExemptMutation(?string $a, bool $isXhr): bool
+    {
+        $a = strtolower(trim((string) $a));
+        if ($a === '') {
+            return false;
+        }
+        if (in_array($a, self::GET_NAV_MUTATIONS, true)) {
+            return true;
+        }
+
+        return $isXhr && in_array($a, self::GET_XHR_MUTATIONS, true);
+    }
+
+    /**
+     * Must this request be refused because it reaches a WRITE over GET?
+     *
+     * Args-based counterpart of AuthyMiddleware::checkMutatingGet(), for callers
+     * that hold the RouteHelper $args array rather than the PSR-7 request — i.e.
+     * the emitted Service::getResponse() (the generated controller), which the
+     * emitter guards as defence in depth behind the middleware. Same action
+     * inventory (isMutatingAction) and the same two exemption sets
+     * (isGetExemptMutation) — nothing is re-derived here.
+     *
+     * $args['method'] is the route layer's TRUSTED method (RouteHelper snapshots
+     * it before the user query/body merge and reasserts it afterwards, so a
+     * ?method=POST can't steer this), and $args['a'] the path-derived action.
+     *
+     * The session check the middleware makes is deliberately absent: by the time
+     * a generated service runs, AuthyMiddleware has already authenticated the
+     * request, and a bearer/API caller is filtered out below.
+     *
+     * @param array $args    RouteHelper::getArgs() output ($this->request in the
+     *                       emitted service)
+     * @param mixed $request optional PSR-7 ServerRequestInterface for the header
+     *                       reads (falls back to $_SERVER)
+     */
+    public static function mutatingGetRefusal(array $args, $request = null): bool
+    {
+        $method = strtoupper(trim((string) ($args['method'] ?? '')));
+        if ($method !== 'GET' && $method !== 'HEAD') {
+            return false;
+        }
+        // api/v1 routes are bearer-authenticated (no ambient cookie authority),
+        // and they dispatch through getApiResponse(), not getResponse().
+        if (! empty($args['is_api']) || ! empty($args['isApiCall'])) {
+            return false;
+        }
+
+        $header = static function (string $name) use ($request): string {
+            if (is_object($request) && method_exists($request, 'getHeaderLine')) {
+                return (string) $request->getHeaderLine($name);
+            }
+            return (string) ($_SERVER['HTTP_' . strtoupper(str_replace('-', '_', $name))] ?? '');
+        };
+
+        if (stripos($header('Authorization'), 'Bearer ') === 0) {
+            return false;
+        }
+
+        $action = (string) ($args['a'] ?? ($args['action'] ?? ''));
+        if (! self::isMutatingAction($action)) {
+            return false;
+        }
+
+        return ! self::isGetExemptMutation($action, $header('X-Requested-With') === 'XMLHttpRequest');
+    }
+
+    /**
      * return abstract
      * @var array|Response
      */

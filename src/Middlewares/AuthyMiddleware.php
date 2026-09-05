@@ -254,17 +254,16 @@ class AuthyMiddleware implements MiddlewareInterface
             return null;
         }
 
-        $lower = strtolower(trim($action));
         // The shipped client reaches a few writes over GET — see the constants
         // on ApiGoat\Services\Service. The XHR set additionally has to prove it
         // is a script-initiated same-origin call (a cross-site navigation can
         // never set X-Requested-With, and a cross-origin fetch that tried would
-        // be preflighted away by CorsMiddleware).
-        if (in_array($lower, \ApiGoat\Services\Service::GET_NAV_MUTATIONS, true)) {
-            return null;
-        }
-        if (in_array($lower, \ApiGoat\Services\Service::GET_XHR_MUTATIONS, true)
-            && $request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
+        // be preflighted away by CorsMiddleware). ONE copy of that rule, shared
+        // with the guard the emitter puts in every generated getResponse().
+        if (\ApiGoat\Services\Service::isGetExemptMutation(
+            $action,
+            $request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest'
+        )) {
             return null;
         }
 

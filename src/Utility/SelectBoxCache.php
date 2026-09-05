@@ -17,6 +17,12 @@ namespace ApiGoat\Utility;
  *
  * Tenant scoping: tables with an id_tenant column are read through the ORM's
  * tenant preSelect filter, so their keys carry the session tenant token.
+ *
+ * Owner/Group scoping: the emitted selectBox body narrows the FK query with
+ * AuthySession::applyOwnerGroupScope when the FK model carries the ownership
+ * columns, so the cached options are per-user. The key therefore carries a
+ * scope token (scopeToken()) — without it the first caller's scoped option
+ * list would be served to the next user of the same reference table.
  */
 final class SelectBoxCache
 {
@@ -28,29 +34,63 @@ final class SelectBoxCache
     }
 
     /** @return array|null null = miss or caching disabled */
-    public static function fetch(string $fkTableName, string $method, bool $tenantScoped): ?array
+    public static function fetch(string $fkTableName, string $method, bool $tenantScoped, string $scopeToken = 'all'): ?array
     {
         if (self::ttl() <= 0) {
             return null;
         }
-        $hit = MicroCache::get(self::key($fkTableName, $method, $tenantScoped));
+        $hit = MicroCache::get(self::key($fkTableName, $method, $tenantScoped, $scopeToken));
         return \is_array($hit) ? $hit : null;
     }
 
-    public static function store(string $fkTableName, string $method, bool $tenantScoped, array $options): void
+    public static function store(string $fkTableName, string $method, bool $tenantScoped, array $options, string $scopeToken = 'all'): void
     {
         $ttl = self::ttl();
         if ($ttl <= 0) {
             return;
         }
-        MicroCache::put(self::key($fkTableName, $method, $tenantScoped), $ttl, $options);
+        MicroCache::put(self::key($fkTableName, $method, $tenantScoped, $scopeToken), $ttl, $options);
     }
 
-    private static function key(string $fkTableName, string $method, bool $tenantScoped): string
+    /**
+     * Owner/Group discriminator for the cache key of $model's option list.
+     *
+     * Mirrors what AuthySession::applyOwnerGroupScope() actually narrows on, so
+     * two users share a cache entry only when their scoped query is identical:
+     * 'all' for unrestricted (or ungranted — no narrowing either way) rights,
+     * otherwise the owner id and/or the group id set the filter uses.
+     */
+    public static function scopeToken(string $model): string
+    {
+        if (! \defined('_AUTH_VAR') || ! isset($_SESSION[\_AUTH_VAR]) || ! \is_object($_SESSION[\_AUTH_VAR])
+            || ! \method_exists($_SESSION[\_AUTH_VAR], 'hasRights')) {
+            return 'all';
+        }
+        $scope = $_SESSION[\_AUTH_VAR]->hasRights($model, 'r');
+        if (! \is_array($scope)) {
+            return 'all'; // true (unrestricted) or false (no grant): no narrowing
+        }
+
+        $parts = [];
+        if (\in_array('Owner', $scope, true)) {
+            $parts[] = 'o' . $_SESSION[\_AUTH_VAR]->getIdAuthy();
+        }
+        if (\in_array('Group', $scope, true)) {
+            $groups = $_SESSION[\_AUTH_VAR]->getGroups();
+            $groups = \is_array($groups) ? $groups : [];
+            \sort($groups);
+            $parts[] = 'g' . \implode('.', $groups);
+        }
+
+        return $parts === [] ? 'all' : \implode('-', $parts);
+    }
+
+    private static function key(string $fkTableName, string $method, bool $tenantScoped, string $scopeToken = 'all'): string
     {
         return 'gc:sb:' . TableVersion::ns()
             . ':' . TableVersion::get($fkTableName)
             . ':' . $method
-            . ':' . ($tenantScoped ? TableVersion::tenantToken() : 'all');
+            . ':' . ($tenantScoped ? TableVersion::tenantToken() : 'all')
+            . ':' . ($scopeToken !== '' ? $scopeToken : 'all');
     }
 }
