@@ -708,13 +708,37 @@ function selectLang($name, $selected = '', $options = '')
 {
     return select($name, array(0 => array('Francais', 'FR'), 1 => array('English', 'EN')), $options, $selected);
 }
+/**
+ * The leading "no selection" option prepended by the assocToNum* family when
+ * $addDefault is true (C4). Shape matches the rows those helpers build from a
+ * Propel result: [label, value, param].
+ *
+ * Label AND value are the empty string on purpose:
+ *   - optionListeSelect() collapses an empty value onto the label
+ *     ($option[1] = empty($option[1]) ? $option[0] : $option[1]), so any
+ *     non-empty label here would become the submitted VALUE — the emitted
+ *     save path coerces only '' back to null
+ *     (setCreateDefaults*: ($data['X'] == '') ? null : $data['X']).
+ *   - three elements, so optionListeSelect()'s gc_attr($option[2]) does not
+ *     raise "Undefined array key 2" on this row.
+ * The visible wording for "nothing selected" is the widget's own placeholder /
+ * li.default "Clear" row, not this option.
+ *
+ * @return array{0:string,1:string,2:string}
+ */
+function gcBlankSelectOption()
+{
+    return array('', '', '');
+}
+
 function assocToNumDef($array, $addDefault = false, $valeur = _MESS_SELECTION)
 {
+    $num = [];
+    if ($addDefault) {
+        $num[] = gcBlankSelectOption();
+    }
     $arrValues = array_values($array);
     $len = count($arrValues);
-    /*if($addDefault){
-        $num[] = array(1=> NULL, 0=> $valeur);
-    }*/
     for ($i = 0; $i < $len; $i++) {
         $val = array_values($arrValues[$i]);
         $num[] = $val;
@@ -724,17 +748,27 @@ function assocToNumDef($array, $addDefault = false, $valeur = _MESS_SELECTION)
 
 function assocToNumWidthNull($array, $addDefault = false)
 {
-    return assocToNumDef($array, $addDefault = false);
+    return assocToNumDef($array, $addDefault);
 }
 
+/**
+ * Propel result -> option tuples for select()/selectboxCustomArray().
+ *
+ * $addDefault prepends the blank "no selection" option. The emitted
+ * selectBox<Table>_<Col>() methods pass true exactly when the FK column is
+ * nullable (goatcheese Common/Common.php selectFunction::wantsBlankOption),
+ * so an optional FK can be cleared and a required one cannot. Before C4 the
+ * flag was accepted and silently ignored, so nullable FKs had no blank row in
+ * any consumer that renders the raw option list (mobile client, API, screens).
+ */
 function assocToNum($array, $addDefault = false)
 {
     $num = [];
+    if ($addDefault) {
+        $num[] = gcBlankSelectOption();
+    }
     $arrValues = array_values($array);
     $len = count($arrValues);
-    /* if($addDefault){
-        $num[] = array(1=> NULL, 0=> _MESS_SELECTION, 2=>'_MESS_SELECTION');
-    }*/
     for ($i = 0; $i < $len; $i++) {
         $val = array_values($arrValues[$i]);
         $num[] = $val;
@@ -743,11 +777,12 @@ function assocToNum($array, $addDefault = false)
 }
 function assocToNumV($array, $addDefault = false)
 {
+    $num = [];
+    if ($addDefault) {
+        $num[] = gcBlankSelectOption();
+    }
     $arrValues = array_values($array);
     $len = count($arrValues);
-    /*if($addDefault){
-        $num[] = array(1=> NULL, 0=> _MESS_SELECTION, 2=>'_MESS_SELECTION');
-    }*/
     for ($i = 0; $i < $len; $i++) {
         $val = array_values($arrValues[$i]);
         $num[] = $val;
