@@ -159,7 +159,10 @@ class AuthySession
      * @param array  $pks        Primary keys (scalars, or arrays for composite PKs)
      * @param string $model      RBAC model name ('' = tenant scope only)
      * @param string $right      Right to scope by ('r', 'w', 'd', …)
-     * @return array json_encode($pk) => row, for every row the caller may reach
+     * @return array key => row, for every row the caller may reach. The key is
+     *               the primary key cast to string (json_encode()d for a
+     *               composite PK) so callers can look a row up from the raw
+     *               value they sent, whatever its PHP type.
      */
     public function loadPksScoped($queryClass, array $pks, $model = '', $right = 'r')
     {
@@ -173,7 +176,7 @@ class AuthySession
                 foreach ($pks as $one) {
                     $row = $this->loadPkScoped($queryClass, $one, $model, $right);
                     if ($row !== null) {
-                        $out[json_encode($row->getPrimaryKey())] = $row;
+                        $out[self::pkKey($row->getPrimaryKey())] = $row;
                     }
                 }
                 return $out;
@@ -186,7 +189,7 @@ class AuthySession
             foreach ($pks as $one) {
                 $row = $this->loadPkScoped($queryClass, $one, $model, $right);
                 if ($row !== null) {
-                    $out[json_encode($row->getPrimaryKey())] = $row;
+                    $out[self::pkKey($row->getPrimaryKey())] = $row;
                 }
             }
             return $out;
@@ -204,10 +207,23 @@ class AuthySession
 
         $out = [];
         foreach ($q->find() as $row) {
-            $out[json_encode($row->getPrimaryKey())] = $row;
+            $out[self::pkKey($row->getPrimaryKey())] = $row;
         }
 
         return $out;
+    }
+
+    /**
+     * Stable array key for a primary key value, shared by loadPksScoped() and
+     * its callers: scalars key by their string form (so int 7 and '7' agree),
+     * composite keys by their JSON form.
+     *
+     * @param mixed $pk
+     * @return string
+     */
+    public static function pkKey($pk)
+    {
+        return is_array($pk) ? (string) json_encode($pk) : (string) $pk;
     }
 
     /**

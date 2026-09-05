@@ -35,20 +35,27 @@ function security_redirect($redirect = true, $request = [])
     //automat_connect();
 
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {
-        header('Cache-Control: no-cache, must-revalidate');
-        header('Expires: Mon, 26 Jul 1997 05:00:00 GMT');
-        header('Content-type: application/json');
         $ret['status'] = 'error';
         $ret['data'] = "session expired";
-        die(json_encode($ret));
+        // A40/C7: halt instead of die — this is the emitted requireAccess()
+        // refusal path, so it used to be delivered with no CSP / X-Frame-Options
+        // / CORS headers at all.
+        throw new \ApiGoat\Http\HaltResponse(json_encode($ret), 200, [
+            'Cache-Control' => 'no-cache, must-revalidate',
+            'Expires'       => 'Mon, 26 Jul 1997 05:00:00 GMT',
+            'Content-type'  => 'application/json',
+        ]);
     } else {
+        $jsRedirect = '';
         if ($redirect) {
             $jsRedirect = script("setTimeout(function (){ window.location.href = '" . _SITE_URL . _ADMIN_HOME_URL . "' }, 1000);");
         }
         if ($log) {
-            die(docType()
+            throw new \ApiGoat\Http\HaltResponse(docType()
                 . htmlTag(
-                    htmlHeader($request['p'] . "-" . $request['a'], $css . $uiCss . loadCss(_SITE_URL . 'mod/page/template_css.css'), _SITE_DESCRIPTION, _SITE_KEYWORDS, $headJs)
+                    // $request defaults to [] and $css/$uiCss/$headJs were never
+                    // set in this scope — four notices on every session-expired page.
+                    htmlHeader(($request['p'] ?? '') . "-" . ($request['a'] ?? ''), loadCss(_SITE_URL . 'mod/page/template_css.css'), _SITE_DESCRIPTION, _SITE_KEYWORDS, '')
                         . div(div(_("Session expired"), '', "class='expired-session-msg'"), '', "class='expired-session-msg-ctnr'")
                         . $jsRedirect
                         . style(".expired-session-msg-ctnr{width:100%;padding-top:100px;background-color:#F0F0F0;border: 1px solid #d1d1d1;}
