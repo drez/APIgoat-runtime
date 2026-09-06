@@ -245,7 +245,14 @@ final class MetaCatalog
             'primary_key' => $col->isPrimaryKey(),
             'default'     => $col->getDefaultValue(),
             'writable'    => !$col->isPrimaryKey()
-                && !in_array($col->getPhpName(), \ApiGoat\Api\Api::SYSTEM_COLUMNS, true),
+                && !in_array($col->getPhpName(), \ApiGoat\Api\Api::SYSTEM_COLUMNS, true)
+                // I-3: the ACL rights columns are never writable through the
+                // generic API body either — keep the advertised flag honest.
+                && !in_array(
+                    strtolower(str_replace('_', '', (string) $col->getPhpName())),
+                    \ApiGoat\Api\Api::RIGHTS_COLUMNS,
+                    true
+                ),
         ];
 
         if ($type === 'enum') {

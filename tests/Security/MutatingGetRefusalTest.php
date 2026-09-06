@@ -93,5 +93,47 @@ check('bulkSelection: whitespace only', Service::bulkSelection('   '), []);
 check('bulkSelection: JSON composite pk survives as the VALUE',
     Service::bulkSelection('check_a=' . rawurlencode('{"IdA":1,"IdB":2}')), ['{"IdA":1,"IdB":2}']);
 
+// ── I-5: project-defined custom actions fail CLOSED on a cookie-auth GET ──
+// MUTATING_ACTIONS only lists the case labels the emitter writes. A wrapper's
+// own $customActions entry ('approveInvoice', 'sendBatch', …) is dispatched
+// from the same {a} URL segment on the same GET-registered route and was NOT
+// refused — fail-open for exactly the actions a project author adds by hand.
+class CustomActionsService extends Service
+{
+    public $customActions = ['approveInvoice' => 'approve', 'agingReport' => 'aging'];
+    protected array $readOnlyCustomActions = ['agingReport'];
+    public function __construct() {}
+}
+class NoOptOutService extends Service
+{
+    public $customActions = ['approveInvoice' => 'approve'];
+    public function __construct() {}
+}
+
+$svc  = new CustomActionsService();
+$bare = new NoOptOutService();
+
+check('custom action, cookie GET, not declared read-only → refused',
+    Service::customActionGetRefusal($svc, ['method' => 'GET', 'a' => 'approveInvoice'], new FakeReq()), true);
+check('custom action, cookie GET, declared read-only → allowed',
+    Service::customActionGetRefusal($svc, ['method' => 'GET', 'a' => 'agingReport'], new FakeReq()), false);
+check('read-only opt-out is case-insensitive',
+    Service::customActionGetRefusal($svc, ['method' => 'GET', 'a' => 'AGINGREPORT'], new FakeReq()), false);
+check('a service with no opt-out list refuses every custom action on GET',
+    Service::customActionGetRefusal($bare, ['method' => 'GET', 'a' => 'approveInvoice'], new FakeReq()), true);
+check('POST is never refused',
+    Service::customActionGetRefusal($bare, ['method' => 'POST', 'a' => 'approveInvoice'], new FakeReq()), false);
+check('HEAD is refused like GET',
+    Service::customActionGetRefusal($bare, ['method' => 'HEAD', 'a' => 'approveInvoice'], new FakeReq()), true);
+check('api/v1 (bearer, no ambient cookie) is not refused',
+    Service::customActionGetRefusal($bare, ['method' => 'GET', 'a' => 'approveInvoice', 'is_api' => 1], new FakeReq()), false);
+check('a Bearer header is not refused',
+    Service::customActionGetRefusal($bare, ['method' => 'GET', 'a' => 'approveInvoice'],
+        new FakeReq(['Authorization' => 'Bearer abc'])), false);
+check('an empty action is not refused',
+    Service::customActionGetRefusal($bare, ['method' => 'GET', 'a' => ''], new FakeReq()), false);
+check('isReadOnlyCustomAction reflects the declaration',
+    [$svc->isReadOnlyCustomAction('agingReport'), $svc->isReadOnlyCustomAction('approveInvoice')], [true, false]);
+
 echo $fail ? "\n$fail FAILURES\n" : "\nALL PASS\n";
 exit($fail ? 1 : 0);

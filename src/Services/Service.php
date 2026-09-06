@@ -70,6 +70,17 @@ class Service
      * GET-by-design (the emailed confirm/reset links, the logout href) and
      * carry their own single-use tokens.
      *
+     * `pdfdownload` is the one read that can WRITE — it fills the saved-PDF
+     * cache on first access. Ruled a read and kept a GET (final review I-6):
+     * download links are <a href>/window.open, the generating path is gated on
+     * the caller holding `w` (Parameters/with_pdf.php gcPdfRecord('w')), the
+     * result is idempotent and no user-visible record state changes. The first
+     * generation is logged there so the side effect is auditable.
+     *
+     * PROJECT-DEFINED actions are NOT in this inventory and cannot be — see
+     * $readOnlyCustomActions / customActionGetRefusal() below, which fail them
+     * closed on a cookie-auth GET instead.
+     *
      * @var string[]
      */
     public const MUTATING_ACTIONS = [
@@ -225,6 +236,85 @@ class Service
         }
 
         return self::isMutatingAction((string) ($args['a'] ?? ($args['action'] ?? '')));
+    }
+
+    /**
+     * PROJECT-DEFINED custom actions a cookie-auth GET may reach (I-5).
+     *
+     * `MUTATING_ACTIONS` is a fixed inventory of the case labels the EMITTER
+     * writes. A wrapper that registers its own action in `$customActions`
+     * (`approveInvoice`, `sendBatch`, `recalcTotals`, …) is dispatched from the
+     * same `{a}` URL segment on the same GET-registered route, is invisible to
+     * that inventory, and was therefore reachable by a cross-site
+     * `<a href=".../Invoice/approveInvoice/42">` on the SameSite=Lax session
+     * cookie — fail-OPEN for exactly the actions a project author adds by hand.
+     *
+     * The rule is now fail-CLOSED: an unknown custom action is treated as
+     * mutating on a cookie-auth GET and refused with 405/"This action requires
+     * POST". A custom action that really is a read opts out by listing its
+     * ACTION NAME (the `$customActions` key, not the method name) here:
+     *
+     *     class InvoiceServiceWrapper extends InvoiceService
+     *     {
+     *         public $customActions = ['approveInvoice' => 'approve',
+     *                                  'agingReport'   => 'aging'];
+     *         protected array $readOnlyCustomActions = ['agingReport'];
+     *     }
+     *
+     * Bearer/API callers are unaffected (no ambient cookie authority, and they
+     * dispatch through getApiResponse()), and POST is never refused — so the
+     * only change a project can see is a hand-written READ that was being
+     * linked with an <a href>: name it here and it works again.
+     *
+     * @var string[] custom action names ($customActions keys), compared
+     *               case-insensitively
+     */
+    protected array $readOnlyCustomActions = [];
+
+    /** True when $action is declared read-only by this service. */
+    public function isReadOnlyCustomAction(?string $action): bool
+    {
+        $action = strtolower(trim((string) $action));
+        if ($action === '') {
+            return false;
+        }
+        foreach ($this->readOnlyCustomActions as $ro) {
+            if (strtolower(trim((string) $ro)) === $action) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Should this custom action be refused? Same cookie-auth-GET test as
+     * mutatingGetRefusal(), but the verdict for an action the emitter's
+     * inventory does not know: refuse unless the service declares it read-only.
+     *
+     * Called from the emitted `default:` arm of getResponse(), where
+     * `$this->customActions` is visible — the middleware cannot see it.
+     *
+     * @param object $service the emitted service ($this at the call site)
+     * @param array  $args    RouteHelper::getArgs() output
+     * @param mixed  $request optional PSR-7 request for the header reads
+     */
+    public static function customActionGetRefusal($service, array $args, $request = null): bool
+    {
+        $action = (string) ($args['a'] ?? ($args['action'] ?? ''));
+        if (trim($action) === '') {
+            return false;
+        }
+        if (is_object($service) && method_exists($service, 'isReadOnlyCustomAction')
+            && $service->isReadOnlyCustomAction($action)) {
+            return false;
+        }
+        // Reuse the cookie-auth-GET test verbatim by asking about an action name
+        // the inventory is guaranteed to contain: everything mutatingGetRefusal()
+        // checks before isMutatingAction() (method, api/bearer) is what we want,
+        // and the verdict for an unknown custom action is "mutating".
+        return self::mutatingGetRefusal(['method' => $args['method'] ?? '',
+            'is_api' => $args['is_api'] ?? null, 'isApiCall' => $args['isApiCall'] ?? null,
+            'a' => 'delete'], $request);
     }
 
     /**

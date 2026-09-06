@@ -98,6 +98,25 @@ class Api
     public const CREDENTIAL_COLUMNS = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
 
     /**
+     * ACL RIGHTS columns — the `is_rights_column` family the schema marks on
+     * authy / authy_group (`rights_all`, `rights_owner`, `rights_group`).
+     * Same normalisation as CREDENTIAL_COLUMNS (lowercase, underscores dropped)
+     * so `RightsAll`, `rights_all` and `rightsAll` all hit the same entry.
+     *
+     * SECURITY (final review I-3): these columns DEFINE the ACL. They are real,
+     * form-visible columns, so the emitted per-form allowlist contains them and
+     * cannot be the gate — exactly like the credential columns above. A caller
+     * holding `Authy:w` (or `AuthyGroup:w`) through an `api_rbac` rule could
+     * otherwise PATCH itself arbitrary rights: the same privilege escalation
+     * the credential/IsRoot denial closes, one column family over. Never
+     * writable through the generic API body; rights are administered through
+     * the ACL screens, which go through the Form, not through Api.
+     *
+     * @var string[]
+     */
+    public const RIGHTS_COLUMNS = ['rightsall', 'rightsowner', 'rightsgroup'];
+
+    /**
      * Memo for i18nColumns() — phpNames of add_i18n columns proxied onto this
      * model (null until first use).
      *
@@ -290,6 +309,12 @@ class Api
         // underscores dropped) so `passwd_hash`, `PasswdHash` and `passwdHash`
         // all hit the same entry. Runtime is the single enforcement point.
         if (in_array(strtolower(str_replace('_', '', (string) $cam)), self::CREDENTIAL_COLUMNS, true)) {
+            return false;
+        }
+        // SECURITY (I-3): the ACL rights columns, same treatment and for the
+        // same reason — they are on the emitted allowlist because the ACL form
+        // exposes them, so only this check can stop a generic-API write.
+        if (in_array(strtolower(str_replace('_', '', (string) $cam)), self::RIGHTS_COLUMNS, true)) {
             return false;
         }
         // Same normalisation for the system/privilege flags (IsRoot, IsSystem,

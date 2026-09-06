@@ -43,12 +43,25 @@ final class OptionListeSelectValueTest extends TestCase
         $this->assertStringContainsString('data-value="Alpha"', $html);
     }
 
-    public function test_empty_string_value_still_falls_back_to_the_label(): void
+    public function test_the_blank_sentinel_is_skipped_entirely(): void
     {
-        // The blank "clear" option assocToNum($rows, true) prepends is
-        // ['', '', ''] — label and value both empty, so this stays data-value="".
-        $html = optionListeSelect([['', '', '']], '', '')['optionsList'];
+        // C-3: ['', '', ''] is the "no selection" sentinel assocToNum($rows,
+        // true) prepends for a nullable FK. The gc widget must not render it as
+        // a row — it duplicates li.default — and must not treat it as a
+        // selection, or the placeholder never appears on a create form.
+        $out = optionListeSelect([['', '', ''], ['Alpha', 3]], '', 'Category');
 
-        $this->assertStringContainsString('data-value=""', $html);
+        $this->assertStringNotContainsString('data-value=""', $out['optionsList']);
+        $this->assertSame(1, substr_count($out['optionsList'], '<li'));
+        $this->assertSame('Category', $out['selectedLabel']);
+    }
+
+    public function test_a_labelled_option_with_an_empty_value_is_still_kept(): void
+    {
+        // Only the FULLY blank sentinel is skipped: a real option that happens
+        // to carry an empty value slot still falls back to its label, as before.
+        $html = optionListeSelect([['Alpha', '']], '', '')['optionsList'];
+
+        $this->assertStringContainsString('data-value="Alpha"', $html);
     }
 }

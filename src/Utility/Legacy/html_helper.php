@@ -296,6 +296,22 @@ function optionListeSelect($options, $selectedValue, $defaultLabel = true)
         $selectedLabel = "";
         foreach ($options as $option) {
             $class = "";
+            // C4's blank "no selection" sentinel (gcBlankSelectOption() = the
+            // ['','',''] row assocToNum* prepends for a nullable FK) exists for
+            // the consumers that render the RAW option array — the mobile
+            // client, the API, screens.php — where a select needs an explicit
+            // empty row to clear a value. The gc widget does not: it has its own
+            // `li.default` "Clear" row and shows the placeholder when nothing is
+            // selected. Rendering the sentinel here did two visible harms
+            // (final review C-3): the row below matched $selectedValue === ''
+            // on every CREATE form, which set $selectedLabel to '' and so
+            // suppressed the `empty($selectedLabel)` placeholder fallback (the
+            // closed label came out blank instead of "Category"), and it drew an
+            // extra unlabelled clickable <li> duplicating li.default. Skip it —
+            // for the label, for the selection, and as a row.
+            if (($option[0] ?? '') === '' && ($option[1] ?? '') === '') {
+                continue;
+            }
             // Only a MISSING value slot falls back to the label. empty() also
             // matched '0'/0/false, so an option list like [["Yes",1],["No",0]]
             // rendered "No" with data-value="No" and the row never round-tripped

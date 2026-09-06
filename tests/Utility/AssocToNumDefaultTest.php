@@ -40,16 +40,35 @@ final class AssocToNumDefaultTest extends TestCase
         $this->assertSame([['Alpha', 3], ['Beta', 7]], array_slice($out, 1));
     }
 
-    public function test_blank_option_keeps_an_empty_VALUE_through_optionListeSelect(): void
+    public function test_blank_option_is_NOT_rendered_by_the_gc_widget(): void
     {
-        // optionListeSelect() collapses an empty value onto the label
-        // ($option[1] = empty($option[1]) ? $option[0] : $option[1]), so a
-        // labelled blank option would submit its label as the FK value. The
-        // emitted save path only turns '' back into null.
-        $html = optionListeSelect(assocToNum($this->rows(), true), '', '')['optionsList'];
+        // C-3: the sentinel exists for the consumers that render the RAW array
+        // (mobile client, API, screens.php). The gc widget has its own
+        // `li.default` Clear row and its own placeholder, so optionListeSelect()
+        // must skip it: rendering it drew an extra unlabelled clickable row AND
+        // matched $selectedValue === '' on every create form, which killed the
+        // placeholder fallback.
+        $html = optionListeSelect(assocToNum($this->rows(), true), '', 'Category')['optionsList'];
 
-        $this->assertStringContainsString('data-value=""', $html);
-        $this->assertSame(1, substr_count($html, 'data-value=""'));
+        $this->assertStringNotContainsString('data-value=""', $html);
+        $this->assertSame(2, substr_count($html, '<li'));
+    }
+
+    public function test_blank_option_leaves_the_placeholder_in_place(): void
+    {
+        // The bug: the sentinel matched the empty selected value, set
+        // $selectedLabel to '', and `empty($selectedLabel)` therefore never
+        // installed $defaultLabel — the closed label rendered blank.
+        $out = optionListeSelect(assocToNum($this->rows(), true), '', 'Category');
+
+        $this->assertSame('Category', $out['selectedLabel']);
+    }
+
+    public function test_a_real_selection_still_wins_over_the_placeholder(): void
+    {
+        $out = optionListeSelect(assocToNum($this->rows(), true), 7, 'Category');
+
+        $this->assertSame('Beta', $out['selectedLabel']);
     }
 
     public function test_blank_option_carries_a_third_element(): void
