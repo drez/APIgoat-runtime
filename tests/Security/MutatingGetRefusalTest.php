@@ -135,5 +135,38 @@ check('an empty action is not refused',
 check('isReadOnlyCustomAction reflects the declaration',
     [$svc->isReadOnlyCustomAction('agingReport'), $svc->isReadOnlyCustomAction('approveInvoice')], [true, false]);
 
+// The EMITTED <T>Service classes do not extend Service — they are standalone
+// and carry $customActions / $readOnlyCustomActions as plain properties, so the
+// opt-out has to be readable off any object, not through inheritance.
+class StandaloneEmittedService
+{
+    public $customActions = ['approveInvoice' => 'approve', 'agingReport' => 'aging'];
+    public $readOnlyCustomActions = ['agingReport'];
+}
+class StandaloneNoOptOut
+{
+    public $customActions = ['approveInvoice' => 'approve'];
+    public $readOnlyCustomActions = [];
+}
+class StandaloneProtectedOptOut
+{
+    protected $readOnlyCustomActions = ['agingReport'];
+}
+class StandaloneNoDeclarationAtAll {}
+
+$emitted = new StandaloneEmittedService();
+check('standalone emitted service: opt-out honoured',
+    Service::customActionGetRefusal($emitted, ['method' => 'GET', 'a' => 'agingReport'], new FakeReq()), false);
+check('standalone emitted service: everything else still refused on GET',
+    Service::customActionGetRefusal($emitted, ['method' => 'GET', 'a' => 'approveInvoice'], new FakeReq()), true);
+check('standalone service with an empty opt-out list refuses',
+    Service::customActionGetRefusal(new StandaloneNoOptOut(), ['method' => 'GET', 'a' => 'approveInvoice'], new FakeReq()), true);
+check('a protected declaration in a wrapper is read too',
+    Service::customActionGetRefusal(new StandaloneProtectedOptOut(), ['method' => 'GET', 'a' => 'agingReport'], new FakeReq()), false);
+check('a service with no declaration at all fails CLOSED',
+    Service::customActionGetRefusal(new StandaloneNoDeclarationAtAll(), ['method' => 'GET', 'a' => 'anything'], new FakeReq()), true);
+check('readOnlyCustomActionsOf on a non-object is empty',
+    Service::readOnlyCustomActionsOf(null), []);
+
 echo $fail ? "\n$fail FAILURES\n" : "\nALL PASS\n";
 exit($fail ? 1 : 0);

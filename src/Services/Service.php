@@ -274,11 +274,48 @@ class Service
     /** True when $action is declared read-only by this service. */
     public function isReadOnlyCustomAction(?string $action): bool
     {
+        return self::actionIsDeclaredReadOnly($this->readOnlyCustomActions, $action);
+    }
+
+    /**
+     * Read the opt-out list off ANY service object.
+     *
+     * The emitted `<T>Service` classes do NOT extend this class — they are
+     * standalone and carry `$customActions` / `$readOnlyCustomActions` as plain
+     * properties (goatcheese Classes/Service.php) — so the declaration cannot be
+     * reached through inheritance. Read it wherever it is: the method when the
+     * service does extend this base, otherwise the property (reflection, so a
+     * protected declaration in a wrapper works too).
+     *
+     * @param object $service
+     * @return string[]
+     */
+    public static function readOnlyCustomActionsOf($service): array
+    {
+        if (!is_object($service)) {
+            return [];
+        }
+        try {
+            $rc = new \ReflectionClass($service);
+            if ($rc->hasProperty('readOnlyCustomActions')) {
+                $prop = $rc->getProperty('readOnlyCustomActions');
+                $prop->setAccessible(true);
+                return (array) ($prop->isInitialized($service) ? $prop->getValue($service) : []);
+            }
+        } catch (\Throwable $e) {
+            // fall through — an unreadable declaration means "no opt-out"
+        }
+        return [];
+    }
+
+    /** Case-insensitive membership test against an opt-out list. */
+    private static function actionIsDeclaredReadOnly(array $list, ?string $action): bool
+    {
         $action = strtolower(trim((string) $action));
         if ($action === '') {
             return false;
         }
-        foreach ($this->readOnlyCustomActions as $ro) {
+        foreach ($list as $ro) {
             if (strtolower(trim((string) $ro)) === $action) {
                 return true;
             }
@@ -304,8 +341,7 @@ class Service
         if (trim($action) === '') {
             return false;
         }
-        if (is_object($service) && method_exists($service, 'isReadOnlyCustomAction')
-            && $service->isReadOnlyCustomAction($action)) {
+        if (self::actionIsDeclaredReadOnly(self::readOnlyCustomActionsOf($service), $action)) {
             return false;
         }
         // Reuse the cookie-auth-GET test verbatim by asking about an action name
