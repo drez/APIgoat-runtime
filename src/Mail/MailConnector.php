@@ -27,6 +27,8 @@ interface MailConnector
     public const CAP_MOVE         = 'move';
     public const CAP_TRASH        = 'trash';
     public const CAP_SEND         = 'send';
+    /** The connector can walk a folder's history backwards ({@see fetchBefore()}). */
+    public const CAP_BACKFILL     = 'backfill';
 
     /** @return array<int,string> the CAP_* values this connector really supports */
     public function capabilities(): array;
@@ -47,6 +49,23 @@ interface MailConnector
     public function fetchHeaders(string $folder, ?MailboxState $cursor, int $max): FetchResult;
 
     public function fetchBody(string $providerId): MailBody;
+
+    /**
+     * One page of HISTORY: the NEWEST $max headers strictly OLDER than
+     * $before, oldest first. $before is an opaque token this connector
+     * minted ({@see BackfillResult::$next}); null starts at the newest
+     * message of $folder.
+     *
+     * The walk is backwards and forward-only cursors are untouched: a caller
+     * polls for new mail with {@see fetchHeaders()} and, independently,
+     * walks down with this. When the returned page is `complete` the bottom
+     * of the folder was reached; when it is `restarted` the token had gone
+     * stale and the walk began again from the top.
+     *
+     * Only connectors advertising {@see CAP_BACKFILL} implement it;
+     * {@see BaseConnector} throws {@see UnsupportedOperation}.
+     */
+    public function fetchBefore(string $folder, ?string $before, int $max): BackfillResult;
 
     // ---- phase 2 (declared now; BaseConnector throws UnsupportedOperation) ----
 

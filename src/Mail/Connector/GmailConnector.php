@@ -49,6 +49,12 @@ class GmailConnector extends BaseConnector
         $this->coldStartDays = max(1, (int) ($options['cold_start_days'] ?? 30));
     }
 
+    /**
+     * No CAP_BACKFILL: history walking needs a stable "older than X" cursor.
+     * The Gmail list API pages newest-first with an opaque pageToken that is
+     * not resumable across runs, so fetchBefore() stays unsupported here
+     * (BaseConnector throws) until a q=before:<date> walk is written.
+     */
     public function capabilities(): array
     {
         return [

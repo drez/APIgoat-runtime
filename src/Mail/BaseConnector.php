@@ -14,6 +14,11 @@ abstract class BaseConnector implements MailConnector
         return [self::CAP_LIST_FOLDERS, self::CAP_FETCH_BODY];
     }
 
+    public function fetchBefore(string $folder, ?string $before, int $max): BackfillResult
+    {
+        throw $this->unsupported('fetchBefore');
+    }
+
     public function markRead(string $providerId, bool $read): void
     {
         throw $this->unsupported('markRead');

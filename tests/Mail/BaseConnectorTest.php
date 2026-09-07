@@ -2,6 +2,7 @@
 
 namespace ApiGoat\Tests\Mail;
 
+use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\MailBody;
@@ -57,5 +58,33 @@ final class BaseConnectorTest extends TestCase
         $this->assertFalse($r->coldStart);
         $this->assertNull($r->coldStartReason);
         $this->assertSame(1, $r->count());
+    }
+
+    public function testFetchBeforeIsUnsupportedUntilAConnectorImplementsIt(): void
+    {
+        $c = $this->minimal();
+        $this->assertNotContains(MailConnector::CAP_BACKFILL, $c->capabilities(), 'a connector must opt in to backfill');
+        try {
+            $c->fetchBefore('INBOX', null, 100);
+            $this->fail('fetchBefore should throw');
+        } catch (UnsupportedOperation $e) {
+            $this->assertStringContainsString('does not support fetchBefore()', $e->getMessage());
+            $this->assertInstanceOf(\LogicException::class, $e, 'never retried by the queue');
+        }
+    }
+
+    public function testBackfillResultCarriesThePageTheTokenAndTheFlags(): void
+    {
+        $page = new BackfillResult([['x' => 1], ['x' => 2]], '1000:5', false);
+        $this->assertSame(2, $page->count());
+        $this->assertSame('1000:5', $page->next, 'the opaque token to hand back for the next page');
+        $this->assertFalse($page->complete);
+        $this->assertFalse($page->restarted, 'restarted defaults to false');
+
+        $last = new BackfillResult([], null, true, true);
+        $this->assertSame(0, $last->count());
+        $this->assertNull($last->next, 'nothing older left to ask for');
+        $this->assertTrue($last->complete);
+        $this->assertTrue($last->restarted);
     }
 }
