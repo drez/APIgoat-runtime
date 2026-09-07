@@ -28,6 +28,10 @@ class ClientFactory
     public const SCOPE_DRIVE_FILE      = 'https://www.googleapis.com/auth/drive.file';
     /** Full Drive scope — required for Shared Drive mode (drive.file cannot list a Shared Drive). */
     public const SCOPE_DRIVE           = 'https://www.googleapis.com/auth/drive';
+    /** People API (read-only): the user's saved address book. */
+    public const SCOPE_CONTACTS_READONLY       = 'https://www.googleapis.com/auth/contacts.readonly';
+    /** People API (read-only): "other contacts" — addresses Google learned from the user's mail. */
+    public const SCOPE_CONTACTS_OTHER_READONLY = 'https://www.googleapis.com/auth/contacts.other.readonly';
 
     private JwtSigner $signer;
     /** @var callable */
