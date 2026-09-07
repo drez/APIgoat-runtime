@@ -3,6 +3,7 @@
 namespace ApiGoat\Mail\Imap;
 
 use ApiGoat\Sync\Exceptions\TransientError;
+use ApiGoat\Sync\Exceptions\ValidationRejected;
 
 /**
  * {@see ImapTransport} over webklex/php-imap (pure PHP — `ext-imap` is not
@@ -185,7 +186,8 @@ final class WebklexTransport implements ImapTransport
     {
         return $this->guard(function () use ($folder, $uid) {
             $m = $this->folder($folder)->query()->setFetchBody(true)->leaveUnread()->getMessageByUid($uid);
-            if (!$m) throw new TransientError("IMAP uid {$uid} not found in {$folder}", 404);
+            // Gone (deleted/archived/expunged), not a transient hiccup: never retry.
+            if (!$m) throw new ValidationRejected("IMAP uid {$uid} not found in {$folder}", 404);
             return (string) $m->getHeader()->raw . "\r\n\r\n" . (string) $m->getRawBody();
         }, "fetch body {$folder}/{$uid}");
     }

@@ -6,11 +6,13 @@ use ApiGoat\Mail\Imap\ImapExceptionMapper;
 use ApiGoat\Sync\Exceptions\AuthFailed;
 use ApiGoat\Sync\Exceptions\RateLimited;
 use ApiGoat\Sync\Exceptions\TransientError;
+use ApiGoat\Sync\Exceptions\ValidationRejected;
 use PHPUnit\Framework\TestCase;
 
 class AuthFailedException extends \Exception {}
 class ConnectionFailedException extends \Exception {}
 class ImapServerErrorException extends \Exception {}
+class MessageNotFoundException extends \Exception {}
 
 final class ImapExceptionMapperTest extends TestCase
 {
@@ -33,12 +35,24 @@ final class ImapExceptionMapperTest extends TestCase
             'throttled'               => [new ImapServerErrorException('NO [THROTTLED] Too many simultaneous connections'), RateLimited::class],
             'try again'               => [new \RuntimeException('Temporary System Problem. Try again later'), RateLimited::class],
             'overquota'               => [new ImapServerErrorException('NO [OVERQUOTA] mailbox full'), RateLimited::class],
+            'no headers found'        => [new \RuntimeException('IMAP fetch body INBOX/38240: no headers found'), ValidationRejected::class],
+            'message not found'       => [new \RuntimeException('message not found'), ValidationRejected::class],
+            'uid not found'           => [new \RuntimeException('uid 38240 not found'), ValidationRejected::class],
+            'nonexistent tag'         => [new ImapServerErrorException('NO [NONEXISTENT] no such message'), ValidationRejected::class],
+            'does not exist'          => [new \RuntimeException('the requested message does not exist'), ValidationRejected::class],
+            'library not-found class' => [new MessageNotFoundException('gone'), ValidationRejected::class],
         ];
     }
 
     public function testOurOwnExceptionsPassThroughUntouched(): void
     {
         $e = new RateLimited('x', 30);
+        $this->assertSame($e, ImapExceptionMapper::map($e));
+    }
+
+    public function testValidationRejectedPassesThroughUntouched(): void
+    {
+        $e = new ValidationRejected('gone', 404);
         $this->assertSame($e, ImapExceptionMapper::map($e));
     }
 }
