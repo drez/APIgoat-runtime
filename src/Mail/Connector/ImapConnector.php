@@ -2,6 +2,7 @@
 
 namespace ApiGoat\Mail\Connector;
 
+use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\HeaderRecord;
@@ -59,7 +60,7 @@ class ImapConnector extends BaseConnector
     public function capabilities(): array
     {
         return [
-            self::CAP_LIST_FOLDERS, self::CAP_FETCH_BODY,
+            self::CAP_LIST_FOLDERS, self::CAP_FETCH_BODY, self::CAP_BACKFILL,
             self::CAP_MARK_READ, self::CAP_MOVE, self::CAP_TRASH,
         ];
     }
@@ -123,6 +124,50 @@ class ImapConnector extends BaseConnector
         $rows     = $this->rows($folder, $picked);
         $next     = $complete ? max($serverNext, $from, ($picked === [] ? 0 : max($picked) + 1)) : max($picked) + 1;
         return new FetchResult($rows, MailboxState::imap($uidvalidity, $next, $folder), $complete, false, null);
+    }
+
+    /**
+     * History walk, downwards. Token: "<uidvalidity>:<uid>" — the OLDEST UID
+     * of the page already read, so the next page is everything strictly
+     * below it. One unbounded UID search per page (IMAP has no "the N
+     * highest UIDs below X" search; the SEARCH itself is cheap next to the
+     * per-UID header FETCHes), then the newest $max of what is left.
+     *
+     * The poll cursor (uidvalidity/uidnext) is never read or written here:
+     * the two walks are independent and a backfill can only ever re-read
+     * rows the UNIQUE key already rejects.
+     */
+    public function fetchBefore(string $folder, ?string $before, int $max): BackfillResult
+    {
+        $this->connect();
+        $folder = $folder !== '' ? $folder : $this->folder;
+        $max    = self::clampMax($max);
+        $uidvalidity = (int) $this->imap->status($folder)['uidvalidity'];
+
+        // A token minted under a dead UIDVALIDITY addresses nothing: start
+        // again from the newest message and say so.
+        $ceiling   = null;
+        $restarted = false;
+        if ($before !== null && $before !== '') {
+            if (preg_match('/^(\d+):(\d+)$/', $before, $m) && (int) $m[1] === $uidvalidity) {
+                $ceiling = (int) $m[2];
+            } else {
+                $restarted = true;
+            }
+        }
+
+        $uids = $this->imap->uids($folder, null, null);
+        if ($ceiling !== null) {
+            $uids = array_filter($uids, static fn ($u) => (int) $u < $ceiling);
+        }
+        $uids = array_values($uids);
+        sort($uids);
+
+        $complete = count($uids) <= $max;
+        $picked   = $complete ? $uids : array_slice($uids, -$max); // the NEWEST slice, ascending
+        $rows     = $this->rows($folder, $picked);
+        $next     = $picked === [] ? null : $uidvalidity . ':' . min($picked);
+        return new BackfillResult($rows, $next, $complete, $restarted);
     }
 
     public function fetchBody(string $providerId): MailBody

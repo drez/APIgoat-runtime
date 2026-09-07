@@ -4,6 +4,7 @@ namespace ApiGoat\Tests\Mail;
 
 require_once __DIR__ . '/FakeImapTransport.php';
 
+use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\Connector\ImapConnector;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\HeaderRecord;
@@ -218,5 +219,92 @@ final class ImapConnectorTest extends TestCase
         $h = ImapConnector::normalise(['uid' => 1, 'subject' => '=?UTF-8?Q?Caf=C3=A9?=', 'from' => 'a@b'], 'INBOX');
         $this->assertSame('Café', $h['subject']);
         $this->assertSame('1:INBOX', $h['provider_message_id']);
+    }
+
+    // ---- fetchBefore(): the backwards history walk -------------------------
+
+    /** @return array{0:BackfillResult, 1:int[]} the page and its UIDs */
+    private function page(ImapConnector $c, ?string $before, int $max = 3): array
+    {
+        $r = $c->fetchBefore('INBOX', $before, $max);
+        $uids = array_map(static fn ($h) => (int) explode(':', (string) $h['provider_message_id'])[0], $r->headers);
+        return [$r, $uids];
+    }
+
+    public function testFetchBeforeWalksTheFolderDownwardsOnePageAtATime(): void
+    {
+        foreach ([1, 2, 3, 4, 5, 6, 7] as $uid) {
+            $this->imap->add('INBOX', $uid, ['date' => 'Mon, 01 Jan 2024 10:00:00 +0000']); // all older than any cold-start window
+        }
+        $c = $this->connector();
+        $this->assertContains(MailConnector::CAP_BACKFILL, $c->capabilities());
+
+        [$p1, $u1] = $this->page($c, null);
+        $this->assertSame([5, 6, 7], $u1, 'newest page first, oldest first inside the page');
+        $this->assertSame('1000:5', $p1->next);
+        $this->assertFalse($p1->complete);
+        $this->assertFalse($p1->restarted);
+        $this->assertSame(3, $p1->count());
+
+        [$p2, $u2] = $this->page($c, $p1->next);
+        $this->assertSame([2, 3, 4], $u2, 'strictly older than the token UID');
+        $this->assertSame('1000:2', $p2->next);
+        $this->assertFalse($p2->complete);
+
+        [$p3, $u3] = $this->page($c, $p2->next);
+        $this->assertSame([1], $u3);
+        $this->assertTrue($p3->complete, 'the bottom of the folder was reached');
+
+        [$p4, $u4] = $this->page($c, $p3->next);
+        $this->assertSame([], $u4);
+        $this->assertTrue($p4->complete);
+        $this->assertNull($p4->next, 'nothing older left to ask for');
+    }
+
+    public function testFetchBeforeUsesOneUnboundedSearchPerPage(): void
+    {
+        foreach (range(1, 7) as $uid) {
+            $this->imap->add('INBOX', $uid);
+        }
+        $this->imap->log = [];
+        $this->connector()->fetchBefore('INBOX', '1000:5', 3);
+
+        $searches = array_values(array_filter($this->imap->log, static fn ($l) => str_starts_with($l, 'uids:')));
+        $this->assertSame(['uids:INBOX:-:-'], $searches, 'one unbounded UID search — no date bound, no min UID');
+        $this->assertSame(['headers:INBOX:2,3,4'], array_values(array_filter($this->imap->log, static fn ($l) => str_starts_with($l, 'headers:'))));
+    }
+
+    public function testFetchBeforeRestartsFromTheTopWhenUidvalidityChanged(): void
+    {
+        foreach (range(1, 7) as $uid) {
+            $this->imap->add('INBOX', $uid);
+        }
+        $r = $this->connector()->fetchBefore('INBOX', '999:3', 3); // token minted under a dead UIDVALIDITY
+
+        $this->assertTrue($r->restarted, 'the token no longer addresses anything on the server');
+        $this->assertSame([5, 6, 7], array_map(static fn ($h) => (int) explode(':', (string) $h['provider_message_id'])[0], $r->headers), 'walk begins again at the newest');
+        $this->assertSame('1000:5', $r->next, 'the new token carries the live UIDVALIDITY');
+        $this->assertFalse($r->complete);
+    }
+
+    public function testFetchBeforeOnAnEmptyFolderIsCompleteAtOnce(): void
+    {
+        $r = $this->connector()->fetchBefore('INBOX', null, 200);
+        $this->assertSame([], $r->headers);
+        $this->assertTrue($r->complete);
+        $this->assertNull($r->next);
+        $this->assertFalse($r->restarted);
+    }
+
+    public function testFetchBeforeNormalisesRowsAndDefaultsToTheConfiguredFolder(): void
+    {
+        $this->imap->add('INBOX', 4, ['subject' => 'Old thread', 'thread_id' => 'T-9']);
+        $r = $this->connector()->fetchBefore('', null, 200);
+        $this->assertSame(1, $r->count());
+        $h = $r->headers[0];
+        $this->assertSame(HeaderRecord::KEYS, array_keys($h), 'the same normalised shape as fetchHeaders()');
+        $this->assertSame('4:INBOX', $h['provider_message_id']);
+        $this->assertSame('INBOX', $h['folder_at_fetch']);
+        $this->assertSame('T-9', $h['thread_id']);
     }
 }
