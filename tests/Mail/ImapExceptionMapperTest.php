@@ -30,6 +30,14 @@ final class ImapExceptionMapperTest extends TestCase
         return [
             'library auth class'      => [new AuthFailedException('LOGIN failed'), AuthFailed::class],
             'auth by message'         => [new ImapServerErrorException('NO [AUTHENTICATIONFAILED] Invalid credentials (Failure)'), AuthFailed::class],
+            // guard() wraps EVERY operation, so the gone-check must never win
+            // over an auth failure: this is the common wording for a rotated
+            // password, and ValidationRejected would permanently fail the job.
+            'auth wording with "does not exist"' => [new ImapServerErrorException('NO [AUTHENTICATIONFAILED] User does not exist'), AuthFailed::class],
+            // A missing FOLDER is not a gone message — it is a config problem
+            // that a human can fix, so the mailbox must keep retrying.
+            'missing folder is not a gone message' => [new ImapServerErrorException('Folder does not exist'), TransientError::class],
+            'missing mailbox is not a gone message' => [new \RuntimeException('Mailbox does not exist'), TransientError::class],
             'connection'              => [new ConnectionFailedException('connection refused'), TransientError::class],
             'socket timeout'          => [new \RuntimeException('stream_socket_client(): timeout'), TransientError::class],
             'throttled'               => [new ImapServerErrorException('NO [THROTTLED] Too many simultaneous connections'), RateLimited::class],

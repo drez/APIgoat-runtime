@@ -12,12 +12,22 @@ use ApiGoat\Sync\Exceptions\ValidationRejected;
  * exception's SHORT class name and message text so it works for
  * webklex/php-imap's exception set without depending on it:
  *
- *   class/message says the message itself is gone ("no headers found",
- *     "message not found", "uid N not found", "[NONEXISTENT]",
- *     "does not exist", a *MessageNotFound* class)                            → ValidationRejected (permanent)
  *   *AuthFailed*, "authentication failed", "invalid credentials", "LOGIN failed"  → AuthFailed
  *   "too many", "throttl", "rate limit", "try again later", "[OVERQUOTA]"          → RateLimited
- *   everything else (connection, timeout, response, runtime)                        → TransientError
+ *   the MESSAGE itself is gone ("no headers found", "message not found",
+ *     "uid N not found", "[NONEXISTENT]", a *MessageNotFound* class)               → ValidationRejected (permanent)
+ *   everything else (connection, timeout, response, runtime, a missing folder)     → TransientError
+ *
+ * ORDER IS THE GUARD, not the wording. ImapConnector::guard() wraps EVERY
+ * operation — connect, folder list, status, uids, move, delete — so a
+ * server's auth refusal reaches this mapper too, and the common wording for
+ * a rotated password is `NO [AUTHENTICATIONFAILED] User does not exist`.
+ * With the gone-check first, that became ValidationRejected, which
+ * JobQueue::isPermanent() treats as permanent: a mailbox needing re-auth
+ * would be failed forever instead of flagged. So AuthFailed and RateLimited
+ * are decided FIRST, and the gone patterns are anchored to a message scope
+ * ("message …", "uid N …") — never a bare "does not exist", which is also
+ * what a server says about a folder that was renamed.
  */
 final class ImapExceptionMapper
 {
@@ -32,20 +42,24 @@ final class ImapExceptionMapper
         $lc    = strtolower($msg);
         $text  = "{$context}: " . ($msg !== '' ? $msg : $short);
 
-        // The message itself is gone (deleted/archived/expunged server-side):
-        // permanent, never worth retrying. Checked before the AuthFailed
-        // wording so it wins over the generic fallthrough, but never over
-        // AuthFailed/RateLimited themselves — those stay their own thing.
-        if (stripos($short, 'MessageNotFound') !== false
-            || preg_match('/no headers found|message not found|uid \d+ not found|\[nonexistent\]|does not exist/i', $lc)) {
-            return new ValidationRejected($text, 0, $e);
-        }
+        // Auth first: guard() wraps every operation, so an auth refusal that
+        // happens to contain "does not exist" must not be read as a gone
+        // message and permanently failed. See the class comment.
         if (stripos($short, 'AuthFailed') !== false || stripos($short, 'Authentication') !== false
             || preg_match('/authenticat\w* failed|invalid credentials|login failed|\[authenticationfailed\]|authorization failed|not authenticated/', $lc)) {
             return new AuthFailed($text, 0, $e);
         }
         if (preg_match('/too many|throttl|rate ?limit|try again later|\[overquota\]|\[limit\]|temporarily (?:blocked|unavailable)/', $lc)) {
             return new RateLimited($text, 0, $e);
+        }
+        // The MESSAGE itself is gone (deleted/archived/expunged server-side):
+        // permanent, never worth retrying. Every pattern is scoped to a
+        // message — a bare "does not exist" is also how a server answers about
+        // a renamed FOLDER, and that is a config problem a human fixes, so it
+        // falls through to TransientError and the mailbox keeps retrying.
+        if (stripos($short, 'MessageNotFound') !== false
+            || preg_match('/no headers found|message (?:does not exist|not found)|uid \d+ (?:does not exist|not found)|\[nonexistent\]/i', $lc)) {
+            return new ValidationRejected($text, 0, $e);
         }
         return new TransientError($text, 0, $e);
     }
