@@ -242,6 +242,26 @@ alert_close = function (){
      */
     private function return_error()
     {
+        $this->return = ['html' => '', 'onReadyJs' => '', 'js' => '', 'json' => ''];
+
+        // PropelErrorHandler::getValidationErrors() hands over a ready-made
+        // envelope (error => 'yes', onReadyJs => field marking + alertb(),
+        // txt => the messages). Its script must reach the client verbatim —
+        // flattening it below turned the flag and the whole script into the
+        // alert text ("yes document.querySelectorAll(...) ...").
+        if (is_array($this->error) && isset($this->error['onReadyJs']) && is_string($this->error['onReadyJs'])) {
+            $txt = (string) ($this->error['txt'] ?? '');
+            $messages = array_values(array_filter(array_map(
+                static fn ($m) => trim(strip_tags((string) $m)),
+                preg_split('/<br\s*\/?>/i', $txt) ?: []
+            ), static fn ($m) => $m !== ''));
+
+            $this->return = array_merge($this->return, $this->error);
+            $this->return['error']    = 'yes';
+            $this->return['messages'] = $messages;
+            return;
+        }
+
         $messages = [];
         $flat = (array) $this->error;
         array_walk_recursive(
@@ -261,7 +281,6 @@ alert_close = function (){
 
         $p = (string) ($this->request['p'] ?? '');
 
-        $this->return = ['html' => '', 'onReadyJs' => '', 'js' => '', 'json' => ''];
         $this->return['error']    = 'yes';
         $this->return['messages'] = $messages;
         $this->return['onReadyJs'] =
