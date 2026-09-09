@@ -35,6 +35,19 @@ $i = McpServer::serverInfo('   ', ['not' => 'a string']);
 assertEq($i['name'], 'apichatbot-mcp', 'blank manifest name ignored');
 assertEq($i['title'], 'apichatbot MCP', 'non-string manifest title ignored');
 
+// Build-time identity name (config/Built/mcp.identity.php, 4th arg) is the
+// TITLE fallback only: config/mcp.php 'title' still wins, the slug is untouched.
+$i = McpServer::serverInfo(null, null, null, ' LL-TEQ CRM ');
+assertEq($i['title'], 'LL-TEQ CRM', 'identity name → title when no manifest title');
+assertEq($i['name'], 'apichatbot-mcp', 'identity name never changes the slug');
+$i = McpServer::serverInfo('manifest-name', 'Manifest Title', null, 'LL-TEQ CRM');
+assertEq($i['title'], 'Manifest Title', 'manifest title beats identity name');
+assertEq($i['name'], 'manifest-name', 'manifest name unchanged with identity');
+$i = McpServer::serverInfo(null, null, null, '   ');
+assertEq($i['title'], 'apichatbot MCP', 'blank identity name ignored');
+$i = McpServer::serverInfo(null, null, null, ['not' => 'a string']);
+assertEq($i['title'], 'apichatbot MCP', 'non-string identity name ignored');
+
 // GC_MCP_NAME (.env) beats the project constant — the same value is pinned on
 // prod by gc deploy, so two differently-named checkouts serve one identity.
 // It is the project LABEL: same "<label>-mcp" / "<label> MCP" shape as

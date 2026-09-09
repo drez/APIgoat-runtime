@@ -61,16 +61,22 @@ class McpServer
 
     private function initialize(array $params): array
     {
+        // Build-time project identity (config/Built/mcp.identity.php): the
+        // instructions open with a preamble naming the project this server is
+        // the FIRST source for, so a client with several project MCP servers
+        // connected routes questions to the right one (and asks when unsure).
         // Build-time tool-list stamp (config/Built/mcp.version.php): drives the
-        // reported version and prefixes the instructions with a what's-new notice
-        // so connectors already installed on a client learn about new tools —
-        // the stateless POST transport cannot push tools/list_changed.
-        $stamp        = VersionStamp::read();
-        $instructions = $this->registry->instructions() ?? self::DEFAULT_INSTRUCTIONS;
-        $whatsNew     = VersionStamp::whatsNew($stamp);
-        if ($whatsNew !== null) {
-            $instructions = $whatsNew . "\n\n" . $instructions;
-        }
+        // reported version and adds a what's-new notice so connectors already
+        // installed on a client learn about new tools — the stateless POST
+        // transport cannot push tools/list_changed. Order: identity preamble,
+        // what's-new, then the project's own guidance (or the generic default).
+        $identity = McpIdentity::read();
+        $stamp    = VersionStamp::read();
+        $instructions = implode("\n\n", array_filter([
+            McpIdentity::preamble($identity),
+            VersionStamp::whatsNew($stamp),
+            $this->registry->instructions() ?? self::DEFAULT_INSTRUCTIONS,
+        ], fn($part) => $part !== null));
         return [
             // TODO: negotiate against $params['protocolVersion'] when we support multiple versions
             'protocolVersion' => self::PROTOCOL,
@@ -78,7 +84,8 @@ class McpServer
             'serverInfo' => self::serverInfo(
                 $this->registry->manifestValue('name'),
                 $this->registry->manifestValue('title'),
-                $stamp['version'] ?? $this->registry->manifestValue('version')
+                $stamp['version'] ?? $this->registry->manifestValue('version'),
+                $identity['name'] ?? null
             ),
             'instructions' => $instructions,
         ];
@@ -88,22 +95,25 @@ class McpServer
      * Per-project server identity. Every GoatCheese project runs this same
      * runtime, so the name MUST come from the project, not a constant here —
      * connectors listed side by side (apigtbot, apichatbot, apicrm, …) are
-     * otherwise indistinguishable. Precedence: config/mcp.php 'name' /
-     * 'title' → GC_MCP_NAME (.env; deploy pins it so every checkout that
-     * deploys to the same host serves the same identity) → _PROJECT_NAME
-     * (config/Built/config.php, i.e. the LOCAL checkout's folder name) →
-     * 'apigoat'. GC_MCP_NAME is the project LABEL: it yields the same
-     * "<label>-mcp" / "<label> MCP" pair _PROJECT_NAME did, so pinning it to
-     * the name a host already served changes nothing for connected clients.
-     * The name is slugged to [A-Za-z0-9_.-] (MCP clients use it as an
-     * identifier); the title is free text shown to humans.
+     * otherwise indistinguishable. Precedence for the slug `name`:
+     * config/mcp.php 'name' → GC_MCP_NAME (.env; deploy pins it so every
+     * checkout that deploys to the same host serves the same identity) →
+     * _PROJECT_NAME (config/Built/config.php, i.e. the LOCAL checkout's folder
+     * name) → 'apigoat'. Precedence for the human `title`: config/mcp.php
+     * 'title' → the build-time identity name ($identityName, from
+     * config/Built/mcp.identity.php via McpIdentity) → "<label> MCP" with the
+     * same label the slug uses. GC_MCP_NAME is the project LABEL: it yields
+     * the same "<label>-mcp" / "<label> MCP" pair _PROJECT_NAME did, so
+     * pinning it to the name a host already served changes nothing for
+     * connected clients. The name is slugged to [A-Za-z0-9_.-] (MCP clients
+     * use it as an identifier); the title is free text shown to humans.
      *
      * The version is the build-time tool-list stamp (VersionStamp) when one
      * exists, else config/mcp.php 'version', else '1'.
      *
      * @return array{name:string,title:string,version:string}
      */
-    public static function serverInfo($manifestName = null, $manifestTitle = null, $version = null): array
+    public static function serverInfo($manifestName = null, $manifestTitle = null, $version = null, $identityName = null): array
     {
         $project = defined('_PROJECT_NAME') && trim((string) _PROJECT_NAME) !== '' ? trim((string) _PROJECT_NAME) : 'apigoat';
         $envName = self::envMcpName();
@@ -112,7 +122,13 @@ class McpServer
         }
         $name = is_string($manifestName) && trim($manifestName) !== '' ? trim($manifestName) : $project . '-mcp';
         $name = trim(preg_replace('/[^A-Za-z0-9_.-]+/', '-', $name), '-') ?: 'apigoat-mcp';
-        $title = is_string($manifestTitle) && trim($manifestTitle) !== '' ? trim($manifestTitle) : $project . ' MCP';
+        if (is_string($manifestTitle) && trim($manifestTitle) !== '') {
+            $title = trim($manifestTitle);
+        } elseif (is_string($identityName) && trim($identityName) !== '') {
+            $title = trim($identityName);
+        } else {
+            $title = $project . ' MCP';
+        }
         $version = is_scalar($version) && trim((string) $version) !== '' ? trim((string) $version) : '1';
         return ['name' => $name, 'title' => mb_substr($title, 0, 100), 'version' => $version];
     }
