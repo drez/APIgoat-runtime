@@ -73,7 +73,7 @@ class McpServer
         $identity = McpIdentity::read();
         $stamp    = VersionStamp::read();
         $instructions = implode("\n\n", array_filter([
-            McpIdentity::preamble($identity),
+            McpIdentity::preamble($identity, $this->registry->get('gc_identity_update') !== null),
             VersionStamp::whatsNew($stamp),
             $this->registry->instructions() ?? self::DEFAULT_INSTRUCTIONS,
         ], fn($part) => $part !== null));

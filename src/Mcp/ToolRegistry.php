@@ -84,6 +84,11 @@ class ToolRegistry
         if (\class_exists('\\App\\ClientEventQuery')) {
             $tools[] = new Tools\GcTelemetrySummary();
         }
+        // Routing self-improvement — present exactly when the build emitted an
+        // identity manifest (the schema declares with_mcp).
+        if (McpIdentity::readBuilt() !== null) {
+            $tools[] = new Tools\GcIdentityUpdate();
+        }
         return $tools;
     }
 
