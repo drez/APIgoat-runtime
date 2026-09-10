@@ -84,6 +84,12 @@ class ToolRegistry
         if (\class_exists('\\App\\ClientEventQuery')) {
             $tools[] = new Tools\GcTelemetrySummary();
         }
+        // Design context — present exactly when the build emitted a design
+        // manifest (with_mcp declares design_docs and/or brand_assets).
+        if (DesignManifest::available()) {
+            $tools[] = new Tools\GcDesignDocs();
+            $tools[] = new Tools\GcBrandAssets();
+        }
         // Routing self-improvement — present exactly when the build emitted an
         // identity manifest (the schema declares with_mcp).
         if (McpIdentity::readBuilt() !== null) {
