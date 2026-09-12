@@ -4,6 +4,7 @@ namespace ApiGoat\Services;
 use ApiGoat\OAuth\OAuthServerFactory;
 use ApiGoat\OAuth\Entities\UserEntity;
 use ApiGoat\Services\Service;
+use ApiGoat\Utility\Branding;
 use League\OAuth2\Server\Exception\OAuthServerException;
 use League\OAuth2\Server\RequestTypes\AuthorizationRequest;
 use Psr\Http\Message\ResponseInterface;
@@ -271,40 +272,65 @@ class OAuthAuthorizeService extends Service
             ->withStatus(302);
     }
 
-    /** Render the self-contained login page (200 HTML, no code). */
+    /** Render the login page (200 HTML, no code) — project view or inline fallback. */
     private function renderLogin(AuthorizationRequest $authRequest, array $params, string $error = ''): ResponseInterface
     {
-        $session    = $_SESSION[_AUTH_VAR] ?? null;
-        $csrf       = $this->ensureCsrf($session);
-        $clientName = htmlspecialchars((string) $authRequest->getClient()->getName(), ENT_QUOTES);
-        $hidden     = $this->hiddenParams($params) . $this->hiddenField('csrf', $csrf);
-        $action     = htmlspecialchars($this->actionUrl(), ENT_QUOTES);
-        $errHtml    = $error !== '' ? '<p style="color:#d33;margin:0 0 12px;">' . htmlspecialchars($error, ENT_QUOTES) . '</p>' : '';
+        $session = $_SESSION[_AUTH_VAR] ?? null;
+        $csrf    = $this->ensureCsrf($session);
+        $errHtml = $error !== '' ? '<p style="color:#d33;margin:0 0 12px;">' . htmlspecialchars($error, ENT_QUOTES) . '</p>' : '';
 
-        $html = '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        return $this->htmlResponse(self::loginPageHtml([
+            'productName'      => Branding::productName(),
+            'logoUrl'          => Branding::logoUrl(),
+            'faviconUrl'       => Branding::faviconUrl(),
+            'clientName'       => (string) $authRequest->getClient()->getName(),
+            'errorHtml'        => $errHtml,
+            'actionUrl'        => $this->actionUrl(),
+            'hiddenFieldsHtml' => $this->hiddenParams($params) . $this->hiddenField('csrf', $csrf),
+        ]));
+    }
+
+    /**
+     * Full login page HTML: the project's template-managed view when present
+     * (public/view/oauth-login.php, drift-synced by gc), else the
+     * self-contained inline default — so projects on older templates keep a
+     * working, name-branded page.
+     *
+     * Scalar vars (productName, logoUrl, faviconUrl, clientName, actionUrl)
+     * arrive RAW and are escaped HERE, the single escaping point for both the
+     * view and the fallback; *Html vars arrive pre-built and pre-escaped.
+     * Public static so tests can exercise view resolution, fallback and
+     * escaping via $viewDir without a full authorize round-trip.
+     */
+    public static function loginPageHtml(array $vars, ?string $viewDir = null): string
+    {
+        $v    = self::escapePageVars($vars);
+        $html = self::renderView('oauth-login.php', $v, $viewDir);
+        if ($html !== null) {
+            return $html;
+        }
+
+        return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             . '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            . '<title>' . _('Sign in') . '</title></head>'
+            . '<title>' . $v['productName'] . ' — ' . _('Sign in') . '</title></head>'
             . '<body style="font-family:Arial,Helvetica,sans-serif;background:#f4f6f8;margin:0;">'
             . '<div style="max-width:360px;margin:48px auto;background:#fff;padding:28px;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.08);">'
-            . '<h2 style="margin-top:0;color:#2f2f2f;">' . _('Sign in to continue') . '</h2>'
-            . '<p style="color:#555;">' . sprintf(_('%s is requesting access to your CRM account.'), '<strong>' . $clientName . '</strong>') . '</p>'
-            . $errHtml
-            . '<form method="post" action="' . $action . '" style="display:flex;flex-direction:column;gap:12px;">'
-            . $hidden
+            . '<h2 style="margin-top:0;color:#2f2f2f;">' . sprintf(_('Sign in to %s'), $v['productName']) . '</h2>'
+            . '<p style="color:#555;">' . sprintf(_('%s is requesting access to your %s account.'), '<strong>' . $v['clientName'] . '</strong>', $v['productName']) . '</p>'
+            . $v['errorHtml']
+            . '<form method="post" action="' . $v['actionUrl'] . '" style="display:flex;flex-direction:column;gap:12px;">'
+            . $v['hiddenFieldsHtml']
             . '<input type="text" name="u" placeholder="' . _('Username or email') . '" autocomplete="username" required style="padding:10px;border:1px solid #ccc;border-radius:6px;">'
             . '<input type="password" name="p" placeholder="' . _('Password') . '" autocomplete="current-password" required style="padding:10px;border:1px solid #ccc;border-radius:6px;">'
             . '<button type="submit" style="padding:10px;background:#00d1b2;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:15px;">' . _('Sign in') . '</button>'
             . '</form></div></body></html>';
-
-        return $this->htmlResponse($html);
     }
 
-    /** Render the self-contained consent page (200 HTML, Allow/Deny, no code). */
+    /** Render the consent page (200 HTML, Allow/Deny, no code) — project view or inline fallback. */
     private function renderConsent(AuthorizationRequest $authRequest, array $params): ResponseInterface
     {
-        $session    = $_SESSION[_AUTH_VAR] ?? null;
-        $csrf       = $this->ensureCsrf($session);
-        $clientName = htmlspecialchars((string) $authRequest->getClient()->getName(), ENT_QUOTES);
+        $session = $_SESSION[_AUTH_VAR] ?? null;
+        $csrf    = $this->ensureCsrf($session);
 
         // Children (and most adults) read this page: say what each scope
         // MEANS, never the raw identifier — "crm:write" on a kid's consent
@@ -324,9 +350,6 @@ class OAuthAuthorizeService extends Service
             $scopeItems = '<li style="padding:4px 0;">' . _('Basic access') . '</li>';
         }
 
-        $hidden = $this->hiddenParams($params) . $this->hiddenField('csrf', $csrf);
-        $action = htmlspecialchars($this->actionUrl(), ENT_QUOTES);
-
         // Defense in depth for account switching: name the signed-in user so
         // a lingering session cannot be Approved as someone else by mistake.
         $who = '';
@@ -337,27 +360,99 @@ class OAuthAuthorizeService extends Service
             ? '<p style="color:#333;font-weight:600;">' . sprintf(_('Signed in as %s'), htmlspecialchars($who, ENT_QUOTES)) . '</p>'
             : '';
 
-        $html = '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        return $this->htmlResponse(self::consentPageHtml([
+            'productName'      => Branding::productName(),
+            'logoUrl'          => Branding::logoUrl(),
+            'faviconUrl'       => Branding::faviconUrl(),
+            'clientName'       => (string) $authRequest->getClient()->getName(),
+            'whoHtml'          => $whoHtml,
+            'scopeItemsHtml'   => $scopeItems,
+            'actionUrl'        => $this->actionUrl(),
+            'hiddenFieldsHtml' => $this->hiddenParams($params) . $this->hiddenField('csrf', $csrf),
+        ]));
+    }
+
+    /**
+     * Full consent page HTML: project view (public/view/oauth-consent.php)
+     * or the inline default. Same var/escaping contract as loginPageHtml().
+     */
+    public static function consentPageHtml(array $vars, ?string $viewDir = null): string
+    {
+        $v    = self::escapePageVars($vars);
+        $html = self::renderView('oauth-consent.php', $v, $viewDir);
+        if ($html !== null) {
+            return $html;
+        }
+
+        return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             . '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            . '<title>' . _('Authorize access') . '</title></head>'
+            . '<title>' . $v['productName'] . ' — ' . _('Authorize access') . '</title></head>'
             . '<body style="font-family:Arial,Helvetica,sans-serif;background:#f4f6f8;margin:0;">'
             . '<div style="max-width:420px;margin:48px auto;background:#fff;padding:28px;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.08);">'
-            . '<h2 style="margin-top:0;color:#2f2f2f;">' . sprintf(_('Authorize %s'), '<strong>' . $clientName . '</strong>') . '</h2>'
-            . $whoHtml
-            . '<p style="color:#555;">' . sprintf(_('"%s" wants to connect to your account.'), $clientName) . '</p>'
+            . '<h2 style="margin-top:0;color:#2f2f2f;">' . sprintf(_('Authorize %s'), '<strong>' . $v['clientName'] . '</strong>') . '</h2>'
+            . $v['whoHtml']
+            . '<p style="color:#555;">' . sprintf(_('"%s" wants to connect to your %s account.'), $v['clientName'], $v['productName']) . '</p>'
             . '<p style="color:#555;margin-bottom:4px;">' . _('It will be able to:') . '</p>'
-            . '<ul style="color:#333;margin-top:0;">' . $scopeItems . '</ul>'
-            . '<form method="post" action="' . $action . '" style="display:flex;gap:12px;margin-top:18px;">'
-            . $hidden
+            . '<ul style="color:#333;margin-top:0;">' . $v['scopeItemsHtml'] . '</ul>'
+            . '<form method="post" action="' . $v['actionUrl'] . '" style="display:flex;gap:12px;margin-top:18px;">'
+            . $v['hiddenFieldsHtml']
             . '<button type="submit" name="consent" value="deny" style="flex:1;padding:10px;background:#eee;color:#333;border:0;border-radius:6px;cursor:pointer;font-size:15px;">' . _('Deny') . '</button>'
             . '<button type="submit" name="consent" value="allow" style="flex:1;padding:10px;background:#00d1b2;color:#fff;border:0;border-radius:6px;cursor:pointer;font-size:15px;">' . _('Allow') . '</button>'
             . '</form>'
-            . '<form method="post" action="' . $action . '" style="margin-top:14px;text-align:center;">'
-            . $hidden
+            . '<form method="post" action="' . $v['actionUrl'] . '" style="margin-top:14px;text-align:center;">'
+            . $v['hiddenFieldsHtml']
             . '<button type="submit" name="switch_account" value="1" style="background:none;border:0;color:#06c;cursor:pointer;font-size:14px;text-decoration:underline;padding:0;">' . _('Use a different account') . '</button>'
             . '</form></div></body></html>';
+    }
 
-        return $this->htmlResponse($html);
+    /**
+     * Normalize the page-var contract: scalar identity/URL vars are escaped
+     * here (the one escaping point for view AND fallback), *Html vars pass
+     * through as pre-built, pre-escaped HTML, and every key the views may
+     * reference is guaranteed present so a view never hits an undefined var.
+     */
+    private static function escapePageVars(array $vars): array
+    {
+        foreach (['productName', 'logoUrl', 'faviconUrl', 'clientName', 'actionUrl'] as $k) {
+            $vars[$k] = htmlspecialchars((string) ($vars[$k] ?? ''), ENT_QUOTES);
+        }
+        foreach (['errorHtml', 'hiddenFieldsHtml', 'scopeItemsHtml', 'whoHtml'] as $k) {
+            $vars[$k] = (string) ($vars[$k] ?? '');
+        }
+        return $vars;
+    }
+
+    /**
+     * Render a project view file with the given (already escaped) vars, or
+     * null when the view is absent, unreadable or throws — the caller then
+     * emits the inline fallback, so a broken project view can never 500 in
+     * the middle of an OAuth flow.
+     */
+    private static function renderView(string $file, array $vars, ?string $viewDir = null): ?string
+    {
+        $dir = $viewDir ?? (\defined('_BASE_DIR') ? _BASE_DIR . 'public/view/' : null);
+        if ($dir === null) {
+            return null;
+        }
+        $path = rtrim($dir, '/') . '/' . $file;
+        if (!\is_file($path) || !\is_readable($path)) {
+            return null;
+        }
+        $level = \ob_get_level();
+        try {
+            // Static closure: no $this, no service internals leak into the view.
+            return (static function (string $__path, array $__vars): string {
+                \extract($__vars, EXTR_SKIP);
+                \ob_start();
+                include $__path;
+                return (string) \ob_get_clean();
+            })($path, $vars);
+        } catch (\Throwable $e) {
+            while (\ob_get_level() > $level) {
+                \ob_end_clean();
+            }
+            return null;
+        }
     }
 
     /** Hidden inputs for every carried-over authorize param (escaped). */
