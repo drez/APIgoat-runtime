@@ -238,13 +238,29 @@ class GoogleDriveStorage implements FileStorageInterface
         return $this->normalize($resp, null);
     }
 
+    /**
+     * "Delete" = move to the Drive trash (restorable ~30 days), NOT
+     * files.delete — a UI delete must stay recoverable, and every listing /
+     * name probe here filters trashed=false, so a trashed item disappears
+     * from the app either way. Returns false when the item is already gone
+     * (404), matching the interface contract.
+     */
     public function delete(string $id): bool
     {
-        return $this->google->delete(
-            $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id)),
-            $this->scopes(),
-            $this->userEmail
-        );
+        try {
+            $this->google->patch(
+                $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id)),
+                ['trashed' => true],
+                $this->scopes(),
+                $this->userEmail
+            );
+            return true;
+        } catch (Exceptions\TransientError $e) {
+            if ($e->httpCode === 404) {
+                return false;
+            }
+            throw $e;
+        }
     }
 
     public function share(string $id, string $level): string
