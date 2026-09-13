@@ -14,7 +14,7 @@
 // The class implements PSR-15 MiddlewareInterface, so the PSR contracts must be
 // on the autoloader before it can be declared (the pure helpers under test need
 // no container, no request — just the class).
-require __DIR__ . '/../../../autoload.php';
+require __DIR__ . '/autoload.php';
 require __DIR__ . '/../src/Middlewares/OAuthResourceMiddleware.php';
 
 use ApiGoat\Middlewares\OAuthResourceMiddleware;

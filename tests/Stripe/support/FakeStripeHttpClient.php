@@ -31,7 +31,12 @@ final class FakeStripeHttpClient implements \Stripe\HttpClient\ClientInterface
         $this->responses = $responses;
     }
 
-    public function request($method, $absUrl, $headers, $params, $hasFile, $apiMode = 'v1')
+    /**
+     * $maxNetworkRetries was added to ClientInterface::request() in
+     * stripe-php v17; composer allows ^16 || ^17, and an implementation may
+     * declare extra OPTIONAL parameters, so this signature satisfies both.
+     */
+    public function request($method, $absUrl, $headers, $params, $hasFile, $apiMode = 'v1', $maxNetworkRetries = null)
     {
         $this->calls[] = ['method' => $method, 'url' => $absUrl, 'params' => $params ?: []];
 

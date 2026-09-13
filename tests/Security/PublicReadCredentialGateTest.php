@@ -188,7 +188,7 @@ namespace App {
 
 namespace {
 
-    require __DIR__ . '/../../vendor/autoload.php';                  // respect/validation, psr/*
+    require __DIR__ . '/../../vendor/autoload.php';                  // psr/*
     require_once __DIR__ . '/../../src/Utility/Legacy/html_helper.php'; // \camelize()
     require_once __DIR__ . '/../../src/ACL/AuthyACL.php';
     require_once __DIR__ . '/../../src/Api/Message.php';
