@@ -19,6 +19,9 @@ namespace ApiGoat\Domains\ThreadedList;
  */
 final class ThreadPage implements \IteratorAggregate, \Countable
 {
+    /** 0-based index of the row most recently handed out by the iterator below. */
+    private int $position = 0;
+
     /**
      * @param string[]              $keys           thread keys, in page order
      * @param array<string,object>  $representative key => the thread's newest row
@@ -60,10 +63,29 @@ final class ThreadPage implements \IteratorAggregate, \Countable
         return count($this->keys);
     }
 
-    /** IteratorAggregate: the row loop iterates representative rows directly. */
-    public function getIterator(): \ArrayIterator
+    /**
+     * IteratorAggregate: the row loop iterates representative rows directly.
+     * The generic list-row emitter (getList.php) calls $pcData->getPosition()
+     * on whatever it is handed, mid-iteration, for every row's data-iterator
+     * attribute — mirroring PropelObjectCollection, where the collection
+     * being iterated IS what tracks the cursor. A plain array or a
+     * position-less iterator (e.g. a bare ArrayIterator) has no such method
+     * and fatals mid-render, so this returns a Generator instead: as each
+     * row is yielded it updates $this->position, which getPosition() below
+     * reads back.
+     */
+    public function getIterator(): \Iterator
     {
-        return new \ArrayIterator($this->rows());
+        foreach ($this->rows() as $i => $row) {
+            $this->position = $i;
+            yield $row;
+        }
+    }
+
+    /** Mirrors PropelObjectCollection::getPosition(): current row's 0-based index. */
+    public function getPosition(): int
+    {
+        return $this->position;
     }
 
     /** Mirrors PropelModelPager::getMaxPerPage(). */
