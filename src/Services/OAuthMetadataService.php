@@ -83,11 +83,33 @@ class OAuthMetadataService extends Service
         ];
     }
 
+    /**
+     * RFC 9728. `resource` is an IDENTIFIER the client must recognise as the
+     * server it is talking to — clients accept the MCP URL they dialled or its
+     * ORIGIN, and reject anything else before a single token is minted.
+     *
+     * It used to be built from $base (_SITE_URL), which on the canonical
+     * GoatCheese layout carries the admin sub-directory: a client configured
+     * with https://host/api/v1/mcp was told the resource was
+     * https://host/.admin/api/v1/mcp and refused to authenticate —
+     * "Protected resource ... does not match expected ... (or origin)"
+     * (apigTutor, 2026-09-13; the MCP connector could not be re-added at all).
+     * Pointing the client at the /.admin/ URL instead does not fix it either,
+     * because the two spellings of the same endpoint are both legitimate and
+     * only one can ever be the advertised string.
+     *
+     * The ORIGIN is the one value that satisfies the check for BOTH spellings,
+     * so a sub-directory install advertises that — exactly as issuer() already
+     * does, and for the same reason. A root install is unchanged: there $base
+     * IS the origin.
+     */
     public static function protectedResourceMetadata(string $issuer, ?string $base = null): array
     {
-        $base = rtrim($base ?? $issuer, '/') . '/';
+        $resource = self::servesOriginDiscovery()
+            ? rtrim($issuer, '/')
+            : rtrim($base ?? $issuer, '/') . '/api/v1/mcp';
         return [
-            'resource' => $base . 'api/v1/mcp',
+            'resource' => $resource,
             'authorization_servers' => [$issuer],
             'scopes_supported' => self::SCOPES,
             'bearer_methods_supported' => ['header'],
