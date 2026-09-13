@@ -10,7 +10,6 @@ namespace ApiGoat\Api;
 
 use Criteria;
 use Exception;
-use Respect\Validation\Validator as v;
 use Psr\Log\InvalidArgumentException;
 
 /**

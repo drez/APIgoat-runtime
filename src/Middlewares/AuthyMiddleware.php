@@ -3,7 +3,7 @@ namespace ApiGoat\Middlewares;
 
 use ApiGoat\Api\ApiResponse;
 use ApiGoat\Handlers\InvalidSessionRenderer;
-use Apigoat\Sessions\AuthySession;
+use ApiGoat\Sessions\AuthySession;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
