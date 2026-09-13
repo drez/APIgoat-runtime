@@ -151,8 +151,12 @@ trait FormHelper
 
     public function getPager($pmpoData, $resultsCount, $search)
     {
-
-        if (get_class($pmpoData) != 'PropelModelPager') {
+        // A threaded list (set_list_threaded) hands this a ThreadPage instead
+        // of a PropelModelPager — it implements the same haveToPaginate() /
+        // getLastPage() / getMaxPerPage() contract this method needs, so it
+        // gets real pager UI too, not just a silent no-pager fallback.
+        if (get_class($pmpoData) != 'PropelModelPager'
+            && !($pmpoData instanceof \ApiGoat\Domains\ThreadedList\ThreadPage)) {
             return '';
         }
 

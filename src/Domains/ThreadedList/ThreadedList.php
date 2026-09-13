@@ -45,13 +45,13 @@ final class ThreadedList
         $total = self::countThreads(clone $filtered, $keyExpr);
 
         if ($keys === []) {
-            return new ThreadPage([], [], [], $total);
+            return new ThreadPage([], [], [], $total, $page, $perPage);
         }
 
         // ---- phase 2: describe them (unfiltered) ---------------------------
         [$rep, $counts] = self::describe($filtered, $cfg, $keyExpr, $keys);
 
-        return new ThreadPage($keys, $rep, $counts, $total);
+        return new ThreadPage($keys, $rep, $counts, $total, $page, $perPage);
     }
 
     /**
@@ -86,12 +86,20 @@ final class ThreadedList
      * So the bound does not fix a wrong-order bug; it trades that
      * config-dependent tie risk for a fixed, documented, portable one. Do not
      * read removing it as reintroducing a sort inversion.
+     *
+     * LIMITATION: ordering a threaded list by a joined column (a dotted
+     * `Relation.Column` / `Relation.Column.locale` sort key — the shape
+     * setOrderVar() accepts for the flat list) is not supported. `$col` would
+     * land in identifier position against THIS table's own alias
+     * (`{$t}.{$col}`), and a dotted name there is not a valid identifier —
+     * MySQL rejects it. Falls back to the date column (newest activity
+     * first) instead of emitting broken SQL.
      */
     private static function orderExpression(array $cfg): string
     {
         $t = $cfg['table'];
         $col = $cfg['sort_col'];
-        if ($col === null || $col === $cfg['date_col']) {
+        if ($col === null || $col === $cfg['date_col'] || str_contains($col, '.')) {
             return "MAX({$t}.{$cfg['date_col']})";
         }
         return "SUBSTRING_INDEX(GROUP_CONCAT(LEFT({$t}.{$col}, 255) ORDER BY {$t}.{$cfg['date_col']} DESC SEPARATOR 0x1D), 0x1D, 1)";
@@ -100,7 +108,11 @@ final class ThreadedList
     /** @return string[] */
     private static function pageKeys(\ModelCriteria $q, array $cfg, string $keyExpr, int $page, int $perPage): array
     {
-        $dir = strtolower($cfg['sort_dir']) === 'asc' ? \Criteria::ASC : \Criteria::DESC;
+        // sort_dir is null when the list has no active sort (getList.php's
+        // resolved-ordering snippet leaves $gcSortDir null in that case) —
+        // default to 'desc' at this boundary rather than deprecation-warn on
+        // strtolower(null).
+        $dir = strtolower((string) ($cfg['sort_dir'] ?? 'desc')) === 'asc' ? \Criteria::ASC : \Criteria::DESC;
         $rows = $q->withColumn($keyExpr, self::KEY_ALIAS)
             ->withColumn(self::orderExpression($cfg), self::ORDER_ALIAS)
             ->select([self::KEY_ALIAS, self::ORDER_ALIAS])
