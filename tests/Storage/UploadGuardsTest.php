@@ -68,4 +68,34 @@ final class UploadGuardsTest extends TestCase
         UploadGuards::ensureDir($this->dir, true, $this->dir . '/index.php');
         $this->assertFileExists($this->dir . '/index.php');
     }
+
+    public function testEnsureDirDefaultsToPrivateWhenNoThirdArgumentIsPassed(): void
+    {
+        // Crux of the whole change: callers that omit $private must still get
+        // the deny-all guard, not an accidentally-public one.
+        $this->assertSame('', UploadGuards::ensureDir($this->dir));
+        $body = (string) file_get_contents($this->dir . '/.htaccess');
+        $this->assertStringContainsString(UploadGuards::SENTINEL_PRIVATE, $body);
+        $this->assertStringContainsString('Require all denied', $body);
+    }
+
+    public function testPublicBodyGrantsAtTopLevelButStillDeniesPhpFiles(): void
+    {
+        $body = UploadGuards::htaccessBody(false);
+        // Top-level grant so a public:true subdirectory isn't shadowed by the
+        // parent public/file/ directory's deny-all (this was the bug: no
+        // top-level Require meant "public" was a no-op under inheritance).
+        $this->assertMatchesRegularExpression('/^Require all granted$/m', $body);
+        // But script execution inside <FilesMatch> for php variants is still denied.
+        $this->assertMatchesRegularExpression(
+            '/<FilesMatch[^>]*php[^>]*>\s*SetHandler none\s*Require all denied\s*<\/FilesMatch>/',
+            $body
+        );
+    }
+
+    public function testPrivateBodyNeverGrantsAtTopLevel(): void
+    {
+        $body = UploadGuards::htaccessBody(true);
+        $this->assertDoesNotMatchRegularExpression('/Require all granted/', $body);
+    }
 }

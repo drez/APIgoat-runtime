@@ -40,6 +40,7 @@ final class UploadGuards
     /** Opt-in public directory: no script execution, html/svg forced to download. */
     private const BODY_PUBLIC =
           "# GoatCheese PUBLIC upload directory (gc-upload-public) - no script execution\n"
+        . "Require all granted\n"
         . "<IfModule mod_php.c>\nphp_flag engine off\n</IfModule>\n"
         . "<IfModule mod_php7.c>\nphp_flag engine off\n</IfModule>\n"
         . "RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .phar .phps\n"
