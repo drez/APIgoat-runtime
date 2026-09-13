@@ -236,29 +236,12 @@ final class PdfGenerator
     }
 
     /**
-     * Mirror is_file_upload_table's directory hardening for direct writes:
-     * no script execution inside upload dirs + a directory-listing guard.
+     * Saved PDFs are private: the only read path is <Model>/pdfdownload, which
+     * streams from disk. Shares one implementation with is_file_upload_table.
      */
     private static function ensureHardenedDir(string $dir): void
     {
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
-        }
-        $ht = $dir . '/.htaccess';
-        if (!is_file($ht)) {
-            file_put_contents(
-                $ht,
-                "# gc:with_pdf — uploaded content must never execute\n"
-                . "SetHandler none\nSetHandler default-handler\n"
-                . "RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .cgi .pl .py\n"
-                . "RemoveType .php .phtml\nphp_flag engine off\n"
-                . "Options -ExecCGI -Indexes\n"
-            );
-        }
-        $ix = $dir . '/index.php';
-        if (!is_file($ix)) {
-            file_put_contents($ix, "<?php http_response_code(403);\n");
-        }
+        \ApiGoat\Storage\UploadGuards::ensureDir($dir, true, $dir . '/index.php');
     }
 
     // ── drive store ────────────────────────────────────────────────────────
