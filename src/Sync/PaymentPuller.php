@@ -112,8 +112,27 @@ final class PaymentPuller
         if ($this->sumPayments !== null) {
             return (float) ($this->sumPayments)($payTable, $invCol, $invPk, $amountCol);
         }
-        $st = \Propel::getConnection()->prepare("SELECT COALESCE(SUM({$amountCol}), 0) FROM {$payTable} WHERE {$invCol} = ?");
+        $st = \Propel::getConnection()->prepare(
+            'SELECT COALESCE(SUM(' . self::ident($amountCol) . '), 0) FROM ' . self::ident($payTable)
+            . ' WHERE ' . self::ident($invCol) . ' = ?'
+        );
         $st->execute([$invPk]);
         return (float) $st->fetchColumn();
+    }
+
+    /**
+     * Table/column names reach the SQL above as identifiers, which cannot be
+     * bound as parameters. They come from config/Built/sync.map.php (emitted
+     * by with_accounting_sync from the schema, so developer-trusted), but the
+     * same guard PdfStaleness::ident() and PdfGenerator apply belongs here:
+     * one malformed map entry should fail loudly, never build a query.
+     */
+    private static function ident(string $name): string
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $name)) {
+            throw new \InvalidArgumentException("Invalid SQL identifier '{$name}' in the sync map");
+        }
+
+        return $name;
     }
 }

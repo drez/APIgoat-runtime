@@ -155,16 +155,29 @@ class ToolRegistry
             if (in_array($name, $this->disabled, true)) {
                 continue;
             }
-            $right = $tool->requiredRight();
-            if ($right !== null) {
-                [$entity, $letter] = $right;
-                $granted = $session->isAdmin() || $session->hasRights($entity, $letter) !== false;
-                if (!$granted) {
-                    continue;   // omit tools the session can't use
-                }
+            if (!$this->granted($tool, $session)) {
+                continue;   // omit tools the session can't use
             }
             $out[] = ['name' => $tool->name(), 'description' => $tool->description(), 'inputSchema' => $tool->inputSchema()];
         }
         return $out;
+    }
+
+    /**
+     * Does $session hold the right $tool declares? This is the AUTHORIZATION
+     * decision, not a display filter: list() uses it to hide a tool and
+     * McpServer::call() uses it to refuse one. Keeping both on this single
+     * method is the point — when only list() consulted requiredRight(), a
+     * hidden tool stayed callable by name.
+     */
+    public function granted(McpTool $tool, AuthySession $session): bool
+    {
+        $right = $tool->requiredRight();
+        if ($right === null) {
+            return true;    // no declared right (crm_* gate through Api's ACL)
+        }
+        [$entity, $letter] = $right;
+
+        return $session->isAdmin() || $session->hasRights($entity, $letter) !== false;
     }
 }

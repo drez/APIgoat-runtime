@@ -717,10 +717,15 @@ class Assets
                 $localPath = $link;
             }
             // Fetch link content
+            // Only genuinely remote (CDN / cross-origin) links reach the
+            // network here — same-origin ones were resolved to a filesystem
+            // path above, so a local self-signed cert is never involved.
+            // Verify the peer: an unverified fetch lets anyone on the path
+            // put arbitrary JS/CSS into the built bundle.
             $arrContextOptions = [
                 "ssl" => [
-                    "verify_peer"      => false,
-                    "verify_peer_name" => false,
+                    "verify_peer"      => true,
+                    "verify_peer_name" => true,
                 ],
             ];
 

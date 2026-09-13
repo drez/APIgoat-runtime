@@ -551,14 +551,6 @@ class AuthySession
         }
     }
 
-    function isSecure()
-    {
-        if ($this->ip == $_SERVER['REMOTE_ADDR'] && $this->sess_id == md5(session_id()))
-            return true;
-        else
-            return false;
-    }
-
     public function isConnected()
     {
         if ($this->isConnected == 'YES')

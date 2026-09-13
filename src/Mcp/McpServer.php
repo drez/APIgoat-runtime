@@ -157,6 +157,17 @@ class McpServer
             throw new \DomainException("Unknown tool '{$name}'", -32602);
         }
         try {
+            // The registry's rights check is an authorization gate, not just a
+            // list filter: a tool hidden from tools/list must not be reachable
+            // by name through tools/call.
+            if (!$this->registry->granted($tool, $session)) {
+                throw new ToolError(
+                    "You do not have access to '{$name}'.",
+                    [],
+                    'not_permitted'
+                );
+            }
+
             return $tool->handle((array) ($params['arguments'] ?? []), $session);
         } catch (ToolError $te) {
             $msgs = $te->messages;
