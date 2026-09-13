@@ -75,12 +75,17 @@ final class ThreadedList
      *
      * CONTRACT: ordering uses only the first 255 characters of the newest
      * message's value. Each concatenated value is bounded with LEFT(..., 255)
-     * before GROUP_CONCAT so the newest one — first in the ORDER BY DESC feed
-     * — can never itself exceed group_concat_max_len (default 1024 bytes) and
-     * get silently dropped from the tail; a stray 0x1D separator byte inside a
-     * value then only shortens that value's contribution to a prefix, never
-     * picks up a different row's value. Long values sort by their first 255
-     * characters, not their full text.
+     * before GROUP_CONCAT so that bound — not the server's group_concat_max_len
+     * (default 1024 bytes, but configurable, and this project's server is set
+     * to 1MB) — decides where a long value gets cut. Without it, a sort_col
+     * value longer than the server's actual limit would still be truncated
+     * (MySQL truncates from the tail, so the newest value survives regardless
+     * of how long any other message's value is) — but the CUT POINT would vary
+     * by server config, and truncating two threads' keys to a common length
+     * can only ever collapse a true strict order into a TIE, never invert it.
+     * So the bound does not fix a wrong-order bug; it trades that
+     * config-dependent tie risk for a fixed, documented, portable one. Do not
+     * read removing it as reintroducing a sort inversion.
      */
     private static function orderExpression(array $cfg): string
     {
