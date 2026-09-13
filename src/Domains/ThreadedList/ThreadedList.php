@@ -54,11 +54,17 @@ final class ThreadedList
         return new ThreadPage($keys, $rep, $counts, $total);
     }
 
-    /** COALESCE(NULLIF(thread,''), 'pk:'||pk) — keyless rows become threads of one. */
+    /**
+     * COALESCE(NULLIF(thread,''), CONCAT('pk:', pk)) — keyless rows become
+     * threads of one. Both branches are prefixed ('t:' for a real thread key,
+     * 'pk:' for a synthetic one) so a real provider thread id that happened to
+     * read as "pk:<some row's pk>" can never collide with — and silently
+     * merge into — an unrelated keyless row's synthetic key.
+     */
     private static function keyExpression(array $cfg): string
     {
         $t = $cfg['table'];
-        return "COALESCE(NULLIF({$t}.{$cfg['thread_col']}, ''), CONCAT('pk:', {$t}.{$cfg['pk_col']}))";
+        return "COALESCE(CONCAT('t:', NULLIF({$t}.{$cfg['thread_col']}, '')), CONCAT('pk:', {$t}.{$cfg['pk_col']}))";
     }
 
     /**
@@ -66,6 +72,15 @@ final class ThreadedList
      * the newest. Any other column must come from the REPRESENTATIVE row:
      * MAX() on a varchar is alphabetical, so it would sort a conversation under
      * a sender that is not the one displayed.
+     *
+     * CONTRACT: ordering uses only the first 255 characters of the newest
+     * message's value. Each concatenated value is bounded with LEFT(..., 255)
+     * before GROUP_CONCAT so the newest one — first in the ORDER BY DESC feed
+     * — can never itself exceed group_concat_max_len (default 1024 bytes) and
+     * get silently dropped from the tail; a stray 0x1D separator byte inside a
+     * value then only shortens that value's contribution to a prefix, never
+     * picks up a different row's value. Long values sort by their first 255
+     * characters, not their full text.
      */
     private static function orderExpression(array $cfg): string
     {
@@ -74,7 +89,7 @@ final class ThreadedList
         if ($col === null || $col === $cfg['date_col']) {
             return "MAX({$t}.{$cfg['date_col']})";
         }
-        return "SUBSTRING_INDEX(GROUP_CONCAT({$t}.{$col} ORDER BY {$t}.{$cfg['date_col']} DESC SEPARATOR 0x1D), 0x1D, 1)";
+        return "SUBSTRING_INDEX(GROUP_CONCAT(LEFT({$t}.{$col}, 255) ORDER BY {$t}.{$cfg['date_col']} DESC SEPARATOR 0x1D), 0x1D, 1)";
     }
 
     /** @return string[] */
