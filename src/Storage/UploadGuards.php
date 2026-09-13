@@ -33,7 +33,9 @@ final class UploadGuards
         . "<IfModule mod_php.c>\nphp_flag engine off\n</IfModule>\n"
         . "<IfModule mod_php7.c>\nphp_flag engine off\n</IfModule>\n"
         . "RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .phar .phps\n"
-        . "RemoveType .php .phtml .php3 .php4 .php5 .php7 .phar .phps\n";
+        . "RemoveType .php .phtml .php3 .php4 .php5 .php7 .phar .phps\n"
+        . "<FilesMatch \"\\.(php[0-9]?|phtml|phar|phps)$\">\n"
+        . "SetHandler none\nRequire all denied\n</FilesMatch>\n";
 
     /** Opt-in public directory: no script execution, html/svg forced to download. */
     private const BODY_PUBLIC =

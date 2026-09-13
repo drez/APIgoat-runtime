@@ -29,6 +29,11 @@ final class UploadGuardsTest extends TestCase
         $this->assertStringContainsString('Require all denied', $body);
         $this->assertStringContainsString(UploadGuards::SENTINEL_PRIVATE, $body);
         $this->assertStringNotContainsString(UploadGuards::SENTINEL_PUBLIC, $body);
+        // Defense-in-depth: handler neutralization blocks execution even if directory access is granted
+        $this->assertStringContainsString('RemoveHandler', $body);
+        $this->assertStringContainsString('RemoveType', $body);
+        $this->assertStringContainsString('<FilesMatch', $body);
+        $this->assertStringContainsString('SetHandler none', $body);
     }
 
     public function testPublicBodyDoesNotDenyReadsButStillKillsScripts(): void
