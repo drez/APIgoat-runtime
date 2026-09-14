@@ -80,6 +80,24 @@ final class OpenAiChat implements ChatDriver
             }
         }
 
+        // Provider-specific fields the OpenAI shape does not define: Ollama's
+        // `think`, vLLM/SGLang's `chat_template_kwargs.enable_thinking`, and
+        // whatever the next runtime invents. Without this the body is closed
+        // and a caller cannot reach them at all — which is how apigmail ended
+        // up disabling Qwen3 reasoning by hand-editing a Modelfile TEMPLATE,
+        // a hack that does not survive a model upgrade.
+        //
+        // Merged LAST but never allowed to overwrite what this method built,
+        // so `extra` can add to the request and cannot corrupt the model,
+        // the messages or the response format.
+        if (isset($opts['extra']) && \is_array($opts['extra'])) {
+            foreach ($opts['extra'] as $k => $v) {
+                if (!\array_key_exists($k, $body)) {
+                    $body[$k] = $v;
+                }
+            }
+        }
+
         return $body;
     }
 

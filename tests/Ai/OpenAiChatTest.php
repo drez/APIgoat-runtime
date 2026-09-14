@@ -56,6 +56,44 @@ final class OpenAiChatTest extends TestCase
         self::assertArrayNotHasKey('response_format', $native);
     }
 
+    /**
+     * Provider-specific fields the OpenAI shape does not define — Ollama's
+     * `think`, vLLM/SGLang's `chat_template_kwargs`. Without a passthrough
+     * the body is closed and a caller cannot reach them, which is what forced
+     * one project to disable Qwen3 reasoning by hand-editing a Modelfile
+     * TEMPLATE instead.
+     */
+    public function testExtraAddsProviderSpecificFields(): void
+    {
+        $body = OpenAiChat::buildBody(AiProfile::forTenant(1), [['role' => 'user', 'content' => 'hi']], [
+            'extra' => ['think' => false, 'chat_template_kwargs' => ['enable_thinking' => false]],
+        ]);
+
+        self::assertFalse($body['think']);
+        self::assertSame(['enable_thinking' => false], $body['chat_template_kwargs']);
+    }
+
+    /** `extra` may ADD to the request; it must never corrupt what buildBody set. */
+    public function testExtraCannotOverwriteTheBuiltBody(): void
+    {
+        $body = OpenAiChat::buildBody(AiProfile::forTenant(1), [['role' => 'user', 'content' => 'hi']], [
+            'max_tokens' => 300,
+            'extra'      => ['model' => 'evil:1b', 'messages' => [], 'max_tokens' => 99999],
+        ]);
+
+        self::assertSame('gm-triage:v1', $body['model']);
+        self::assertSame([['role' => 'user', 'content' => 'hi']], $body['messages']);
+        self::assertSame(300, $body['max_tokens']);
+    }
+
+    /** No `extra` ⇒ the body is exactly what it was before. */
+    public function testWithoutExtraTheBodyIsUnchanged(): void
+    {
+        $body = OpenAiChat::buildBody(AiProfile::forTenant(1), [['role' => 'user', 'content' => 'hi']]);
+
+        self::assertSame(['model', 'messages'], \array_keys($body));
+    }
+
     public function testCompleteThreadsProfileOptsAndParsesAnswer(): void
     {
         $seen = null;
