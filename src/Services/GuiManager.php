@@ -31,17 +31,24 @@ class GuiManager extends Service
     {
         $this->body['status'] = 'failure';
 
-        $p = $this->args['p'];
-        $act = $this->args['act'];
-        $i = $this->args['i'];
-        $a = $this->args['a'];
-        $ms = $this->args['ms'];
-        $d = $this->args['d'];
-        $ogf = $this->args['ogf'];
-        $v = $this->args['v'];
-        $nomem = $this->args['nomem'];
-        $Autoc = $this->args['who'];
-        $h = $this->args['h'];
+        // Every one of these is an OPTIONAL query parameter — the GUI sends
+        // the two or three its current action needs, never all eleven — so
+        // reading them unguarded emitted ~10 "Undefined array key" warnings
+        // per request into php-error.log on every page render. '' rather
+        // than null keeps the loose comparisons below ($a == 'alive',
+        // $i != '') behaving exactly as they did for a present-but-empty
+        // parameter.
+        $p = $this->args['p'] ?? '';
+        $act = $this->args['act'] ?? '';
+        $i = $this->args['i'] ?? '';
+        $a = $this->args['a'] ?? '';
+        $ms = $this->args['ms'] ?? '';
+        $d = $this->args['d'] ?? '';
+        $ogf = $this->args['ogf'] ?? '';
+        $v = $this->args['v'] ?? '';
+        $nomem = $this->args['nomem'] ?? '';
+        $Autoc = $this->args['who'] ?? '';
+        $h = $this->args['h'] ?? '';
 
         if ($a == 'alive') {
             $this->body['status'] = 'success';

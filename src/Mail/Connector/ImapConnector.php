@@ -112,7 +112,14 @@ class ImapConnector extends BaseConnector
             // Cold start takes the NEWEST slice; anything older in the window is not coming — flag it.
             $next   = $complete ? max($serverNext, ($picked === [] ? 1 : max($picked) + 1)) : max($picked) + 1;
             $state  = MailboxState::imap($uidvalidity, $next, $folder);
-            return new FetchResult($rows, $state, true, true, $reason);
+            // `complete` reports whether this listing is the WHOLE window or
+            // the truncated newest slice. It used to be hardcoded true even
+            // when $complete computed false, which made a truncated listing
+            // claim to be exhaustive — and a caller that treats "absent from
+            // a complete listing" as "deleted server-side" would then mark
+            // every older message in the window. Measured on a 428-message
+            // folder with $max = 200: 228 rows would have been marked gone.
+            return new FetchResult($rows, $state, $complete, true, $reason);
         }
 
         $from     = (int) $cursor->uidnext();
