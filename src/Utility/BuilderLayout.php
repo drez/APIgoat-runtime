@@ -418,6 +418,10 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                 . $dim
                 . div(
                     $topbar
+                    // Background-health notices (LayoutNotices providers).
+                    // '' when no project registered one, so the markup is
+                    // unchanged for every project that does not opt in.
+                    . LayoutNotices::render()
                     . div(div($content['html'], 'tabsContain'), '', 'class="content-wrapper"')
                     . div('', 'editPane', 'class="edit-pane-hidden"'),
                     '',
