@@ -149,6 +149,22 @@ final class PublicResponseCacheMiddlewareTest extends TestCase
         self::assertSame('BYPASS', $res->getHeaderLine('X-GC-Cache'));
     }
 
+    /**
+     * Apache's `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1` (project
+     * .htaccess) leaves an EMPTY Authorization header on every anonymous
+     * request; only a non-empty value may bypass (found on the first local
+     * probe: every declared route bypassed with reason auth-header).
+     */
+    public function testEmptyAuthorizationHeaderStillCaches(): void
+    {
+        $app = $this->app();
+        $this->get($app, '/api/v1/Thing/list', ['Authorization' => '']);
+        $res = $this->get($app, '/api/v1/Thing/list', ['Authorization' => '']);
+
+        self::assertSame(1, $this->calls);
+        self::assertSame('HIT', $res->getHeaderLine('X-GC-Cache'));
+    }
+
     public function testXAuthorizationHeaderBypasses(): void
     {
         $app = $this->app();

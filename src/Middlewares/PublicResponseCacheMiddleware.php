@@ -85,13 +85,28 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
             $plan = null;
         }
 
-        // OFF: not our concern, hand the request on untouched.
+        // OFF: not our concern, hand the request on untouched (with VERIFY on,
+        // say why — the route is not declared, or it is not an API path).
         if ($plan === null) {
             return $handler->handle($request);
         }
+        if ($plan['mode'] === 'off') {
+            $response = $handler->handle($request);
+            if (PublicCacheMap::verify() && !empty($plan['reason'])) {
+                $response = $response->withHeader(self::HEADER . '-Reason', 'off:' . (string) $plan['reason']);
+            }
+            return $response;
+        }
 
         if ($plan['mode'] === 'bypass') {
-            return $handler->handle($request)->withHeader(self::HEADER, 'BYPASS');
+            $response = $handler->handle($request)->withHeader(self::HEADER, 'BYPASS');
+            // Diagnostics ride on the VERIFY switch: say WHY a declared route
+            // was not served from cache (auth header, connected session, a
+            // bypass param, an unlisted param, oversized query).
+            if (PublicCacheMap::verify() && !empty($plan['reason'])) {
+                $response = $response->withHeader(self::HEADER . '-Reason', (string) $plan['reason']);
+            }
+            return $response;
         }
 
         $key = $plan['key'];
@@ -144,36 +159,39 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
         }
         $args = $request->getAttribute('parsed_args');
         if (!\is_array($args) || empty($args['is_api'])) {
-            return null;
+            return ['mode' => 'off', 'reason' => 'not-api'];
         }
         $model  = (string) ($args['model'] ?? '');
         $action = (string) ($args['action'] ?? '');
         $decl   = PublicCacheMap::lookup($model, $action, 'GET');
         if ($decl === null) {
-            return null;
+            return ['mode' => 'off', 'reason' => 'undeclared:' . $model . '/' . $action . '/GET'];
         }
 
         // --- anonymity gate: anything that could personalise the bytes => BYPASS
-        if ($request->hasHeader('Authorization') || $request->hasHeader('X-Authorization')) {
-            return ['mode' => 'bypass'];
+        // Non-EMPTY only: Apache's `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1`
+        // (project .htaccess) leaves an empty Authorization header on every
+        // request, so presence alone would bypass everything.
+        if ($request->getHeaderLine('Authorization') !== '' || $request->getHeaderLine('X-Authorization') !== '') {
+            return ['mode' => 'bypass', 'reason' => 'auth-header'];
         }
         if ($this->guiSessionConnected()) {
-            return ['mode' => 'bypass'];
+            return ['mode' => 'bypass', 'reason' => 'session-connected'];
         }
         if ($request->getAttribute(self::ATTR_SKIP)) {
-            return ['mode' => 'bypass'];
+            return ['mode' => 'bypass', 'reason' => 'skip-attribute'];
         }
 
         $query = \is_array($args['query'] ?? null) ? $args['query'] : $request->getQueryParams();
         foreach ($decl['bypass_params'] as $p) {
             if (\array_key_exists($p, $query)) {
-                return ['mode' => 'bypass'];
+                return ['mode' => 'bypass', 'reason' => 'bypass-param:' . $p];
             }
         }
         if (\is_array($decl['params'])) {
             foreach (\array_keys($query) as $k) {
                 if (!\in_array((string) $k, $decl['params'], true)) {
-                    return ['mode' => 'bypass'];
+                    return ['mode' => 'bypass', 'reason' => 'param-not-allowed:' . $k];
                 }
             }
         }
@@ -186,7 +204,7 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
         $build = PublicCacheMap::load()['_build'];
         $key   = PublicCacheMap::key($decl, 'GET', $route, $query, $vary, $build);
         if ($key === null) {
-            return ['mode' => 'bypass'];
+            return ['mode' => 'bypass', 'reason' => 'query-too-large'];
         }
 
         $ttl   = (int) $decl['ttl'];
