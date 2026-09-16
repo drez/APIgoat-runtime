@@ -4,6 +4,73 @@ namespace ApiGoat\Utility;
 
 trait FormHelper
 {
+    // ---- custom drawer tabs ------------------------------------------------
+
+    /**
+     * Extra drawer tabs a FormWrapper hook (typically afterFormObj) registers
+     * for the current record — a rendered preview, a related document, an
+     * email — beside the tabs add_tab_columns generates from columns. Consumed
+     * by the generated getEditForm() through renderFormCustomTabs().
+     *
+     * @var array<int, array{label:string, key:string, html:string, first:bool}>
+     */
+    public array $formCustomTabs = [];
+
+    /**
+     * Register a custom drawer tab. Requires add_tab_columns on the table
+     * (the generated form throws otherwise — a tab with no tab strip to live
+     * in is a build mistake, not something to hide).
+     *
+     * @param string $label visible tab text — translate it yourself (_('Email'))
+     * @param string $html  the pane body; ALREADY safe HTML (escape / sanitize before calling)
+     * @param array{first?:bool, key?:string} $opts
+     *        first ⇒ precedes the generated tabs and is the one open on load
+     *              (the first registered `first` tab wins; the generated first
+     *              tab is demoted); default ⇒ appended after the generated tabs.
+     *        key   ⇒ stable id fragment ([a-z0-9_]); defaults to a slug of the label.
+     */
+    public function addFormTab(string $label, string $html, array $opts = []): void
+    {
+        $key = strtolower((string) preg_replace('/[^A-Za-z0-9_]+/', '_', (string) ($opts['key'] ?? $label)));
+        $key = trim($key, '_');
+        if ($key === '') {
+            throw new \InvalidArgumentException('addFormTab: the key (or label) must contain a letter or digit');
+        }
+        $this->formCustomTabs[] = ['label' => $label, 'key' => $key, 'html' => $html, 'first' => !empty($opts['first'])];
+    }
+
+    /**
+     * Markup for the registered custom tabs, for the generated getEditForm():
+     * [navFirst, navLast, panesFirst, panesLast, generatedFirstTabActive].
+     * Pane ids are namespaced tab_x_<key> so they can never collide with the
+     * generated tab_<column> / tab_<Table> ids.
+     *
+     * @return array{0:string, 1:string, 2:string, 3:string, 4:bool}
+     */
+    public function renderFormCustomTabs(): array
+    {
+        $navFirst = $navLast = $panesFirst = $panesLast = '';
+        $activeTaken = false;
+        foreach ($this->formCustomTabs as $t) {
+            $id     = 'tab_x_' . $t['key'];
+            $active = $t['first'] && !$activeTaken;
+            $activeTaken = $activeTaken || $active;
+            $label  = htmlspecialchars($t['label'], ENT_QUOTES, 'UTF-8');
+            $btn  = '<button type="button" class="tab-btn' . ($active ? ' is-active' : '') . '" role="tab" data-tab="' . $id . '"'
+                  . ' aria-selected="' . ($active ? 'true' : 'false') . '" aria-controls="' . $id . '">' . $label . '</button>';
+            $pane = '<div id="' . $id . '" class="tab-pane' . ($active ? ' is-active' : '') . '" role="tabpanel" data-tab="' . $id . '"'
+                  . ($active ? '' : ' hidden') . '>' . $t['html'] . '</div>';
+            if ($t['first']) {
+                $navFirst   .= $btn;
+                $panesFirst .= $pane;
+            } else {
+                $navLast   .= $btn;
+                $panesLast .= $pane;
+            }
+        }
+        return [$navFirst, $navLast, $panesFirst, $panesLast, !$activeTaken];
+    }
+
 
     private function setCriteria($value, &$criteria)
     {
