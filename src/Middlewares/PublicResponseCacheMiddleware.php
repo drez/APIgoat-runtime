@@ -67,6 +67,10 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
 {
     public const HEADER = 'X-GC-Cache';
 
+    /** Seconds a stale entry may still be served after its TTL while one request refreshes it. */
+    public const STALE_GRACE_SECONDS = 30;
+    /** Seconds the refresh lock lives (bounded so a crashed refresher never wedges the key). */
+    public const REFRESH_LOCK_SECONDS = 10;
     /** Request attribute a handler can set (or a project middleware before us) to force BYPASS. */
     public const ATTR_SKIP = 'gc_httpcache_skip';
 
@@ -112,9 +116,9 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
         $key = $plan['key'];
         $ttl = $plan['ttl'];
 
-        if ($plan['mode'] === 'hit') {
+        if ($plan['mode'] === 'hit' || $plan['mode'] === 'stale') {
             try {
-                return $this->serveHit($plan['entry'], $ttl);
+                return $this->serveHit($plan['entry'], $ttl, $plan['mode'] === 'stale' ? 'STALE' : 'HIT');
             } catch (\Throwable $e) {
                 return $handler->handle($request);
             }
@@ -215,7 +219,21 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
             return ['mode' => 'verify', 'key' => $key, 'ttl' => $ttl, 'route' => $route, 'entry' => $entry];
         }
         if ($isHit) {
-            return ['mode' => 'hit', 'key' => $key, 'ttl' => $ttl, 'route' => $route, 'entry' => $entry];
+            $freshUntil = (int) ($entry['fresh_until'] ?? 0);
+            if ($freshUntil === 0 || \time() < $freshUntil) {
+                return ['mode' => 'hit', 'key' => $key, 'ttl' => $ttl, 'route' => $route, 'entry' => $entry];
+            }
+            // Stale-while-revalidate: the entry outlived its TTL but is still
+            // in the grace window. ONE request takes the refresh lock and
+            // recomputes; everyone else keeps being served the stale bytes.
+            // Without this, every client that arrives in the same second as
+            // the expiry misses together and the handler runs N times at once
+            // (a 40-client load test turned a 60 s TTL into 17 s stalls).
+            if (MicroCache::get($key . ':lock') === null) {
+                MicroCache::put($key . ':lock', self::REFRESH_LOCK_SECONDS, 1);
+                return ['mode' => 'miss', 'key' => $key, 'ttl' => $ttl, 'route' => $route];
+            }
+            return ['mode' => 'stale', 'key' => $key, 'ttl' => $ttl, 'route' => $route, 'entry' => $entry];
         }
         return ['mode' => 'miss', 'key' => $key, 'ttl' => $ttl, 'route' => $route];
     }
@@ -238,14 +256,14 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
     }
 
     /** @param array{status?:int,ctype:string,body:string} $entry */
-    private function serveHit(array $entry, int $ttl): ResponseInterface
+    private function serveHit(array $entry, int $ttl, string $label = 'HIT'): ResponseInterface
     {
         $t0 = \hrtime(true);
 
         $response = (new ResponseFactory())->createResponse((int) ($entry['status'] ?? 200))
             ->withBody((new StreamFactory())->createStream($entry['body']))
             ->withHeader('Content-Type', (string) $entry['ctype']);
-        $response = $this->stampPublic($response, $ttl)->withHeader(self::HEADER, 'HIT');
+        $response = $this->stampPublic($response, $ttl)->withHeader(self::HEADER, $label);
 
         if (\class_exists(\ApiGoat\Utility\Timing::class)) {
             \ApiGoat\Utility\Timing::add('cache', (\hrtime(true) - $t0) / 1e6);
@@ -273,7 +291,16 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
             return $response->withHeader(self::HEADER, 'BYPASS');
         }
 
-        MicroCache::put($key, $ttl, ['status' => 200, 'ctype' => $ctype, 'body' => $body]);
+        // Kept for ttl + grace so a stale copy exists to serve while one
+        // request refreshes (see decide()); fresh_until marks the real TTL.
+        $grace = \min($ttl, self::STALE_GRACE_SECONDS);
+        MicroCache::put($key, $ttl + $grace, [
+            'status'      => 200,
+            'ctype'       => $ctype,
+            'body'        => $body,
+            'fresh_until' => \time() + $ttl,
+        ]);
+        MicroCache::forget($key . ':lock');
 
         return $this->stampPublic($response, $ttl)->withHeader(self::HEADER, 'MISS');
     }

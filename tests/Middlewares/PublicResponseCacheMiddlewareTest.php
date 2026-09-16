@@ -165,6 +165,48 @@ final class PublicResponseCacheMiddlewareTest extends TestCase
         self::assertSame('HIT', $res->getHeaderLine('X-GC-Cache'));
     }
 
+    /**
+     * Stale-while-revalidate: past its TTL but inside the grace window, an
+     * entry is still served (STALE) while exactly one request refreshes it.
+     */
+    public function testStaleEntryIsServedWhileOneRequestRefreshes(): void
+    {
+        $app = $this->app();
+        $key = null;
+        $this->onRequest = static function (ServerRequestInterface $r) use (&$key): void {
+            $info = $r->getAttribute('gc_httpcache');
+            if (\is_array($info) && isset($info['key'])) {
+                $key = $info['key'];
+            }
+        };
+        $first = $this->get($app, '/api/v1/Thing/list');
+        self::assertSame('MISS', $first->getHeaderLine('X-GC-Cache'));
+        self::assertSame(1, $this->calls);
+        self::assertIsString($key);
+
+        // Age the entry past its TTL (still inside ttl + grace).
+        $entry = MicroCache::get($key);
+        self::assertIsArray($entry);
+        $entry['fresh_until'] = time() - 1;
+        MicroCache::put($key, 90, $entry);
+
+        // First arrival takes the refresh lock and recomputes.
+        $refresh = $this->get($app, '/api/v1/Thing/list');
+        self::assertSame('MISS', $refresh->getHeaderLine('X-GC-Cache'));
+        self::assertSame(2, $this->calls);
+
+        // Age it again and pre-hold the lock: the next arrival must be served stale, no handler call.
+        $entry = MicroCache::get($key);
+        $entry['fresh_until'] = time() - 1;
+        MicroCache::put($key, 90, $entry);
+        MicroCache::put($key . ':lock', 10, 1);
+        $stale = $this->get($app, '/api/v1/Thing/list');
+        self::assertSame('STALE', $stale->getHeaderLine('X-GC-Cache'));
+        self::assertSame(2, $this->calls);
+        // The stale copy is the REFRESHED entry (the second handler run), not the original.
+        self::assertSame((string) $refresh->getBody(), (string) $stale->getBody());
+    }
+
     public function testXAuthorizationHeaderBypasses(): void
     {
         $app = $this->app();
