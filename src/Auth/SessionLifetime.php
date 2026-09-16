@@ -67,6 +67,9 @@ final class SessionLifetime
         if (session_status() !== PHP_SESSION_NONE) {
             return;
         }
+        if (self::shouldDeferGuiSession($_SERVER, $_COOKIE)) {
+            return;
+        }
         $lifetime = self::guiDays() * 86400;
 
         // Long-lived sessions need a project-local save path: distro session
@@ -90,7 +93,7 @@ final class SessionLifetime
             }
         }
 
-        session_name('ApiGoat');
+        session_name(self::GUI_COOKIE);
         session_set_cookie_params([
             'lifetime' => $lifetime,
             'httponly' => true,
@@ -101,6 +104,57 @@ final class SessionLifetime
                 || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'),
         ]);
         session_start();
+    }
+
+    /** Cookie name startGuiSession() registers via session_name(). */
+    public const GUI_COOKIE = 'ApiGoat';
+
+    /**
+     * Should the GUI session boot be skipped for this request?
+     *
+     * Why: every anonymous public API GET (feeds, browse lists, category
+     * trees — the traffic PublicResponseCacheMiddleware exists for) used to
+     * mint a brand-new session file in tmp/sessions AND a Set-Cookie on
+     * every response, because startGuiSession() ran unconditionally from
+     * legacy.php. Thousands of one-shot files for visitors that never log in,
+     * plus a cookie that makes every shared cache treat the response as
+     * personal. Deferring costs nothing downstream: $_SESSION keeps working
+     * as a plain (empty) array, so the `connected` / `isRoot` reads in the
+     * RBAC, TableVersion::tenantToken() and the actions all see "not logged
+     * in" exactly as they would with a fresh empty session.
+     *
+     * Pure: takes $_SERVER / $_COOKIE as arguments so the truth table is
+     * unit-testable without a session. True only when ALL of:
+     *   - GC_SESSION_DEFER_ANON_API is truthy (OPT-IN: a project could
+     *     legitimately log a user in from a GET — an email magic link, an
+     *     OAuth callback routed under /api/ — and that write must persist);
+     *   - the method is GET or HEAD (a POST may be a login);
+     *   - no `ApiGoat` session cookie (a returning user must be re-hydrated);
+     *   - no Authorization / X-Authorization header (bearer flows may write
+     *     to the session before SessionReleaseMiddleware closes it);
+     *   - the path is an API route (/api/vN/): GUI pages always get a session.
+     *
+     * @param array<string,mixed> $server  $_SERVER
+     * @param array<string,mixed> $cookies $_COOKIE
+     */
+    public static function shouldDeferGuiSession(array $server, array $cookies): bool
+    {
+        $flag = \function_exists('env') ? env('GC_SESSION_DEFER_ANON_API') : getenv('GC_SESSION_DEFER_ANON_API');
+        if (!in_array(strtolower(trim((string) $flag)), ['1', 'true', 'yes'], true)) {
+            return false;
+        }
+        $method = strtoupper((string) ($server['REQUEST_METHOD'] ?? ''));
+        if ($method !== 'GET' && $method !== 'HEAD') {
+            return false;
+        }
+        if (isset($cookies[self::GUI_COOKIE]) && (string) $cookies[self::GUI_COOKIE] !== '') {
+            return false;
+        }
+        if (!empty($server['HTTP_AUTHORIZATION']) || !empty($server['HTTP_X_AUTHORIZATION'])) {
+            return false;
+        }
+        $path = (string) parse_url((string) ($server['REQUEST_URI'] ?? ''), PHP_URL_PATH);
+        return (bool) preg_match('#/api/v[0-9]+/#', $path);
     }
 
     private static function envDays(string $key, int $max): ?int
