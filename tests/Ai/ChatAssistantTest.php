@@ -11,6 +11,9 @@ use ApiGoat\Ai\Chat\ChatFailed;
 use ApiGoat\Ai\Chat\ChatResult;
 use ApiGoat\Ai\Chat\ContextBundle;
 use ApiGoat\Ai\Chat\ContextProvider;
+use ApiGoat\Ai\Chat\OllamaChat;
+use ApiGoat\Ai\Chat\OpenAiChat;
+use ApiGoat\Tests\Ai\Support\ManifestFixture;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../src/Ai/AiManifest.php';
@@ -22,7 +25,12 @@ require_once __DIR__ . '/../../src/Ai/Chat/ContextProvider.php';
 require_once __DIR__ . '/../../src/Ai/Chat/ContextBundle.php';
 require_once __DIR__ . '/../../src/Ai/Chat/ChatAnswer.php';
 require_once __DIR__ . '/../../src/Ai/Chat/ChatFailed.php';
+require_once __DIR__ . '/../../src/Ai/AiUsageLogger.php';
+require_once __DIR__ . '/../../src/Ai/AiGateway.php';
+require_once __DIR__ . '/../../src/Ai/Chat/OpenAiChat.php';
+require_once __DIR__ . '/../../src/Ai/Chat/OllamaChat.php';
 require_once __DIR__ . '/../../src/Ai/Chat/ChatAssistant.php';
+require_once __DIR__ . '/support/ManifestFixture.php';
 
 final class FakeChatDriver implements ChatDriver
 {
@@ -72,6 +80,7 @@ final class ChatAssistantTest extends TestCase
     protected function tearDown(): void
     {
         AiProfile::setResolver(null);
+        ManifestFixture::clear();
     }
 
     private static function ok(string $text): ChatResult
@@ -217,5 +226,95 @@ final class ChatAssistantTest extends TestCase
         self::assertTrue(\mb_check_encoding($t, 'UTF-8'));
         self::assertStringEndsWith('[… context truncated]', $t);
         self::assertSame('short', ChatAssistant::headTruncate('short', 10));
+    }
+
+    /* ── driverFor(): the driver comes from the profile ───────────────── */
+
+    /**
+     * The reason this exists: Ollama's /v1 shim cannot disable reasoning.
+     * Measured on qwen3.5:9b, same prompt and host — 222,805 ms and 3,847
+     * discarded tokens through /v1, 1,003 ms and 14 through /api/chat.
+     */
+    public function testDriverForOllamaIsTheNativeDriver(): void
+    {
+        AiProfile::setResolver(fn () => ['provider' => 'ollama', 'model' => 'gm-triage:v3']);
+        self::assertInstanceOf(OllamaChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
+    }
+
+    /** Pinned: cloud providers still get OpenAiChat, exactly as before. */
+    public function testDriverForCloudProvidersIsStillOpenAiChat(): void
+    {
+        foreach (['openai', 'anthropic'] as $provider) {
+            AiProfile::setResolver(fn () => ['provider' => $provider, 'api_key' => 'k', 'model' => 'm']);
+            AiProfile::reset();
+            self::assertInstanceOf(
+                OpenAiChat::class,
+                ChatAssistant::driverFor(AiProfile::forTenant(1)),
+                $provider
+            );
+        }
+    }
+
+    /** The constructor uses it — and an injected $chat still wins. */
+    public function testConstructorPicksTheDriverFromTheProfileAndAnInjectedOneStillWins(): void
+    {
+        AiProfile::setResolver(fn () => ['provider' => 'ollama', 'model' => 'gm-triage:v3']);
+        $profile = AiProfile::forTenant(1);
+
+        $auto = new ChatAssistant($profile, new FakeContext(ContextBundle::empty()));
+        self::assertInstanceOf(OllamaChat::class, self::driverOf($auto));
+
+        $fake = new FakeChatDriver(self::ok('hi'));
+        $injected = new ChatAssistant($profile, new FakeContext(ContextBundle::empty()), $fake);
+        self::assertSame($fake, self::driverOf($injected), 'the test seam is unchanged');
+    }
+
+    /**
+     * The escape hatch: `provider: "ollama"` is also how you would point at
+     * llama.cpp / LM Studio / vLLM, which speak /v1 and have no /api/chat.
+     * driver: "openai" restores the old path exactly.
+     */
+    public function testManifestDriverOpenAiPinsOpenAiChatOnAnOllamaProfile(): void
+    {
+        ManifestFixture::write([
+            'base_url' => 'http://box:11434/v1',
+            'chat' => ['table' => 'mail_message', 'model' => 'MailMessage', 'driver' => 'openai'],
+        ]);
+        AiProfile::setResolver(fn () => ['provider' => 'ollama', 'model' => 'gm-triage:v3']);
+
+        self::assertInstanceOf(OpenAiChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
+    }
+
+    public function testManifestDriverNativePinsOllamaChatOnACloudProfile(): void
+    {
+        ManifestFixture::write([
+            'chat' => ['table' => 'mail_message', 'model' => 'MailMessage', 'driver' => 'native'],
+        ]);
+        AiProfile::setResolver(fn () => ['provider' => 'openai', 'api_key' => 'k', 'model' => 'm']);
+
+        self::assertInstanceOf(OllamaChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
+    }
+
+    /** An absent or unknown driver key means "auto" — the provider decides. */
+    public function testUnknownOrAbsentDriverKeyFallsBackToAuto(): void
+    {
+        AiProfile::setResolver(fn () => ['provider' => 'ollama', 'model' => 'gm-triage:v3']);
+
+        ManifestFixture::write(['chat' => ['table' => 't', 'model' => 'T']]);
+        self::assertInstanceOf(OllamaChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
+
+        ManifestFixture::write(['chat' => ['table' => 't', 'model' => 'T', 'driver' => 'nonsense']]);
+        self::assertInstanceOf(OllamaChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
+
+        ManifestFixture::clear();
+        self::assertInstanceOf(OllamaChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
+    }
+
+    private static function driverOf(ChatAssistant $a): ChatDriver
+    {
+        $r = new \ReflectionProperty(ChatAssistant::class, 'chat');
+        $r->setAccessible(true);
+
+        return $r->getValue($a);
     }
 }

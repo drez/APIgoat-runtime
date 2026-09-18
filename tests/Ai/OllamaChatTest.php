@@ -6,6 +6,7 @@ namespace ApiGoat\Tests\Ai;
 
 use ApiGoat\Ai\AiProfile;
 use ApiGoat\Ai\Chat\OllamaChat;
+use ApiGoat\Tests\Ai\Support\ManifestFixture;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../src/Ai/AiManifest.php';
@@ -16,6 +17,7 @@ require_once __DIR__ . '/../../src/Ai/AiProfile.php';
 require_once __DIR__ . '/../../src/Ai/Chat/ChatDriver.php';
 require_once __DIR__ . '/../../src/Ai/Chat/ChatResult.php';
 require_once __DIR__ . '/../../src/Ai/Chat/OllamaChat.php';
+require_once __DIR__ . '/support/ManifestFixture.php';
 
 /**
  * Ollama's native /api/chat. It exists because reasoning cannot be turned
@@ -30,12 +32,14 @@ final class OllamaChatTest extends TestCase
 
     protected function setUp(): void
     {
+        ManifestFixture::clear();
         AiProfile::setResolver(fn () => ['base_url' => 'http://box:11434/v1', 'model' => 'gm-triage:v3', 'api_key' => 'k', 'timeout' => 120, 'retries' => 1, 'throttle' => 0]);
     }
 
     protected function tearDown(): void
     {
         AiProfile::setResolver(null);
+        ManifestFixture::clear();
     }
 
     /** The reason this driver exists: opt OUT explicitly, every request. */
@@ -112,5 +116,101 @@ final class OllamaChatTest extends TestCase
         $r = OllamaChat::parseResponse(404, ['error' => 'model "nope" not found'], 12);
 
         self::assertSame('model "nope" not found', $r->transportError());
+    }
+
+    /* ── options passthrough ──────────────────────────────────────────── */
+
+    /**
+     * Without this, everything but temperature and num_predict comes from the
+     * model's BAKED parameters — inherited from whatever base model the tag
+     * was built FROM (gm-triage:v3 carries qwen3.5:9b's presence_penalty 1.5,
+     * top_k 20, top_p 0.95), and silently changed by a model upgrade.
+     */
+    public function testCallerOptionsAreMergedIntoTheOptionsBlock(): void
+    {
+        $body = OllamaChat::buildBody(AiProfile::forTenant(1), [], [
+            'temperature' => 0.2,
+            'max_tokens'  => 600,
+            'options'     => ['presence_penalty' => 0, 'top_k' => 40],
+        ]);
+
+        self::assertSame(
+            ['temperature' => 0.2, 'num_predict' => 600, 'presence_penalty' => 0, 'top_k' => 40],
+            $body['options']
+        );
+    }
+
+    /** The caller wins on a collision — it is the one that knows this call. */
+    public function testCallerOptionsWinOnACollision(): void
+    {
+        $body = OllamaChat::buildBody(AiProfile::forTenant(1), [], [
+            'temperature' => 0.2,
+            'max_tokens'  => 600,
+            'options'     => ['temperature' => 0.9, 'num_predict' => 64],
+        ]);
+
+        self::assertSame(['temperature' => 0.9, 'num_predict' => 64], $body['options']);
+    }
+
+    /** Options alone still produce the block; a non-array key is ignored. */
+    public function testOptionsAloneAndBadShapes(): void
+    {
+        $body = OllamaChat::buildBody(AiProfile::forTenant(1), [], ['options' => ['seed' => 7]]);
+        self::assertSame(['seed' => 7], $body['options']);
+
+        $ignored = OllamaChat::buildBody(AiProfile::forTenant(1), [], ['options' => 'nonsense']);
+        self::assertArrayNotHasKey('options', $ignored);
+    }
+
+    /** Compat: no `options` key means the body is byte-identical to before. */
+    public function testAbsentOptionsKeyLeavesTheBodyIdentical(): void
+    {
+        $p = AiProfile::forTenant(1);
+        $with = OllamaChat::buildBody($p, [['role' => 'user', 'content' => 'hi']], ['temperature' => 0, 'max_tokens' => 512]);
+        $without = OllamaChat::buildBody($p, [['role' => 'user', 'content' => 'hi']], ['temperature' => 0, 'max_tokens' => 512, 'options' => []]);
+
+        self::assertSame($with, $without);
+        self::assertSame(['temperature' => 0.0, 'num_predict' => 512], $with['options']);
+    }
+
+    /* ── keep_alive: the pin ──────────────────────────────────────────── */
+
+    /**
+     * Ollama's keep_alive is per REQUEST and RESETS the model's expiry, so a
+     * chat request that omits it drops a model pinned with -1 down to the
+     * daemon's 20-minute default — and the next triage pays a cold load.
+     */
+    public function testAPrimaryOllamaProfileCarriesTheForeverPin(): void
+    {
+        $body = OllamaChat::buildBody(AiProfile::forTenant(1), [['role' => 'user', 'content' => 'hi']]);
+
+        self::assertSame(-1, $body['keep_alive']);
+    }
+
+    /** Compat: TriageService already sends -1 explicitly — its body is unchanged. */
+    public function testAnExplicitExtraKeepAliveWins(): void
+    {
+        $body = OllamaChat::buildBody(AiProfile::forTenant(1), [], ['extra' => ['keep_alive' => '10m']]);
+
+        self::assertSame('10m', $body['keep_alive']);
+
+        $zero = OllamaChat::buildBody(AiProfile::forTenant(1), [], ['extra' => ['keep_alive' => 0]]);
+        self::assertSame(0, $zero['keep_alive'], '0 means unload now, and must not be overwritten');
+    }
+
+    public function testTheProfileKeepAliveIsUsedWhenTheManifestNamesOne(): void
+    {
+        ManifestFixture::write(['base_url' => 'http://box:11434/v1', 'keep_alive' => '45m']);
+        AiProfile::reset();
+
+        self::assertSame('45m', OllamaChat::buildBody(AiProfile::forTenant(1), [])['keep_alive']);
+    }
+
+    /** A cloud profile adds none — keep_alive is an Ollama concept. */
+    public function testACloudProfileAddsNoKeepAlive(): void
+    {
+        AiProfile::setResolver(fn () => ['provider' => 'openai', 'api_key' => 'k', 'model' => 'gpt-4o-mini']);
+
+        self::assertArrayNotHasKey('keep_alive', OllamaChat::buildBody(AiProfile::forTenant(1), []));
     }
 }

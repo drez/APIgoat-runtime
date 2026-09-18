@@ -19,6 +19,7 @@ final class AiUsageLogger
             \str_contains($path, '/images/generations')      => 'image_generate',
             \str_contains($path, '/images/edits')            => 'image_edit',
             \str_contains($path, '/embeddings')              => 'embed',
+            \str_contains($path, '/api/embed')               => 'embed', // Ollama's native endpoint
             \str_contains($path, '/audio/speech')            => 'tts',
             \str_contains($path, '/audio/transcriptions')    => 'stt',
             \str_contains($path, '/realtime/client_secrets') => 'realtime_mint',

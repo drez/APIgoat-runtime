@@ -2,6 +2,7 @@
 
 namespace ApiGoat\Ai\Chat;
 
+use ApiGoat\Ai\AiManifest;
 use ApiGoat\Ai\AiProfile;
 
 /**
@@ -37,9 +38,38 @@ final class ChatAssistant
     {
         $this->profile  = $profile;
         $this->ctx      = $ctx;
-        $this->chat     = $chat ?? new OpenAiChat();
+        $this->chat     = $chat ?? self::driverFor($profile);
         $this->persona  = \trim($persona);
         $this->idTenant = $idTenant;
+    }
+
+    /**
+     * The driver that can actually talk to this provider.
+     *
+     * Ollama's /v1 shim cannot disable reasoning — measured on qwen3.5:9b,
+     * same prompt and host: 222,805 ms and 3,847 discarded tokens through
+     * /v1 with think:false, against 1,003 ms and 14 through /api/chat.
+     * OllamaChat speaks the native endpoint and defaults think:false.
+     *
+     * The escape hatch is the manifest's optional `chat.driver`:
+     *   auto (default) — native for ollama, /chat/completions otherwise
+     *   native         — always OllamaChat
+     *   openai         — always OpenAiChat (the pre-existing behaviour;
+     *                    this is what to set when `provider: "ollama"`
+     *                    actually points at llama.cpp / LM Studio / vLLM,
+     *                    which speak /v1 but have no /api/chat).
+     */
+    public static function driverFor(AiProfile $profile): ChatDriver
+    {
+        $declared = (string) ((AiManifest::chat() ?? [])['driver'] ?? 'auto');
+        if ($declared === 'openai') {
+            return new OpenAiChat();
+        }
+        if ($declared === 'native') {
+            return new OllamaChat();
+        }
+
+        return $profile->provider() === 'ollama' ? new OllamaChat() : new OpenAiChat();
     }
 
     /**

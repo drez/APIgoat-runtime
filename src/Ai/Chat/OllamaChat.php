@@ -99,6 +99,18 @@ final class OllamaChat implements ChatDriver
         if (isset($opts['max_tokens'])) {
             $options['num_predict'] = (int) $opts['max_tokens'];
         }
+        // Everything else Ollama's `options` block accepts — top_k, top_p,
+        // presence_penalty, repeat_penalty, seed, num_ctx … Without this the
+        // only sampling values in play are the model's BAKED ones, which come
+        // from whatever base model the tag was built FROM and change silently
+        // on a model upgrade (gm-triage:v3 inherits presence_penalty 1.5 from
+        // qwen3.5:9b — harmless under constrained JSON decoding, strained
+        // across several hundred words of prose). `extra` cannot reach here:
+        // it merges at the TOP level and skips keys already present. The
+        // caller wins on a collision.
+        if (isset($opts['options']) && \is_array($opts['options'])) {
+            $options = \array_merge($options, $opts['options']);
+        }
         if ($options !== []) {
             $body['options'] = $options;
         }
@@ -113,6 +125,18 @@ final class OllamaChat implements ChatDriver
                 if (!\array_key_exists($k, $body)) {
                     $body[$k] = $v;
                 }
+            }
+        }
+
+        // The pin. Ollama's keep_alive is per REQUEST and resets the model's
+        // expiry, so a chat request that omits it drops a model pinned with
+        // -1 down to the daemon's 20-minute default — twenty idle minutes
+        // later the next triage pays a cold load. Applied last and only when
+        // nothing (an explicit `extra.keep_alive`) already set it.
+        if (!\array_key_exists('keep_alive', $body)) {
+            $keepAlive = $profile->keepAlive();
+            if ($keepAlive !== null) {
+                $body['keep_alive'] = $keepAlive;
             }
         }
 

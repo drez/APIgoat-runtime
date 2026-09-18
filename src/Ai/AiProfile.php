@@ -19,7 +19,13 @@ namespace ApiGoat\Ai;
  *              resolver → env ANTHROPIC_API_KEY              (anthropic)
  *   model      resolver → config('<provider>_model') → env <PROVIDER>_MODEL
  *   chat_model resolver → config('<provider>_chat_model') → env <PROVIDER>_CHAT_MODEL
+ *              → AiManifest chat.llm_model (primary profile only)
+ *              → model()  (reuse the task model — a second tag evicts the first
+ *                          on a single-slot host)
  *              → 'hermes3:8b' (ollama) / model() (cloud providers)
+ *   embed_model resolver → config('<provider>_embed_model') → env <PROVIDER>_EMBED_MODEL
+ *              → AiManifest embed.model (primary profile only) → ''
+ *   keep_alive resolver → AiManifest keep_alive → -1 (primary ollama) / null
  *   timeout / retries / throttle   resolver → AiManifest
  *
  * The ollama key ladder deliberately skips AiConfig::apiKey(): that row is the
@@ -46,6 +52,10 @@ final class AiProfile
     private string $baseUrl;
     private string $model;
     private string $chatModel;
+    private string $embedModel;
+    private int $embedDimensions;
+    /** @var int|string|null */
+    private $keepAlive;
     private string $apiKey;
     private string $auth;
     private int $timeout;
@@ -117,14 +127,50 @@ final class AiProfile
             ?? AiConfig::config($p->provider . '_model')
             ?? self::str(AiConfig::fromEnv(\strtoupper($p->provider) . '_MODEL'))
             ?? '';
-        // The conversational model is a separate knob: a project's triage
-        // model is typically a Modelfile that bakes a JSON-only system prompt
-        // (apigmail's gm-triage:v1), so it can never answer a free-form
-        // question. Cloud providers answer both with one model.
-        $p->chatModel = self::str($spec['chat_model'] ?? null)
-            ?? AiConfig::config($p->provider . '_chat_model')
-            ?? self::str(AiConfig::fromEnv(\strtoupper($p->provider) . '_CHAT_MODEL'))
+        // The conversational model is a separate knob — but not a different
+        // model by default. Two rungs were INSERTED below (4 and 5); none was
+        // removed, so a project that names a chat model anywhere in rungs 1-3
+        // keeps exactly what it had.
+        $p->chatModel = self::str($spec['chat_model'] ?? null)                          // 1. resolver
+            ?? AiConfig::config($p->provider . '_chat_model')                           // 2. config row
+            ?? self::str(AiConfig::fromEnv(\strtoupper($p->provider) . '_CHAT_MODEL'))  // 3. env
+            // 4. declared in HJSON as chat.llm_model — PRIMARY profile only. A
+            //    cloud fallback must never inherit an Ollama tag as its OpenAI
+            //    model name. NOTE chat.model is the Propel PhpName
+            //    ("MailMessage"), never an LLM; it is never read here.
+            ?? ($fallback ? null : self::str((AiManifest::chat() ?? [])['llm_model'] ?? null))
+            // 5. reuse the task model rather than loading a second one: on a
+            //    single-slot host a distinct chat tag evicts the pinned triage
+            //    model on every question. str() returns null on '', so an
+            //    empty task model still reaches rung 6.
+            ?? self::str($p->model)
+            // 6. terminal default, unchanged and still the last resort.
             ?? ($p->provider === 'ollama' ? self::DEFAULT_OLLAMA_CHAT_MODEL : $p->model);
+
+        // Embeddings — same ladder shape. Nothing declared → '' / 0, which the
+        // embed drivers turn into a loud permanent failure instead of posting
+        // an empty model name and parsing whatever comes back.
+        $embed = AiManifest::embed();
+        $p->embedModel = self::str($spec['embed_model'] ?? null)
+            ?? AiConfig::config($p->provider . '_embed_model')
+            ?? self::str(AiConfig::fromEnv(\strtoupper($p->provider) . '_EMBED_MODEL'))
+            ?? ($fallback ? null : self::str($embed['model']))
+            ?? '';
+        $specDims = isset($spec['embed_dimensions']) ? (int) $spec['embed_dimensions'] : 0;
+        $p->embedDimensions = $specDims > 0 ? $specDims : (int) $embed['dimensions'];
+
+        // Ollama's per-request model pin. keep_alive RESETS the model's expiry
+        // on every request, so any call that omits it drops a pinned model from
+        // "forever" to the daemon's 20-minute default — idle twenty minutes
+        // after one chat answer and the next triage pays a cold load.
+        if (\array_key_exists('keep_alive', $spec)) {
+            $p->keepAlive = self::keepAliveValue($spec['keep_alive']);
+        } else {
+            $fromManifest = AiManifest::keepAlive();
+            $p->keepAlive = $fromManifest !== null
+                ? $fromManifest
+                : (($p->provider === 'ollama' && !$fallback) ? -1 : null);
+        }
         $p->apiKey = self::str($spec['api_key'] ?? null)
             ?? ($fallback ? '' : self::defaultApiKey($p->provider));
         $p->auth = \in_array($spec['auth'] ?? null, ['bearer', 'x-api-key', 'none'], true)
@@ -152,6 +198,25 @@ final class AiProfile
     private static function str($v): ?string
     {
         return \is_string($v) && \trim($v) !== '' ? $v : null;
+    }
+
+    /**
+     * Ollama accepts keep_alive as a number of seconds (-1 = forever) or a
+     * duration string ("30m"). Anything else means "do not send one".
+     *
+     * @param mixed $v
+     * @return int|string|null
+     */
+    private static function keepAliveValue($v)
+    {
+        if (\is_int($v)) {
+            return $v;
+        }
+        if (\is_float($v)) {
+            return (int) $v;
+        }
+
+        return self::str($v);
     }
 
     private static function defaultBaseUrl(string $provider): string
@@ -197,10 +262,36 @@ final class AiProfile
         return $this->model;
     }
 
-    /** The model for free-form chat (ChatAssistant), never the triage Modelfile. */
+    /** The model for free-form chat (ChatAssistant). */
     public function chatModel(): string
     {
         return $this->chatModel;
+    }
+
+    /** The embedding model, or '' when nothing declares one. */
+    public function embedModel(): string
+    {
+        return $this->embedModel;
+    }
+
+    /**
+     * The vector width the embedding model must return, or 0 when nothing
+     * declares one (the driver then accepts whatever it gets).
+     */
+    public function embedDimensions(): int
+    {
+        return $this->embedDimensions;
+    }
+
+    /**
+     * Ollama's `keep_alive` for chat requests on this profile, or null when
+     * none should be sent.
+     *
+     * @return int|string|null
+     */
+    public function keepAlive()
+    {
+        return $this->keepAlive;
     }
 
     public function apiKey(): string

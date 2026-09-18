@@ -82,7 +82,11 @@ final class AiManifest
     /**
      * The with_ai `chat` declaration, or null when the project declared none.
      *
-     * @return array{table:string,model:string,label:string,persona:string}|null
+     * `model` is the Propel PhpName of the table the endpoint lands on
+     * ("MailMessage") — NOT an LLM. The LLM, when a project pins one, is
+     * `llm_model`; AiProfile::chatModel() reads that key and never `model`.
+     *
+     * @return array{table:string,model:string,label:string,persona:string,llm_model:string,provider:string,driver:string}|null
      */
     public static function chat(): ?array
     {
@@ -96,7 +100,51 @@ final class AiManifest
             'model'   => (string) $c['model'],
             'label'   => (string) ($c['label'] ?? 'Ask AI'),
             'persona' => (string) ($c['persona'] ?? ''),
+            // Additive and all optional: a schema declaring none of them gets
+            // exactly the behaviour it had before these keys existed.
+            'llm_model' => (string) ($c['llm_model'] ?? ''),
+            'provider'  => (string) ($c['provider'] ?? ''),
+            'driver'    => (string) ($c['driver'] ?? 'auto'),
         ];
+    }
+
+    /**
+     * The with_ai `embed` declaration: the embedding model and the vector
+     * width the schema's VECTOR(N) column was sized for.
+     *
+     * Absent → ['', 0], which AiProfile reports as "nothing declared" and the
+     * embed drivers turn into a loud permanent failure rather than a POST
+     * carrying an empty model name.
+     *
+     * @return array{model:string,dimensions:int}
+     */
+    public static function embed(): array
+    {
+        $e = self::all()['embed'] ?? null;
+        if (!\is_array($e)) {
+            return ['model' => '', 'dimensions' => 0];
+        }
+
+        return [
+            'model'      => (string) ($e['model'] ?? ''),
+            'dimensions' => (int) ($e['dimensions'] ?? 0),
+        ];
+    }
+
+    /**
+     * Ollama's `keep_alive` for this project, or null when the manifest names
+     * none (AiProfile then applies the primary-Ollama default).
+     *
+     * @return int|string|null seconds, a duration string ("30m"), or -1 = forever
+     */
+    public static function keepAlive()
+    {
+        $v = self::all()['keep_alive'] ?? null;
+        if (\is_int($v)) {
+            return $v;
+        }
+
+        return \is_string($v) && \trim($v) !== '' ? $v : null;
     }
 
     /** Test seam. */
