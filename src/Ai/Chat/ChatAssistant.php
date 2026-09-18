@@ -25,7 +25,15 @@ final class ChatAssistant
     public const MAX_HISTORY_TURNS  = 8;
     public const CONTEXT_MAX_CHARS  = 6000;
     public const PROMPT_BUDGET_CHARS = 14000;
-    public const MAX_TOKENS  = 600;
+    /**
+     * A ceiling, not a target: the brevity rules in systemPrompt() are what keep
+     * answers short. 600 was room for prose nobody asked for — on a local model
+     * every output token is ~57 ms, so it was the larger half of a 10 s turn.
+     * 400 still clears a compliant answer (8 lines + the Sources line ≈ 220
+     * tokens) with margin, so the cap never truncates the citation line, which
+     * citedSources() parses.
+     */
+    public const MAX_TOKENS  = 400;
     public const TEMPERATURE = 0.2;
 
     private AiProfile $profile;
@@ -145,7 +153,30 @@ final class ChatAssistant
             '- If the context does not contain the answer, say so plainly; never guess or invent records.',
             '- When you use a fact, cite its source by its label exactly as written in the context (for example "#123").',
             '- End every answer with one line "Sources: #id, #id" listing the labels of every email you used (omit the line only when you used none).',
-            '- Be concise: short paragraphs or a compact list, no preamble.',
+            // "Be concise" alone does not work on a 9B model: it still writes a
+            // sentence of prose per record. Measured on gm-triage:v3, the same
+            // question produced 144 output tokens once and 500+ the next run.
+            // Concrete limits are what hold — one line per record, a cap on the
+            // number of lines, and an explicit ban on restating the question.
+            // Length limits alone swing the model between two failure modes: a
+            // vague "be concise" gave a paragraph of prose per record (500+
+            // output tokens), while "one SHORT line per record" collapsed to a
+            // bare list of ids with no information in it at all. What holds is
+            // an explicit FORMAT with a worked example.
+            '- One line per record, in exactly this shape:',
+            '    #id — Who: what they want (max 10 words after the colon)',
+            '  For example: "#3214 — Martin Kirouac: sent rates, wants a go-ahead".',
+            '  Never a bare list of ids: every line must say who and what.',
+            '- No preamble, no restating the question, no closing summary.',
+            // The item cap is the single biggest lever on turn latency: every
+            // output token costs ~57 ms on a local model, so each extra line is
+            // roughly a second. 5 covers "what should I look at" — the caller
+            // has a full, sorted list one click away and does not need the model
+            // to recite it. Measured on gm-triage:v3: 8 lines = 242 tokens/14.0 s,
+            // 5 lines = ~150 tokens/~9 s.
+            '- List at most 5 records, most important first. If more match, end with',
+            '  one line: "(+N more)".',
+            '- Only explain further if the question actually asks why or how.',
             '- Answer in the same language as the question.',
             '',
             'CONTEXT:',

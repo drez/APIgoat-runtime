@@ -107,7 +107,8 @@ final class ChatAssistantTest extends TestCase
         $call = $drv->calls[0];
         self::assertSame('hermes3:8b', $call['opts']['model'], 'chat model, never the triage Modelfile');
         self::assertSame(0.2, $call['opts']['temperature']);
-        self::assertSame(600, $call['opts']['max_tokens']);
+        self::assertSame(ChatAssistant::MAX_TOKENS, $call['opts']['max_tokens']);
+        self::assertSame(400, ChatAssistant::MAX_TOKENS, 'a ceiling, not a target: see the brevity rules');
         self::assertArrayNotHasKey('json_schema', $call['opts'], 'plain text completion');
 
         $m = $call['messages'];
@@ -116,6 +117,14 @@ final class ChatAssistantTest extends TestCase
         self::assertStringContainsString('Answer ONLY from the CONTEXT', $m[0]['content']);
         self::assertStringContainsString('same language as the question', $m[0]['content']);
         self::assertStringContainsString('End every answer with one line "Sources:', $m[0]['content']);
+        // The brevity contract. "Be concise" alone swung gm-triage:9b between a
+        // paragraph per record (500+ tokens) and a bare list of ids with no
+        // information in it; the explicit FORMAT plus the item cap is what holds,
+        // and each is worth ~1 s of turn latency on a local model.
+        self::assertStringContainsString('#id — Who: what they want', $m[0]['content'], 'explicit line format');
+        self::assertStringContainsString('Never a bare list of ids', $m[0]['content']);
+        self::assertStringContainsString('at most 5 records', $m[0]['content'], 'the item cap IS the latency lever');
+        self::assertStringContainsString('(+N more)', $m[0]['content']);
         self::assertStringContainsString('#12 · 2026-09-01', $m[0]['content']);
         self::assertSame($history, [$m[1], $m[2]]);
         self::assertSame(['role' => 'user', 'content' => 'what needs a reply?'], $m[3]);
