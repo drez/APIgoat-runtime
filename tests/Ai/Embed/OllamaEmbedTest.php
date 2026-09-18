@@ -256,7 +256,10 @@ final class OllamaEmbedTest extends TestCase
         self::assertSame('embed', AiUsageLogger::operationFor('/api/embed'));
         self::assertSame('embed', AiUsageLogger::operationFor('/api/embeddings'));
         self::assertSame('chat', AiUsageLogger::operationFor('/chat/completions'), 'unchanged');
-        self::assertSame('other', AiUsageLogger::operationFor('/api/chat'), 'unchanged');
+        // /api/chat is Ollama's NATIVE chat endpoint and maps to `chat`. An earlier
+        // revision of this test pinned it to `other`, which pinned the bug: apigmail's
+        // triage moved to /api/chat on 2026-09-14 and logged 1,662 calls as `other`.
+        self::assertSame('chat', AiUsageLogger::operationFor('/api/chat'));
     }
 
     /** The cloud driver shares the parse path and adds OpenAI's `dimensions`. */

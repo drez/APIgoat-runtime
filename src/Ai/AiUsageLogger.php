@@ -16,6 +16,8 @@ final class AiUsageLogger
     {
         return match (true) {
             \str_contains($path, '/chat/completions')        => 'chat',
+            \str_contains($path, '/api/chat')                => 'chat',  // Ollama native
+            \str_contains($path, '/api/generate')            => 'chat',  // Ollama native
             \str_contains($path, '/images/generations')      => 'image_generate',
             \str_contains($path, '/images/edits')            => 'image_edit',
             \str_contains($path, '/embeddings')              => 'embed',
@@ -51,8 +53,19 @@ final class AiUsageLogger
      */
     public static function tokensOf($decoded): array
     {
-        if (!\is_array($decoded) || !isset($decoded['usage']) || !\is_array($decoded['usage'])) {
+        if (!\is_array($decoded)) {
             return [0, 0];
+        }
+        // Ollama's NATIVE endpoints (/api/chat, /api/generate, /api/embed) report the
+        // counts at the TOP level and carry no `usage` block at all. OllamaChat reshapes
+        // them into one for its own ChatResult, but the logger sees the RAW body — so
+        // without this branch every native call logs 0/0. That is what silently zeroed
+        // apigmail's triage token history from 2026-09-14 (the switch to /api/chat).
+        if (!isset($decoded['usage']) || !\is_array($decoded['usage'])) {
+            $in  = (int) ($decoded['prompt_eval_count'] ?? 0);
+            $out = (int) ($decoded['eval_count'] ?? 0);
+
+            return [$in, $out];
         }
         $u = $decoded['usage'];
         $in  = (int) ($u['prompt_tokens'] ?? $u['input_tokens'] ?? 0);
