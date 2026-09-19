@@ -275,14 +275,27 @@ final class AuditContext
 
         $actor  = self::actor();
         $source = self::sourceOrdinal();
-
         // date_creation / date_modification are the add_tablestamp columns; the
         // remaining stamps (id_creation / id_modification / id_group_creation)
         // stay NULL — `actor` is the attribution this table is for.
+        //
+        // WHY PHP's CLOCK AND NOT MySQL's NOW(): every other table in a
+        // generated project is stamped by the emitted add_tablestamp hook with
+        // PHP's time(), and a history row is only useful NEXT TO the rows it
+        // describes — "did this status change happen before or after that
+        // event / that heartbeat?" is the question the table exists to answer.
+        // NOW() is the DATABASE server's wall clock, which routinely differs
+        // from the writer's: a project's web SAPI may run on the operator's
+        // timezone while its CLI runs on UTC, and the db server on a third
+        // (observed: PHP UTC, MySQL SYSTEM = -0400, a 4 h gap). Binding the
+        // same clock add_tablestamp uses makes the comparison meaningful
+        // instead of making every reader compensate.
+        $stamp  = \date('Y-m-d H:i:s');
+
         $stmt = $con->prepare(
             'INSERT INTO `' . $auditTable . '`'
             . ' (`' . $fkColumn . '`, `field`, `value_from`, `value_to`, `actor`, `source`, `date_creation`, `date_modification`)'
-            . ' VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())'
+            . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
 
         $written = 0;
@@ -294,6 +307,8 @@ final class AuditContext
                 $row['value_to'] ?? null,
                 $actor,
                 $source,
+                $stamp,
+                $stamp,
             ]);
             $written++;
         }
