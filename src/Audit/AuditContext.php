@@ -226,6 +226,82 @@ final class AuditContext
         return $rows;
     }
 
+    /**
+     * The `source` value as the DB stores it: Propel materializes an ENUM
+     * column as a TINYINT holding the value set's ORDINAL, so a raw INSERT
+     * must write the index, not the label. SOURCES is the emitted value set
+     * (Parameters/add_audit.php asserts the two agree), so the ordinal is
+     * this array's key.
+     */
+    public static function sourceOrdinal(): int
+    {
+        $ordinal = \array_search(self::source(), self::SOURCES, true);
+
+        return $ordinal === false ? 0 : (int) $ordinal;
+    }
+
+    /**
+     * Persist the diff() entries as `<table>_audit` rows on the connection the
+     * parent is being saved on, stamped with actor() and source().
+     *
+     * WHY A RAW INSERT AND NOT `new <T>Audit()->save($con)`:
+     * the caller is the parent's postSave, which runs INSIDE the parent's open
+     * transaction. A Propel model save() opens a NESTED transaction, and
+     * PropelPDO::rollBack() at depth > 1 does not roll anything back — it sets
+     * `isUncommitable = true` and returns (runtime/lib/connection/PropelPDO.php).
+     * The parent's own outer commit() then throws
+     * "Cannot commit because a nested transaction was rolled back" — from
+     * inside save(), OUTSIDE the caller's catch. So a failed audit insert
+     * would roll the PARENT row back and surface a PropelException: exactly
+     * the state the guard exists for (the key adopted, the database not yet
+     * rebuilt), and any FK or shape violation besides.
+     *
+     * A failed PDOStatement::execute() throws without ever touching
+     * nestedTransactionCount or isUncommitable, so the caller's catch really
+     * does contain it and the parent row still commits. On MySQL a statement
+     * error rolls back the statement, not the transaction.
+     *
+     * Returns the number of rows written; throws only what the caller catches.
+     *
+     * @param list<array{field:string, value_from:?string, value_to:?string}> $rows
+     */
+    public static function write(\PDO $con, string $auditTable, string $fkColumn, $fkValue, array $rows): int
+    {
+        if ($rows === []) {
+            return 0;
+        }
+        self::assertIdentifier($auditTable);
+        self::assertIdentifier($fkColumn);
+
+        $actor  = self::actor();
+        $source = self::sourceOrdinal();
+
+        // date_creation / date_modification are the add_tablestamp columns; the
+        // remaining stamps (id_creation / id_modification / id_group_creation)
+        // stay NULL — `actor` is the attribution this table is for.
+        $stmt = $con->prepare(
+            'INSERT INTO `' . $auditTable . '`'
+            . ' (`' . $fkColumn . '`, `field`, `value_from`, `value_to`, `actor`, `source`, `date_creation`, `date_modification`)'
+            . ' VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())'
+        );
+
+        $written = 0;
+        foreach ($rows as $row) {
+            $stmt->execute([
+                $fkValue,
+                (string) ($row['field'] ?? ''),
+                $row['value_from'] ?? null,
+                $row['value_to'] ?? null,
+                $actor,
+                $source,
+            ]);
+            $written++;
+        }
+        $stmt->closeCursor();
+
+        return $written;
+    }
+
     /** The single row an INSERT records: the whole record came into being. */
     public static function createdRow(): array
     {
