@@ -26,6 +26,9 @@ final class McpIdentity
     public const FILE       = 'config/Built/mcp.identity.php';
     public const LOCAL_FILE = 'config/mcp.identity.local.php';
     public const ABOUT_MAX  = 300;
+    /** Keywords are replayed verbatim into every conversation's preamble: keep each a short term, and the list bounded. */
+    public const KEYWORD_MAX  = 40;
+    public const KEYWORDS_MAX = 50;
 
     /**
      * Normalized identity, or null when the file is absent / not an array.
@@ -128,6 +131,7 @@ final class McpIdentity
             }
             $keywords[] = $lk;
         }
+        $keywords = array_slice($keywords, 0, self::KEYWORDS_MAX);
         $about = $local['about'] !== '' ? $local['about'] : $built['about'];
         $missing = array_values(array_filter($built['missing'], static function (string $f) use ($about, $keywords): bool {
             return !($f === 'about' && $about !== '') && !($f === 'keywords' && $keywords !== []);
@@ -135,7 +139,15 @@ final class McpIdentity
         return ['name' => $built['name'], 'about' => $about, 'keywords' => $keywords, 'missing' => $missing];
     }
 
-    /** Lowercased, trimmed, de-duplicated routing terms from an array or a comma-separated string. @return string[] */
+    /**
+     * Lowercased, trimmed, de-duplicated routing terms from an array or a
+     * comma-separated string. A keyword is a TERM, not prose: letters, digits,
+     * spaces and a little punctuation, at most KEYWORD_MAX characters, at most
+     * KEYWORDS_MAX of them — `about` was capped while this list, which lands
+     * in the same model-facing preamble, could carry unbounded text.
+     *
+     * @return string[]
+     */
     public static function keywordList($v): array
     {
         if (is_string($v)) {
@@ -143,9 +155,13 @@ final class McpIdentity
         }
         $out = [];
         foreach (self::stringList($v) as $k) {
-            $k = mb_strtolower(self::clean($k));
+            $k = preg_replace('/[^\p{L}\p{N} ._\-&\'+#@\/]+/u', ' ', self::clean($k)) ?? '';
+            $k = mb_strtolower(trim(mb_substr(self::clean($k), 0, self::KEYWORD_MAX)));
             if ($k !== '' && !in_array($k, $out, true)) {
                 $out[] = $k;
+            }
+            if (count($out) >= self::KEYWORDS_MAX) {
+                break;
             }
         }
         return $out;

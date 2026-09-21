@@ -250,11 +250,22 @@ final class WebhookHandler
         $rec = $q::create()->findPk((int) $pay->getPayableId());
         // Only claw back an UNCONSUMED grant (flag still 1) — consumed state
         // (2) is the reconcilers' to unwind with full context.
-        $getter = \str_replace('set', 'get', (string) $entry['paid_flag_setter']);
+        $getter = self::getterFor((string) $entry['paid_flag_setter']);
         if ($rec !== null && \method_exists($rec, $getter) && (int) $rec->{$getter}() === 1) {
             $rec->{$entry['paid_flag_setter']}(0);
             $rec->save();
         }
+    }
+
+    /**
+     * setFoo → getFoo: 'get' + the name past its "set" prefix. The old
+     * str_replace('set','get') also rewrote a "set" INSIDE the name
+     * (setAssetPaid → getAsgetPaid); method_exists() then failed and a full
+     * refund clawed nothing back.
+     */
+    public static function getterFor(string $setter): string
+    {
+        return 'get' . \substr($setter, 3);
     }
 
     /** Best-effort charge retrieve for receipt/method capture — never fails the webhook. */
@@ -274,11 +285,67 @@ final class WebhookHandler
         }
     }
 
+    /**
+     * Payment intent id of an invoice, tolerant of BOTH API shapes (like
+     * current_period_end above): pre-basil `payment_intent` (id, or the
+     * expanded object), basil `payments.data[].payment.payment_intent`. A paid
+     * entry wins; '' when the invoice carries neither.
+     */
+    public static function invoicePaymentIntent(array $invoice): string
+    {
+        $id = static function ($v): string {
+            return \is_array($v) ? (string) ($v['id'] ?? '') : (string) ($v ?? '');
+        };
+        $intent = $id($invoice['payment_intent'] ?? null);
+        if ($intent !== '') {
+            return $intent;
+        }
+        $found = '';
+        foreach ((array) ($invoice['payments']['data'] ?? []) as $p) {
+            $intent = $id($p['payment']['payment_intent'] ?? null);
+            if ($intent === '') {
+                continue;
+            }
+            if (($p['status'] ?? '') === 'paid') {
+                return $intent;
+            }
+            $found = $found !== '' ? $found : $intent;
+        }
+        return $found;
+    }
+
+    /** Best-effort invoice retrieve with `payments` expanded — never fails the webhook. */
+    private static function retrieveInvoicePayments(string $invoiceId): array
+    {
+        if ($invoiceId === '') {
+            return [];
+        }
+        $gw = StripeGateway::fromEnv();
+        if ($gw === null) {
+            return [];
+        }
+        try {
+            return $gw->client()->invoices->retrieve($invoiceId, ['expand' => ['payments']])->toArray();
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
     /** Ledger row for a subscription-cycle charge (invoice.paid). Idempotent by payment intent. */
     private static function recordInvoicePayment(array $invoice): void
     {
-        $intentId = (string) ($invoice['payment_intent'] ?? '');
-        if ($intentId === '' || (int) ($invoice['amount_paid'] ?? 0) <= 0) {
+        if ((int) ($invoice['amount_paid'] ?? 0) <= 0) {
+            return;
+        }
+        $intentId = self::invoicePaymentIntent($invoice);
+        if ($intentId === '') {
+            // The pinned API version (basil) no longer puts payment_intent on
+            // the invoice, and `payments` is expandable — a webhook payload
+            // does not carry it. Ask for it; best-effort like retrieveCharge().
+            $intentId = self::invoicePaymentIntent(self::retrieveInvoicePayments((string) ($invoice['id'] ?? '')));
+        }
+        if ($intentId === '') {
+            \error_log('[stripe] invoice.paid ' . ($invoice['id'] ?? '?') . ': no payment intent found, renewal not recorded');
             return;
         }
         $payQ = StripeDb::query('StripePayment');

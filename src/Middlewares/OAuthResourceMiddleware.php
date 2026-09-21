@@ -15,8 +15,9 @@ use Slim\Psr7\Response;
  * Authenticates OAuth2 RS256 bearer tokens into an Authy session for REST API routes,
  * reusing BearerSessionAuthenticator (the same pattern as McpEndpoint).
  *
- * It ONLY establishes identity. It sets NO rbac_complete/rbac_public attributes and
- * enforces NO scopes. A bearer request is then authorized IDENTICALLY to a browser
+ * It establishes identity and sets NO rbac_complete/rbac_public attributes. The only
+ * authorization it applies is the OAuth scope floor (refusedByScope: a read-only token
+ * cannot use a non-safe method). Otherwise a bearer request is then authorized IDENTICALLY to a browser
  * session of the same identity: RbacMiddleware (api_rbac) + AuthyMiddleware +
  * Api::authorize (per-op r/a/w/d) + setAclFilter (Owner/Group/tenant) all apply.
  *
@@ -77,6 +78,12 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         return ($isApi || $isLegacyBearerAction) && $hasBearer;
     }
 
+    /** Pure predicate (unit-tested): a read-only token may only use safe HTTP methods. */
+    public static function refusedByScope(bool $tokenIsReadOnly, string $method): bool
+    {
+        return $tokenIsReadOnly && !in_array(strtoupper($method), ['GET', 'HEAD', 'OPTIONS'], true);
+    }
+
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $parsed = $request->getAttribute('parsed_args');
@@ -97,6 +104,21 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         }
 
         $status = BearerSessionAuthenticator::authenticate($request);
+
+        // OAuth scope: the one authorization decision made here. A token granted
+        // crm:read WITHOUT crm:write is refused on anything but a safe method;
+        // every other token (incl. one with no scopes recorded) is untouched.
+        if ($status === BearerSessionAuthenticator::AUTHENTICATED
+            && self::refusedByScope(\ApiGoat\OAuth\TokenScopes::readOnly(), $request->getMethod())) {
+            $response = new Response();
+            $response->getBody()->write(json_encode(
+                ['status' => 'failure', 'errors' => ['insufficient_scope']],
+                JSON_UNESCAPED_SLASHES
+            ));
+            return $response->withStatus(403)
+                ->withHeader('WWW-Authenticate', 'Bearer error="insufficient_scope", scope="' . \ApiGoat\OAuth\TokenScopes::WRITE . '"')
+                ->withHeader('Content-Type', 'application/json');
+        }
 
         if ($status === BearerSessionAuthenticator::AUTHENTICATED
             || $status === BearerSessionAuthenticator::NOT_OAUTH) {

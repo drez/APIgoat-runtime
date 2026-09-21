@@ -210,15 +210,19 @@ final class ChatAssistant
 
     private static function mentions(string $haystack, string $needle): bool
     {
-        $pos = \mb_stripos($haystack, $needle);
-        if ($pos === false) {
-            return false;
+        // "#12" must not match inside "#123" (nor "12" inside "312"): a digit
+        // at either end of the needle needs a non-digit neighbour. ANY
+        // occurrence counts — testing only the first one dropped "#12"
+        // whenever "#123" appeared earlier in the answer.
+        $pattern = (\ctype_digit(\mb_substr($needle, 0, 1)) ? '(?<!\d)' : '')
+            . \preg_quote($needle, '/')
+            . (\ctype_digit(\mb_substr($needle, -1)) ? '(?!\d)' : '');
+        $found = @\preg_match('/' . $pattern . '/iu', $haystack);
+        if ($found === false) {
+            $found = \preg_match('/' . $pattern . '/i', $haystack); // not valid UTF-8
         }
-        // "#12" must not match inside "#123": the char after must not be a digit
-        // when the needle ends with one.
-        $after = \mb_substr($haystack, $pos + \mb_strlen($needle), 1);
 
-        return !(\ctype_digit(\mb_substr($needle, -1)) && $after !== '' && \ctype_digit($after));
+        return $found === 1;
     }
 
     /**

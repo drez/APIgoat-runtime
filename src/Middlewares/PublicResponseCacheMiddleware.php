@@ -229,8 +229,9 @@ final class PublicResponseCacheMiddleware implements MiddlewareInterface
             // Without this, every client that arrives in the same second as
             // the expiry misses together and the handler runs N times at once
             // (a 40-client load test turned a 60 s TTL into 17 s stalls).
-            if (MicroCache::get($key . ':lock') === null) {
-                MicroCache::put($key . ':lock', self::REFRESH_LOCK_SECONDS, 1);
+            // add() is atomic (apcu_add): a get()-then-put() here let every
+            // request that read "no lock" in the same instant refresh at once.
+            if (MicroCache::add($key . ':lock', self::REFRESH_LOCK_SECONDS, 1)) {
                 return ['mode' => 'miss', 'key' => $key, 'ttl' => $ttl, 'route' => $route];
             }
             return ['mode' => 'stale', 'key' => $key, 'ttl' => $ttl, 'route' => $route, 'entry' => $entry];

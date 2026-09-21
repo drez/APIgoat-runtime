@@ -206,6 +206,13 @@ final class ChatAssistantTest extends TestCase
         self::assertSame([$sources[1]], ChatAssistant::citedSources('See #123 for details.', $sources));
         self::assertSame([$sources[0], $sources[2]], ChatAssistant::citedSources('Both #12 and mailbox support.', $sources));
         self::assertSame([], ChatAssistant::citedSources('Nothing here.', $sources));
+        // every occurrence is tried: "#12" after an earlier "#123" is still cited
+        self::assertSame([$sources[0], $sources[1]], ChatAssistant::citedSources("#123 — A\n#12 — B\nSources: #123, #12", $sources));
+        // a bare id is digit-bounded on BOTH sides
+        self::assertSame([], ChatAssistant::citedSources('Invoice 3120 is late.', [['id' => '12', 'label' => '']]));
+        self::assertSame([['id' => '12', 'label' => '']], ChatAssistant::citedSources('Invoice 3120, then record 12.', [['id' => '12', 'label' => '']]));
+        // regex metacharacters in a label are literal
+        self::assertSame([['id' => 'x', 'label' => 'A+B (v2)']], ChatAssistant::citedSources('uses a+b (v2) here', [['id' => 'x', 'label' => 'A+B (v2)']]));
     }
 
     public function testDriverFailureThrowsChatFailed(): void

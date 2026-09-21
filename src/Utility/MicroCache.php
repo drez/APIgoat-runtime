@@ -91,6 +91,27 @@ final class MicroCache
     }
 
     /**
+     * Store $val under $key ONLY IF the key is absent; true when this call
+     * created it. Atomic on APCu (apcu_add), which is what makes it usable as
+     * a lock: get()-then-put() lets every request that reads "absent" in the
+     * same instant believe it took the lock. False when $ttl <= 0.
+     */
+    public static function add(string $key, int $ttl, mixed $val): bool
+    {
+        if ($ttl <= 0) {
+            return false;
+        }
+        if (self::apcuUsable()) {
+            return apcu_add($key, serialize($val), $ttl) === true;
+        }
+        if (self::get($key) !== null) {
+            return false;
+        }
+        self::$store[$key] = [time() + $ttl, serialize($val)];
+        return true;
+    }
+
+    /**
      * Atomic counter (generation tokens for write-through invalidation).
      * Counters are stored as raw integers — separate from the serialized
      * value entries — and carry no TTL. First use seeds with time() (via an

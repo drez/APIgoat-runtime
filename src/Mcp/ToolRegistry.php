@@ -172,6 +172,13 @@ class ToolRegistry
      */
     public function granted(McpTool $tool, AuthySession $session): bool
     {
+        // OAuth scope first: a token granted crm:read WITHOUT crm:write may only
+        // reach read tools, whatever rights its user holds. Tokens with no
+        // scopes recorded are unrestricted (see OAuth\TokenScopes).
+        if (\ApiGoat\OAuth\TokenScopes::readOnly() && !self::isReadTool($tool)) {
+            return false;
+        }
+
         $right = $tool->requiredRight();
         if ($right === null) {
             return true;    // no declared right (crm_* gate through Api's ACL)
@@ -179,5 +186,30 @@ class ToolRegistry
         [$entity, $letter] = $right;
 
         return $session->isAdmin() || $session->hasRights($entity, $letter) !== false;
+    }
+
+    /** Built-in tools that only ever read. */
+    private const READ_TOOLS = [
+        Tools\CrmDescribe::class, Tools\CrmList::class, Tools\CrmGet::class,
+        Tools\GcPdfPreview::class, Tools\GcStripeStatus::class, Tools\GcTelemetrySummary::class,
+        Tools\GcDesignDocs::class, Tools\GcBrandAssets::class,
+    ];
+
+    /**
+     * Is $tool safe for a read-only token? Fail-closed: a tool is a read tool
+     * only when it says so — a built-in on READ_TOOLS, a declared 'r' right, or
+     * a custom tool exposing `public function readOnly(): bool` (optional, not
+     * part of the McpTool interface so existing custom tools keep loading).
+     */
+    public static function isReadTool(McpTool $tool): bool
+    {
+        if (\method_exists($tool, 'readOnly')) {
+            return (bool) $tool->readOnly();
+        }
+        $right = $tool->requiredRight();
+        if (\is_array($right) && ($right[1] ?? null) === 'r') {
+            return true;
+        }
+        return \in_array(\get_class($tool), self::READ_TOOLS, true);
     }
 }

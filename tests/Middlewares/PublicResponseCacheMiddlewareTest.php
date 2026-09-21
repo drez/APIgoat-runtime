@@ -207,6 +207,17 @@ final class PublicResponseCacheMiddlewareTest extends TestCase
         self::assertSame((string) $refresh->getBody(), (string) $stale->getBody());
     }
 
+    public function testRefreshLockIsTakenWithAnAtomicAdd(): void
+    {
+        self::assertTrue(MicroCache::add('gc:test:lock', 10, 1), 'first taker wins');
+        self::assertFalse(MicroCache::add('gc:test:lock', 10, 2), 'second taker loses');
+        self::assertSame(1, MicroCache::get('gc:test:lock'), 'and does not overwrite');
+        MicroCache::forget('gc:test:lock');
+        self::assertTrue(MicroCache::add('gc:test:lock', 10, 3), 'free again once released');
+        self::assertFalse(MicroCache::add('gc:test:zero', 0, 1), 'no TTL, no entry');
+        MicroCache::forget('gc:test:lock');
+    }
+
     public function testXAuthorizationHeaderBypasses(): void
     {
         $app = $this->app();

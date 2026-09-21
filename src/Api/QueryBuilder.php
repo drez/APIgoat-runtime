@@ -39,6 +39,10 @@ class QueryBuilder
     private $messages;
     private $DataObj;
     private $selectKeyMap;
+    /** True when a Public+Allow api_rbac rule let this (anonymous) read through. */
+    private $publicPassed = false;
+    /** TableMaps reachable by name: every authorized join, keyed by relation name / alias. */
+    private $joinedTableMaps = [];
 
     /**
      * TableMap of the base model, captured before any use<Rel>Query() call
@@ -84,6 +88,7 @@ class QueryBuilder
             }
         }
         $this->setRequest($request);
+        $this->publicPassed = (($request['rbac_public'] ?? null) === 'passed');
 
         if (isset($request['data']['debug'])) {
             $this->setDebug($request['data']['debug']);
@@ -160,6 +165,15 @@ class QueryBuilder
     private function setGroupby($groupbys)
     {
         foreach ($groupbys as $groupby) {
+            if (!\is_string($groupby)) {
+                continue;
+            }
+            // SECURITY: GROUP BY a credential column buckets rows by hash —
+            // the same oracle as filtering on it.
+            if (self::isCredentialColumnName($groupby)) {
+                $this->messages[] = "Groupby: column is not allowed.";
+                return true;
+            }
             if (strpos($groupby, '.') !== false) {
                 $part = explode('.', $groupby);
                 if (array_key_exists($part[0], $this->tableAliases)) {
@@ -214,7 +228,9 @@ class QueryBuilder
         }
 
         if (!empty($this->request['filter'])) {
-            $this->setFilters($this->request['filter']);
+            if ($this->setFilters($this->request['filter'])) {
+                return true;
+            }
         }
 
         if (!empty($this->request['groupby'])) {
@@ -225,6 +241,12 @@ class QueryBuilder
 
         if (!empty($this->request['order'])) {
             foreach ($this->request['order'] as $order) {
+                // SECURITY: ORDER BY a credential column is a sort oracle on the
+                // hash (binary-search it against a row the caller controls).
+                if (\is_array($order) && self::isCredentialColumnName($order[0] ?? '')) {
+                    $this->messages[] = "Order: column is not allowed.";
+                    return true;
+                }
                 if ($order[1]) {
                     if (strpos($order[0], '.') !== false) {
                         $order[0] = camelize($order[0], true);
@@ -349,16 +371,112 @@ class QueryBuilder
      */
     private function isSensitiveSelectColumn($clause)
     {
-        $deny = \ApiGoat\Api\Api::CREDENTIAL_COLUMNS;
-        $c = trim((string) $clause);
+        return self::isCredentialColumnName($clause);
+    }
+
+    /**
+     * SECURITY: does this column reference name a credential/token column
+     * (Api::CREDENTIAL_COLUMNS)? Used for select AND filter / order / groupby:
+     * a column that may not be returned may not be filtered, sorted or grouped
+     * on either — `[["passwd_hash","$2y$10$ab%"]]` plus the row count is a
+     * character-by-character extraction oracle. An aggregate wrapper is
+     * stripped and EVERY dot segment is tested: Propel reads the second
+     * segment of "a.b.c" while the old check read the last. Normalised to bare
+     * lowercase alphanumerics, because camelize() folds '-' and ' ' exactly
+     * like '_' ("passwd-hash" reaches filterByPasswdHash too).
+     *
+     * @param mixed $name
+     * @return boolean
+     */
+    public static function isCredentialColumnName($name)
+    {
+        if (!\is_string($name)) {
+            return false;
+        }
+        $c = trim($name);
         if (preg_match('/^(?:COUNT|SUM|AVG|MIN|MAX)\(\s*(?:DISTINCT\s+)?(.+?)\s*\)$/i', $c, $m)) {
             $c = $m[1];
         }
-        $dot = strrpos($c, '.');
-        if ($dot !== false) {
-            $c = substr($c, $dot + 1);
+        foreach (explode('.', $c) as $segment) {
+            $segment = preg_replace('/[^a-z0-9]/', '', strtolower($segment));
+            if (in_array($segment, \ApiGoat\Api\Api::CREDENTIAL_COLUMNS, true)) {
+                return true;
+            }
         }
-        return in_array(strtolower(str_replace('_', '', $c)), $deny, true);
+        return false;
+    }
+
+    /**
+     * Model PhpName a relation of $tableMap points at, or NULL when the
+     * relation does not exist / cannot be read.
+     *
+     * @param object|null $tableMap
+     * @param string      $relation
+     * @return array|null [PhpName, TableMap]
+     */
+    private static function relationTarget($tableMap, $relation)
+    {
+        try {
+            if (!\is_object($tableMap) || !$tableMap->hasRelation($relation)) {
+                return null;
+            }
+            $target = $tableMap->getRelation($relation)->getRightTable();
+            return \is_object($target) ? [(string) $target->getPhpName(), $target] : null;
+        } catch (\Throwable $x) {
+            return null;
+        }
+    }
+
+    /**
+     * Does this TableMap carry a credential column? Same rule — and the same
+     * fail-closed answer for an unreadable map — as Api::isCredentialTable().
+     */
+    private static function tableMapHoldsCredentials($tableMap)
+    {
+        try {
+            foreach ($tableMap->getColumns() as $key => $Column) {
+                if (self::isCredentialColumnName((string) $key)
+                    || (\is_object($Column) && self::isCredentialColumnName((string) $Column->getPhpName()))) {
+                    return true;
+                }
+            }
+        } catch (\Throwable $x) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * SECURITY: may the caller read the model a join / dotted filter reaches?
+     *
+     * Api::getJson() authorizes the BASE entity only, so any caller holding
+     * `r` on any one entity could join AuthyRelatedByIdCreation and read — or
+     * LIKE-probe — another table through it. The related model is held to the
+     * rule the base entity is: Admin passes, otherwise hasRights(model,'r')
+     * must not be false. A Public+Allow read keeps its waiver for ordinary
+     * tables (public content lists join each other) but, exactly like
+     * getJson(), never for a table that holds credentials. Unresolvable
+     * target, no session: refused.
+     *
+     * @param array|null $target [PhpName, TableMap] from relationTarget()
+     * @return boolean
+     */
+    protected function canReadRelated($target)
+    {
+        if (!\is_array($target) || $target[0] === '') {
+            return false;
+        }
+        if ($this->publicPassed && !self::tableMapHoldsCredentials($target[1])) {
+            return true;
+        }
+        $session = (\defined('_AUTH_VAR') && isset($_SESSION[\_AUTH_VAR])) ? $_SESSION[\_AUTH_VAR] : null;
+        if (!\is_object($session)) {
+            return false;
+        }
+        if ($session->isAdmin()) {
+            return true;
+        }
+        return $session->hasRights($target[0], 'r') !== false;
     }
 
     private function setSelect(array $selectRequest)
@@ -396,6 +514,14 @@ class QueryBuilder
                 $this->selectKey[] = $select[1];
             } else {
 
+                // SECURITY: same grammar gate as the aliased branch above. The
+                // string lands inside Propel's backticked column alias, and a
+                // backtick in it closes that alias: "Rel.Col.`,(SELECT ...)AS`y"
+                // selected an arbitrary subquery.
+                if (!\is_string($select) || !self::isSafeSelectClause($select)) {
+                    $this->messages[] = "Select: column expression not allowed.";
+                    return true;
+                }
                 if ($this->isSensitiveSelectColumn($select)) {
                     $this->messages[] = "Select: column is not selectable.";
                     return true;
@@ -628,12 +754,25 @@ class QueryBuilder
                     // use...Query() subquery and cannot merge with the base ACL, so
                     // only base-model columns are guarded. Root has no ACL applied
                     // and is exempt.
-                    if (strpos($filter[0], '.') === false) {
+                    // A prefix naming the base model itself ("Contact.id_creation")
+                    // is dispatched to the base query too, so it is guarded too.
+                    $aclParts = explode('.', $filter[0]);
+                    if (!isset($aclParts[1]) || ("App\\" . \camelize($aclParts[0], true)) == $this->modelName) {
                         $isRoot = isset($_SESSION[_AUTH_VAR]) && $_SESSION[_AUTH_VAR]->get('isRoot');
-                        if (!$isRoot && in_array(\camelize($filter[0], true), ['IdCreation', 'IdGroupCreation', 'IdTenant'], true)) {
+                        if (!$isRoot && in_array(\camelize($aclParts[1] ?? $aclParts[0], true), ['IdCreation', 'IdGroupCreation', 'IdTenant'], true)) {
                             $this->messages[] = "Filter: column ({$filter[0]}) is access-controlled and cannot be filtered on ({$table})";
                             continue;
                         }
+                    }
+
+                    // SECURITY: a credential column is no more filterable than it
+                    // is selectable — a LIKE on passwd_hash plus the row count
+                    // reads the hash out one character at a time. Refuse the whole
+                    // request: dropping just this filter would answer with rows
+                    // the caller did not ask for.
+                    if (self::isCredentialColumnName($filter[0])) {
+                        $this->messages[] = "Filter: column is not filterable.";
+                        return $this->abortFilters($lastUseQuery);
                     }
 
                     $addOr = false;
@@ -660,6 +799,14 @@ class QueryBuilder
                         $fTable = \camelize($prefix, true);
                         $fClass = "App\\" . $fTable;
                         $useQuery = $this->getUseClause($fClass, $fTable, $table);
+
+                        // SECURITY: the filter is about to run inside
+                        // use<Rel>Query() — i.e. against ANOTHER model. Hold it
+                        // to the read rule of that model (see canReadRelated).
+                        if ($useQuery && !$this->canReadRelated(self::relationTarget($this->baseTableMap, \camelize(substr($useQuery, 3, -5), true)))) {
+                            $this->messages[] = "Filter: Permission denied on ({$prefix})";
+                            return $this->abortFilters($lastUseQuery);
+                        }
                     }
 
                     // Close the child query a previous dotted filter opened, and
@@ -811,6 +958,20 @@ class QueryBuilder
                 $this->messages[] = "Filter: Table ({$table}) not found";
             }
         }
+        return false;
+    }
+
+    /**
+     * Refuse the request from inside setFilters(): close the child query a
+     * dotted filter left open (so $this->Query is the base query again) and
+     * return TRUE, which buildQuery() hands up as "do not run".
+     */
+    private function abortFilters($lastUseQuery)
+    {
+        if ($lastUseQuery) {
+            $this->Query = $this->Query->endUse();
+        }
+        return true;
     }
 
     private function setVariablesValue($filter)
@@ -842,25 +1003,62 @@ class QueryBuilder
     private function setJoins(array $joinsRequest)
     {
         if ($joinsRequest) {
+            $ident = '/^[A-Za-z_][A-Za-z0-9_]*$/';
             foreach ($joinsRequest as $join) {
                 $alias = null;
                 $joinType = Criteria::LEFT_JOIN;
 
+                // [relation, alias, type] or a bare "Relation" / "Joined.Relation"
+                $name = \is_array($join) ? ($join[0] ?? null) : $join;
+                if (!\is_string($name) || $name === '') {
+                    $this->messages[] = "Join: Parameters incorrect.";
+                    return true;
+                }
+                $parts = explode('.', \camelize($name, true));
+                if (count($parts) > (\is_array($join) ? 1 : 2) || array_filter($parts, function ($p) use ($ident) {
+                    return !preg_match($ident, $p);
+                })) {
+                    $this->messages[] = "Join: relation name not allowed.";
+                    return true;
+                }
+
+                // SECURITY: resolve the relation the way ModelCriteria::join()
+                // does (own relation, or one of an already-joined table) and
+                // require read rights on the model it reaches — a join is a read
+                // of that model. Before this, `r` on ANY entity read Authy
+                // through AuthyRelatedByIdCreation.
+                $relation = array_pop($parts);
+                $leftMap = $this->baseTableMap;
+                if ($parts && ("App\\" . $parts[0]) != $this->modelName) {
+                    $leftMap = $this->joinedTableMaps[$parts[0]] ?? null;
+                }
+                $target = self::relationTarget($leftMap, $relation);
+                if (!$this->canReadRelated($target)) {
+                    $this->messages[] = "Join: Permission denied on ({$name})";
+                    return true;
+                }
+
                 if (is_array($join)) {
-                    if ($join[2] == 'right') {
+                    if (($join[2] ?? null) == 'right') {
                         $joinType = Criteria::RIGHT_JOIN;
                     }
 
-                    if ($join[1]) {
+                    if (!empty($join[1])) {
+                        // The alias is emitted into the SQL as-is.
+                        if (!\is_string($join[1]) || !preg_match($ident, $join[1])) {
+                            $this->messages[] = "Join: alias not allowed.";
+                            return true;
+                        }
                         $alias = $join[1];
                         $this->tableAliases[$alias] = $join[0];
                     }
 
-                    $joinName = "join" . \camelize($join[0], true);
+                    $joinName = "join" . $relation;
                     $this->Query->$joinName($alias);
                 } else {
                     $this->Query->leftJoin(\camelize($join, true));
                 }
+                $this->joinedTableMaps[$alias ?: $relation] = $target[1];
             }
         }
         return false;

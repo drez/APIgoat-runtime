@@ -55,7 +55,9 @@ final class MailHtmlTest extends TestCase
         $this->assertStringNotContainsString('behavior:', $out);
         $this->assertStringNotContainsString('javascript', $out);
         $this->assertStringNotContainsString('-moz-binding', $out);
-        $this->assertStringContainsString('url(https://ok/x.png)', $out);
+        // an http(s) url() survives the scheme filter — parked while images are blocked, as written once shown
+        $this->assertStringContainsString('url(' . MailHtml::BLOCKED_PREFIX . 'https://ok/x.png)', $out);
+        $this->assertStringContainsString('url(https://ok/x.png)', MailHtml::withImages($out));
         $this->assertStringContainsString('style="color:red"', $out);
     }
 
@@ -65,5 +67,39 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('Café — “quotes” 日本', $out);
         $this->assertStringContainsString('<body><p>', $out);
         $this->assertSame('', MailHtml::defuse('  '));
+    }
+
+    public function test_blocked_images_cover_every_remote_reference_not_just_img_src(): void
+    {
+        $in = '<style>.h{background:url("https://t.example/bg.gif")} .k{background:url(data:image/png;base64,AAAA)}</style>'
+            . '<img src="https://t.example/p.gif" srcset="https://t.example/q.gif 1x"><img srcset="https://t.example/only.gif 2x">'
+            . '<image src="https://t.example/i.gif"><bgsound src="https://t.example/s.wav">'
+            . '<table background="https://t.example/tb.gif"><tr><td style="background:url(//t.example/x.gif)" poster="https://t.example/po.gif">a</td></tr></table>';
+        $out = MailHtml::defuse($in);
+        // nothing left that a browser would fetch: every remaining mention is parked
+        $parked = preg_replace('#(?:data-gm-src="|' . preg_quote(MailHtml::BLOCKED_PREFIX, '#') . ')(?:https:)?//t\.example#', '', $out);
+        $this->assertStringNotContainsString('t.example', $parked, $out);
+        foreach (['srcset', 'poster', '<bgsound', 'only.gif', 'q.gif', 's.wav'] as $gone) {
+            $this->assertStringNotContainsString($gone, $out, $gone);
+        }
+        $this->assertStringContainsString('background="' . MailHtml::BLOCKED_PREFIX . 'https://t.example/tb.gif"', $out);
+        $this->assertStringContainsString('url(data:image/png;base64,AAAA)', $out);
+
+        // "Show images" brings the img, the <image>, the attribute and both CSS backgrounds back
+        $shown = MailHtml::withImages($out);
+        $this->assertStringNotContainsString(MailHtml::BLOCKED_PREFIX, $shown);
+        foreach (['src="https://t.example/p.gif"', 'src="https://t.example/i.gif"', 'background="https://t.example/tb.gif"', 'url("https://t.example/bg.gif")', 'url(//t.example/x.gif)'] as $back) {
+            $this->assertStringContainsString($back, $shown, $back);
+        }
+        // and with images on from the start nothing is parked
+        $this->assertStringNotContainsString(MailHtml::BLOCKED_PREFIX, MailHtml::defuse($in, true));
+    }
+
+    public function test_a_sender_cannot_pre_park_a_url(): void
+    {
+        $out = MailHtml::defuse('<a href="javax-gm-blocked:script:alert(1)">x</a><p data-gm-src="javascript:1" title="X-GM-BLOCKED:">t</p>'
+            . '<td style="background:url(x-gm-blocked:javascript:1)">c</td><style>.a{background:url(&quot;)}</style>');
+        $this->assertStringNotContainsStringIgnoringCase('javascript', MailHtml::withImages($out));
+        $this->assertStringNotContainsString('data-gm-src', $out);
     }
 }

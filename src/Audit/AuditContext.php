@@ -264,20 +264,46 @@ final class AuditContext
      * Returns the number of rows written; throws only what the caller catches.
      *
      * @param list<array{field:string, value_from:?string, value_to:?string}> $rows
+     * @param array<string, mixed> $extra       extra column => value, bound as-is
+     *                                          (the parent's id_tenant, so the
+     *                                          history stays inside its tenant)
+     * @param string[]             $actorStamps owner columns to stamp from the
+     *                                          session (see actorStampValues())
      */
-    public static function write(\PDO $con, string $auditTable, string $fkColumn, $fkValue, array $rows): int
-    {
+    public static function write(
+        \PDO $con,
+        string $auditTable,
+        string $fkColumn,
+        $fkValue,
+        array $rows,
+        array $extra = [],
+        array $actorStamps = []
+    ): int {
         if ($rows === []) {
             return 0;
         }
         self::assertIdentifier($auditTable);
         self::assertIdentifier($fkColumn);
 
+        // Extra columns, all decided by the emitter at build time from the
+        // audit table's real shape (so an older table never sees a column it
+        // does not have): $extra carries the parent's id_tenant, $actorStamps
+        // names the add_tablestamp owner columns to fill from the session.
+        $extra = $extra + self::actorStampValues($actorStamps);
+        foreach (\array_keys($extra) as $column) {
+            self::assertIdentifier((string) $column);
+        }
+        $extraCols = $extra === [] ? '' : ', `' . \implode('`, `', \array_keys($extra)) . '`';
+        $extraMarks = \str_repeat(', ?', \count($extra));
+
         $actor  = self::actor();
         $source = self::sourceOrdinal();
-        // date_creation / date_modification are the add_tablestamp columns; the
-        // remaining stamps (id_creation / id_modification / id_group_creation)
-        // stay NULL — `actor` is the attribution this table is for.
+        // date_creation / date_modification are the add_tablestamp columns.
+        // id_creation / id_group_creation are stamped from the same session
+        // when the emitter names them in $actorStamps: `actor` stays the
+        // human-readable attribution, but the Owner/Group row scope filters on
+        // those two columns, and NULL stamps hid every history row from an
+        // Owner-scoped reader. id_modification stays NULL (rows are append-only).
         //
         // WHY PHP's CLOCK AND NOT MySQL's NOW(): every other table in a
         // generated project is stamped by the emitted add_tablestamp hook with
@@ -294,13 +320,15 @@ final class AuditContext
 
         $stmt = $con->prepare(
             'INSERT INTO `' . $auditTable . '`'
-            . ' (`' . $fkColumn . '`, `field`, `value_from`, `value_to`, `actor`, `source`, `date_creation`, `date_modification`)'
-            . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            . ' (`' . $fkColumn . '`, `field`, `value_from`, `value_to`, `actor`, `source`, `date_creation`, `date_modification`'
+            . $extraCols . ')'
+            . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?' . $extraMarks . ')'
         );
+        $extraValues = \array_values($extra);
 
         $written = 0;
         foreach ($rows as $row) {
-            $stmt->execute([
+            $stmt->execute(\array_merge([
                 $fkValue,
                 (string) ($row['field'] ?? ''),
                 $row['value_from'] ?? null,
@@ -309,12 +337,53 @@ final class AuditContext
                 $source,
                 $stamp,
                 $stamp,
-            ]);
+            ], $extraValues));
             $written++;
         }
         $stmt->closeCursor();
 
         return $written;
+    }
+
+    /** The add_tablestamp owner columns write() may stamp, and their session getter. */
+    private const ACTOR_STAMPS = [
+        'id_creation'       => 'getIdAuthy',
+        'id_group_creation' => 'getIdPrimaryGroup',
+    ];
+
+    /**
+     * column => value for the requested owner stamps, from the same session
+     * actor() reads — the ids add_tablestamp itself would have written on a
+     * model save(). No session (CLI, cron, daemon) → NULL, like actor(). An
+     * unknown column name is ignored rather than trusted.
+     *
+     * @param string[] $columns
+     * @return array<string, int|null>
+     */
+    public static function actorStampValues(array $columns): array
+    {
+        $out = [];
+        foreach ($columns as $column) {
+            if (!\is_string($column) || !isset(self::ACTOR_STAMPS[$column])) {
+                continue;
+            }
+            $value = null;
+            try {
+                if (\defined('_AUTH_VAR') && isset($_SESSION) && \is_array($_SESSION)) {
+                    $auth   = $_SESSION[\_AUTH_VAR] ?? null;
+                    $getter = self::ACTOR_STAMPS[$column];
+                    if (\is_object($auth) && \method_exists($auth, $getter)) {
+                        $id = $auth->$getter();
+                        $value = (\is_numeric($id) && (int) $id > 0) ? (int) $id : null;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Resolving who did it can never be allowed to fail the write.
+            }
+            $out[$column] = $value;
+        }
+
+        return $out;
     }
 
     /** The single row an INSERT records: the whole record came into being. */

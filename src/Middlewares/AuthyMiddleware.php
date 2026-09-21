@@ -250,8 +250,18 @@ class AuthyMiddleware implements MiddlewareInterface
         // RouteParser::decodePath() puts the {a} URL segment on 'action'
         // ('a' is only populated later, inside the route closure by RouteHelper).
         $action = (string) ($this->args['action'] ?? ($this->args['a'] ?? ''));
+        // A route that leaves 'a' to the query (RouteHelper keeps a client
+        // ?a= whenever the path pinned none) dispatches on THAT value, while
+        // the parsed path action reads 'list' — so /Model?a=delete walked
+        // past this gate and only the emitted service guard stood in the way.
+        // Either name being a write refuses the GET.
+        $queryAction = $request->getQueryParams()['a'] ?? '';
+        $queryAction = is_string($queryAction) ? $queryAction : '';
         if (! \ApiGoat\Services\Service::isMutatingAction($action)) {
-            return null;
+            if (! \ApiGoat\Services\Service::isMutatingAction($queryAction)) {
+                return null;
+            }
+            $action = $queryAction;
         }
 
         // No exemptions: a mutating action is POST-only. The first-party GET
@@ -423,9 +433,14 @@ class AuthyMiddleware implements MiddlewareInterface
             // needs write, so a state-changing custom action can no longer be
             // invoked with read-only rights. A read action reached via POST must
             // be granted explicitly (add it to the privilege map / api_rbac).
+            //
+            // READ_ONLY_POST_ACTIONS are the emitter's own actions that are
+            // POSTed yet only read (the service is never instantiated here, so
+            // its $readOnlyCustomActions cannot be consulted): inferring 'w'
+            // locked them away from every user holding just 'r'.
             $model   = $this->args['model'];
             $reqMethod = strtoupper($request->getMethod());
-            $requiredPrivileges = in_array($reqMethod, ['POST', 'PUT', 'PATCH', 'DELETE'], true) ? 'w' : 'r';
+            $requiredPrivileges = self::inferredPrivilege($reqMethod, (string) $this->args['action']);
         } else {
             $model = $this->args['model'];
         }
@@ -443,6 +458,26 @@ class AuthyMiddleware implements MiddlewareInterface
         } else {
             return new InvalidSessionRenderer($this->args['is_api'], "Missing privileges in the Privileges Map for the requested action");
         }
+    }
+
+    /**
+     * Emitter actions that arrive by POST but only READ, so they need 'r', not
+     * the 'w' a POST otherwise implies. Each handler re-checks
+     * hasRights(model,'r') itself and persists nothing:
+     *   chat      — with_ai: answers from the ContextProvider (POST for the body)
+     *   selectbox — ChildSelect cascade: option list of one dependent select
+     * Keep this list to actions the EMITTER owns; a project's own read-only
+     * POST action belongs in its privilege map.
+     */
+    public const READ_ONLY_POST_ACTIONS = ['chat', 'selectbox'];
+
+    /** Right inferred for a custom action absent from the privilege map (pure; unit-tested). */
+    public static function inferredPrivilege(string $method, string $action): string
+    {
+        if (in_array(strtolower(trim($action)), self::READ_ONLY_POST_ACTIONS, true)) {
+            return 'r';
+        }
+        return in_array(strtoupper($method), ['POST', 'PUT', 'PATCH', 'DELETE'], true) ? 'w' : 'r';
     }
 
     /**

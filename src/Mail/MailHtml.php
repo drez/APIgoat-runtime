@@ -25,6 +25,10 @@ namespace ApiGoat\Mail;
  * data-gm-src behind a transparent 1x1 placeholder, so nothing renders as a
  * broken icon, and the viewer's "Show images" swaps them back (a plain
  * string replacement — see IMG_PLACEHOLDER — and widens the CSP img-src).
+ * The other ways a message reaches the network go the same way rather than
+ * resting on the CSP alone: srcset/poster are dropped, <image> is treated as
+ * the <img> a browser makes of it, <bgsound> is removed, and a remote
+ * `background` attribute or CSS url() is parked behind BLOCKED_PREFIX.
  */
 final class MailHtml
 {
@@ -40,12 +44,26 @@ final class MailHtml
     /** CSP once the viewer chose to show images (remote images + CSS backgrounds). */
     public const CSP_IMAGES  = "default-src 'none'; img-src data: http: https:; style-src 'unsafe-inline'; font-src data:";
 
+    /**
+     * Prefix parking a remote URL that is not an <img src> while images are
+     * blocked: `background="…"` and CSS url(…). An unknown scheme never
+     * reaches the network, and removing the prefix (withImages) restores the
+     * original byte for byte. Any occurrence in the incoming message is
+     * deleted first, so a sender cannot pre-park a URL of their own.
+     */
+    public const BLOCKED_PREFIX = 'x-gm-blocked:';
+
     private const REMOVE = [
         'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'noscript', 'template',
         'input', 'button', 'select', 'textarea', 'option', 'link', 'meta', 'base', 'audio', 'video', 'source', 'track',
         'svg', 'math', 'canvas',
     ];
-    private const UNWRAP = ['form'];
+    /**
+     * Dropped, children kept. bgsound is here rather than in REMOVE: libxml
+     * does not know it is void, so the rest of the message parses as its
+     * children and removing it would delete the message.
+     */
+    private const UNWRAP = ['form', 'bgsound'];
     private const URL_ATTRS = ['href', 'src', 'action', 'formaction', 'background', 'poster', 'xlink:href', 'srcset', 'ping', 'longdesc', 'usemap'];
 
     /**
@@ -92,14 +110,24 @@ final class MailHtml
             foreach (iterator_to_array($el->attributes) as $attr) {
                 $an = strtolower($attr->name);
                 $av = $attr->value;
-                if (str_starts_with($an, 'on')) {
+                if (stripos($av, self::BLOCKED_PREFIX) !== false) {
+                    $av = str_ireplace(self::BLOCKED_PREFIX, '', $av);
+                    $el->setAttribute($attr->name, $av);
+                }
+                if (str_starts_with($an, 'on') || str_starts_with($an, 'data-gm-')) {
                     $el->removeAttribute($attr->name);
                 } elseif (in_array($an, self::URL_ATTRS, true)) {
                     if (!self::urlAllowed($av, $an === 'src' || $an === 'srcset' || $an === 'background' || $an === 'poster')) {
                         $el->removeAttribute($attr->name);
+                    } elseif (!$images && ($an === 'srcset' || $an === 'poster')) {
+                        // Every candidate is a remote fetch; src (parked below)
+                        // is what "Show images" brings back.
+                        $el->removeAttribute($attr->name);
+                    } elseif (!$images && $an === 'background' && !str_starts_with(strtolower(trim($av)), 'data:')) {
+                        $el->setAttribute($attr->name, self::BLOCKED_PREFIX . $av);
                     }
                 } elseif ($an === 'style') {
-                    $el->setAttribute('style', self::cleanCss($av));
+                    $el->setAttribute('style', self::cleanCss($av, $images));
                 }
             }
             $name = strtolower($el->localName ?: $el->nodeName);
@@ -107,7 +135,8 @@ final class MailHtml
                 $el->setAttribute('target', '_blank');
                 $el->setAttribute('rel', 'noopener noreferrer');
             }
-            if ($name === 'img' && !$images && $el->hasAttribute('src')) {
+            // <image> is what a browser's parser turns into <img>.
+            if (($name === 'img' || $name === 'image') && !$images && $el->hasAttribute('src')) {
                 $src = $el->getAttribute('src');
                 if (!str_starts_with(strtolower($src), 'data:')) {
                     // Re-added (not edited in place) so src and data-gm-src are
@@ -120,7 +149,7 @@ final class MailHtml
         }
         // 3. <style> blocks
         foreach (iterator_to_array($xp->query('//style')) as $st) {
-            $st->textContent = self::cleanCss($st->textContent);
+            $st->textContent = self::cleanCss($st->textContent, $images);
         }
 
         $body = $doc->getElementsByTagName('body')->item(0);
@@ -148,8 +177,8 @@ final class MailHtml
     public static function withImages(string $frameDocument): string
     {
         return str_replace(
-            [self::CSP_BLOCKED, ' src="' . self::IMG_PLACEHOLDER . '" data-gm-src="'],
-            [self::CSP_IMAGES, ' src="'],
+            [self::CSP_BLOCKED, ' src="' . self::IMG_PLACEHOLDER . '" data-gm-src="', self::BLOCKED_PREFIX],
+            [self::CSP_IMAGES, ' src="', ''],
             $frameDocument
         );
     }
@@ -176,16 +205,25 @@ final class MailHtml
         return $allowDataImage && str_starts_with($u, 'data:image/');
     }
 
-    private static function cleanCss(string $css): string
+    private static function cleanCss(string $css, bool $images = true): string
     {
+        $css = str_ireplace(self::BLOCKED_PREFIX, '', $css);
         $css = preg_replace('/expression\s*\(/i', 'expression-blocked(', $css) ?? $css;
         $css = preg_replace('/-moz-binding\s*:[^;}]*;?/i', '', $css) ?? $css;
         $css = preg_replace('/behavior\s*:[^;}]*;?/i', '', $css) ?? $css;
         $css = preg_replace('/@import[^;]*;?/i', '', $css) ?? $css;
         // url(): keep http(s)/data, drop the rest (javascript:, vbscript:, file:)
-        $css = preg_replace_callback('/url\(\s*([\'"]?)(.*?)\1\s*\)/is', static function (array $m): string {
+        // Images blocked: a remote url() is parked (BLOCKED_PREFIX), not dropped,
+        // so "Show images" restores backgrounds too.
+        $css = preg_replace_callback('/url\(\s*([\'"]?)(.*?)\1\s*\)/is', static function (array $m) use ($images): string {
             $u = strtolower(trim($m[2]));
-            return (str_starts_with($u, 'http') || str_starts_with($u, 'data:image/') || str_starts_with($u, '//')) ? $m[0] : 'none';
+            if (str_starts_with($u, 'data:image/')) {
+                return $m[0];
+            }
+            if (!str_starts_with($u, 'http') && !str_starts_with($u, '//')) {
+                return 'none';
+            }
+            return $images ? $m[0] : 'url(' . $m[1] . self::BLOCKED_PREFIX . trim($m[2]) . $m[1] . ')';
         }, $css) ?? $css;
         return $css;
     }

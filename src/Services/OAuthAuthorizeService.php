@@ -138,9 +138,15 @@ class OAuthAuthorizeService extends Service
             // CRM session BEFORE the connected-vs-login branch, otherwise GET
             // skips the login form and a subsequent POST of credentials is
             // misread as a consent decision for the PREVIOUS user.
+            //
+            // The session itself is NOT touched here. This runs on a plain GET,
+            // and any site can send a browser to a valid authorize URL (client
+            // registration is open) — forgetting the session at this point was
+            // a one-link logout CSRF. The request is simply handled as not
+            // connected; the session is dropped further down, on the POST
+            // paths that have passed the CSRF check (credentials / switch
+            // account), which is also where the next user replaces it.
             if (self::shouldReauthenticate($params, $consent)) {
-                $this->forgetCrmSession();
-                $session   = $_SESSION[_AUTH_VAR] ?? null;
                 $connected = false;
             }
 
@@ -360,6 +366,12 @@ class OAuthAuthorizeService extends Service
             ? '<p style="color:#333;font-weight:600;">' . sprintf(_('Signed in as %s'), htmlspecialchars($who, ENT_QUOTES)) . '</p>'
             : '';
 
+        // The client NAME is whatever the client registered (open DCR: anyone
+        // may call itself "Claude"); where the code is SENT is the one thing
+        // on this page it cannot fake. Rides in whoHtml so project views
+        // written before it existed show it too.
+        $whoHtml .= self::redirectHostHtml((string) ($authRequest->getRedirectUri() ?? ''), $authRequest->getClient()->getRedirectUri());
+
         return $this->htmlResponse(self::consentPageHtml([
             'productName'      => Branding::productName(),
             'logoUrl'          => Branding::logoUrl(),
@@ -370,6 +382,28 @@ class OAuthAuthorizeService extends Service
             'actionUrl'        => $this->actionUrl(),
             'hiddenFieldsHtml' => $this->hiddenParams($params) . $this->hiddenField('csrf', $csrf),
         ]));
+    }
+
+    /**
+     * "After you allow, you will be sent to <host>" — pre-escaped HTML, '' when
+     * no destination can be named. $requested is the request's redirect_uri,
+     * $registered the client's (string or list) used when the request named none.
+     *
+     * @param string|string[]|null $registered
+     */
+    public static function redirectHostHtml(string $requested, $registered = null): string
+    {
+        $uri = $requested !== '' ? $requested : (string) (\is_array($registered) ? (\reset($registered) ?: '') : ($registered ?? ''));
+        $parts = $uri !== '' ? \parse_url($uri) : false;
+        if (!\is_array($parts) || empty($parts['scheme'])) {
+            return '';
+        }
+        $scheme = \strtolower((string) $parts['scheme']);
+        $host   = (string) ($parts['host'] ?? '');
+        // https: the host says it all. Anything else (http loopback, an app's
+        // custom scheme) is shown with its scheme so it cannot pass for a site.
+        $label = $scheme === 'https' && $host !== '' ? $host : $scheme . '://' . $host;
+        return '<p style="color:#555;">' . sprintf(_('After you allow, you will be sent to %s'), '<strong>' . htmlspecialchars($label, ENT_QUOTES) . '</strong>') . '</p>';
     }
 
     /**

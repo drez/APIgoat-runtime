@@ -35,6 +35,8 @@ final class BearerSessionAuthenticator
     {
         $token = self::rawBearerToken($request);
         $ttl   = self::cacheTtl();
+        // Scopes belong to THIS request's token; never inherit a previous one's.
+        TokenScopes::set(null);
         $key   = $token !== '' ? 'gc:bearer:' . \hash('sha256', $token) : '';
 
         // Fast path: a token we fully authenticated within the TTL restores the
@@ -51,6 +53,9 @@ final class BearerSessionAuthenticator
                 if ($restored instanceof \ApiGoat\Sessions\AuthySession
                     && $restored->get('connected') === 'YES') {
                     $_SESSION[\_AUTH_VAR] = $restored;
+                    // Same bytes as a token that passed full validation within
+                    // the TTL, so its payload can be read without re-verifying.
+                    TokenScopes::set(TokenScopes::fromJwt($token));
                     return self::AUTHENTICATED;
                 }
                 \ApiGoat\Utility\MicroCache::forget($key); // corrupt / stale entry
@@ -82,6 +87,8 @@ final class BearerSessionAuthenticator
         if ($authyId <= 0) {
             return self::UNKNOWN_USER;
         }
+        // Granted scopes of the validated token (see TokenScopes for the rule).
+        TokenScopes::set((array) ($validated->getAttribute('oauth_scopes') ?? []));
 
         // Same user already in the session: skip the DB hydrate. A DIFFERENT
         // user in the cookie session must NOT win — mobile sign-out drops the

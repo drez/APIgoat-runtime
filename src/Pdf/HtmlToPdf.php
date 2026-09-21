@@ -18,6 +18,11 @@ namespace ApiGoat\Pdf;
  * http(s) fetch on a rule that rejects non-public hosts (loopback, private,
  * link-local incl. the cloud metadata endpoint, and other reserved ranges).
  * Public remote images still load; data: URIs (the logo path) are unaffected.
+ *
+ * The browser engines (tried FIRST) have no such protocol hook, so the same
+ * posture is applied to the document itself before they see it — see
+ * neutralise() — on top of the engines' own switches (JavaScript off, no
+ * local file access).
  */
 final class HtmlToPdf
 {
@@ -145,6 +150,7 @@ final class HtmlToPdf
             return $this->renderDompdf($html);
         }
         $html = (string) preg_replace('/@font-face\s*\{[^{}]*\}/i', '', $html);
+        $html = self::neutralise($html);
         [$size, $margins] = self::paper();
         $scale = self::wkScale();
         $html = self::fitToPaper($html, self::contentWidthPx($size, $margins), $scale);
@@ -262,9 +268,15 @@ final class HtmlToPdf
     // ── headless Chrome ──────────────────────────────────────────────────
 
     /**
-     * Chrome prints the document exactly as the browser shows it. Project
-     * font URLs are rewritten to file:// (Chrome is allowed to read those
-     * files only), @page margins come from the document's own CSS.
+     * Chrome prints the document exactly as the browser shows it; @page
+     * margins come from the document's own CSS. The document is a local file,
+     * and a file:// page may embed ANY other local file (<img>, <iframe>), so:
+     * project fonts are inlined as data: URIs (the only local files it needs —
+     * which is what lets --allow-file-access-from-files go), neutralise()
+     * removes every other non-public reference, and a CSP (withCsp) has the
+     * engine itself refuse scripts, frames, plugins and file: subresources.
+     * (--blink-settings=scriptEnabled=false is not an option: headless
+     * --print-to-pdf then writes no file at all.)
      */
     private function renderChrome(string $html): string
     {
@@ -273,16 +285,13 @@ final class HtmlToPdf
         if ($bin === null || $work === null) {
             return $this->renderDompdf($html);
         }
-        if (defined('_BASE_DIR')) {
-            $base = rtrim((string) _BASE_DIR, '/');
-            $html = (string) preg_replace('#url\([\'"]?[^\'")]*?/public/fonts/#i', 'url(file://' . $base . '/public/fonts/', $html);
-        }
+        $html = self::withCsp(self::neutralise(self::inlineProjectFonts($html)));
         $in  = $work . '/' . uniqid('doc_', true) . '.html';
         $out = substr($in, 0, -5) . '.pdf';
         file_put_contents($in, $html);
         $cmd = [
             $bin, '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-pdf-header-footer',
-            '--allow-file-access-from-files', '--user-data-dir=' . $work . '/profile',
+            '--user-data-dir=' . $work . '/profile',
             '--virtual-time-budget=5000', '--print-to-pdf=' . $out, 'file://' . $in,
         ];
         try {
@@ -296,6 +305,147 @@ final class HtmlToPdf
             throw new \RuntimeException('chrome produced no PDF: ' . trim($err));
         }
         return $bytes;
+    }
+
+    /**
+     * url(…/public/fonts/<file>.ttf) → url(data:font/ttf;base64,…) for files
+     * that really are project fonts (assertProjectFontPath: realpath under
+     * public/fonts, .ttf). Anything else is left as written and then judged by
+     * neutralise() like any other URL.
+     */
+    public static function inlineProjectFonts(string $html): string
+    {
+        if (!defined('_BASE_DIR')) {
+            return $html;
+        }
+        $base = rtrim((string) _BASE_DIR, '/') . '/public/fonts/';
+        return (string) preg_replace_callback(
+            '#url\(\s*([\'"]?)[^\'")]*?/public/fonts/([^\'")?\#]+)[^\'")]*\1\s*\)#i',
+            static function (array $m) use ($base): string {
+                $path = $base . rawurldecode($m[2]);
+                if (!self::assertProjectFontPath('file://' . $path)[0]) {
+                    return $m[0];
+                }
+                $bytes = @file_get_contents($path);
+                return $bytes === false ? $m[0] : 'url(data:font/ttf;base64,' . base64_encode($bytes) . ')';
+            },
+            $html
+        );
+    }
+
+    /** Engine-enforced backstop for neutralise(): no script, frame or plugin; images/styles/fonts only from data: and http(s). */
+    public const CSP = "default-src 'none'; img-src data: http: https:; style-src 'unsafe-inline' http: https:; font-src data: http: https:";
+
+    /** Put the CSP first in <head> (a policy only governs what follows it). */
+    public static function withCsp(string $html): string
+    {
+        $meta = '<meta http-equiv="Content-Security-Policy" content="' . self::CSP . '">';
+        $out = preg_replace('#<head\b[^>]*>#i', '$0' . $meta, $html, 1, $n);
+        return ($out !== null && $n === 1) ? $out : $meta . $html;
+    }
+
+    // ── document hardening for the browser engines ───────────────────────
+
+    /**
+     * Make template-driven HTML safe to hand to a real browser engine. The
+     * document can carry user-supplied fields (notes, addresses), the engines
+     * fetch whatever it references, and it is rendered from a local file — so
+     * <iframe src="file:///etc/passwd"> printed that file into the PDF, and
+     * <img src="http://169.254.169.254/…"> was a server-side request.
+     *
+     *  - active / embedding elements are removed: script, iframe, frame,
+     *    frameset, object, embed, applet, base, meta http-equiv=refresh;
+     *  - on* handlers are removed;
+     *  - every resource URL — src, srcset, poster, data, background, href
+     *    (not on <a>/<area>: a link in a PDF fetches nothing), xlink:href, CSS
+     *    url() and @import — must be a fragment, a data: URI, or an http(s)
+     *    URL that passes $urlRule (default: assertPublicUrl, the dompdf rule).
+     *    Everything else — file:, relative paths (they resolve against the
+     *    temp file), protocol-relative, other schemes — becomes about:blank.
+     *
+     * @param callable|null $urlRule fn(string $url): array{0: bool, 1: string}
+     */
+    public static function neutralise(string $html, ?callable $urlRule = null): string
+    {
+        $urlRule ??= [self::class, 'assertPublicUrl'];
+        $memo = [];
+        $ok = static function (string $raw) use ($urlRule, &$memo): bool {
+            // What the browser will see: entities decoded, and the whitespace /
+            // control characters it strips from a URL removed ("fi&#9;le:").
+            $url = (string) preg_replace('/[\x00-\x20]+/', '', html_entity_decode($raw, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            if ($url === '' || $url[0] === '#' || stripos($url, 'data:') === 0) {
+                return true;
+            }
+            if (!preg_match('#^https?://#i', $url) || strpos($url, '\\') !== false) {
+                return false;
+            }
+            $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+            return $memo[$host] ??= (bool) ($urlRule($url)[0] ?? false);
+        };
+
+        // Paired active elements with their content, then any stray open/close tag.
+        $html = self::pcre(preg_replace('#<(script|iframe|frameset|object|applet)\b[^>]*>.*?</\1\s*>#is', '', $html));
+        $html = self::pcre(preg_replace('#</?(?:script|iframe|frame|frameset|object|embed|applet|base)\b(?:[^>"\']|"[^"]*"|\'[^\']*\')*>#i', '', $html));
+        $html = self::pcre(preg_replace('#<meta\b(?=[^>]*http-equiv\s*=\s*["\']?\s*refresh)(?:[^>"\']|"[^"]*"|\'[^\']*\')*>#i', '', $html));
+
+        // Attributes, tag by tag (quote-aware, so a ">" inside a value does not end the tag).
+        $html = self::pcre(preg_replace_callback(
+            '#<([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"\']|"[^"]*"|\'[^\']*\')*)>#',
+            static function (array $t) use ($ok): string {
+                $isLink = in_array(strtolower($t[1]), ['a', 'area'], true);
+                $attrs = (string) preg_replace('#\s+on[a-z]+\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)#i', '', $t[2]);
+                $attrs = (string) preg_replace_callback(
+                    '#(?<=[\s"\'/])(src|srcset|poster|data|background|href|xlink:href)(\s*=\s*)("[^"]*"|\'[^\']*\'|[^\s>]+)#i',
+                    static function (array $a) use ($ok, $isLink): string {
+                        $name = strtolower($a[1]);
+                        if ($isLink && $name === 'href') {
+                            return $a[0];
+                        }
+                        $value = trim($a[3], '"\'');
+                        if ($name === 'srcset') {
+                            $urls = array_filter(
+                                preg_split('/[\s,]+/', html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8')) ?: [],
+                                static fn($p) => $p !== '' && !preg_match('/^\d+(?:\.\d+)?[wx]$/', $p)
+                            );
+                        } else {
+                            $urls = [$value];
+                        }
+                        foreach ($urls as $u) {
+                            if (!$ok($u)) {
+                                return $a[1] . $a[2] . '"about:blank"';
+                            }
+                        }
+                        return $a[0];
+                    },
+                    $attrs
+                );
+                return '<' . $t[1] . $attrs . '>';
+            },
+            $html
+        ));
+
+        // CSS, wherever it sits (style blocks, style attributes, SVG paint).
+        $html = self::pcre(preg_replace_callback(
+            '#url\(\s*("[^"]*"|\'[^\']*\'|[^)]*)\s*\)#i',
+            static fn(array $m): string => $ok(trim($m[1], " \t\n\r\"'")) ? $m[0] : 'url(about:blank)',
+            $html
+        ));
+        $html = self::pcre(preg_replace_callback(
+            '#@import\s+("[^"]*"|\'[^\']*\')#i',
+            static fn(array $m): string => $ok(trim($m[1], '"\'')) ? $m[0] : '@import "about:blank"',
+            $html
+        ));
+        // image-set() takes bare strings as URLs; no document of ours uses it.
+        return self::pcre(preg_replace('#(?:-webkit-)?image-set\s*\(#i', 'blocked-image-set(', $html));
+    }
+
+    /** A PCRE failure (backtrack/JIT limit) must never pass for "sanitised to nothing". */
+    private static function pcre(?string $result): string
+    {
+        if ($result === null) {
+            throw new \RuntimeException('PDF: the document could not be sanitised (' . preg_last_error_msg() . ')');
+        }
+        return $result;
     }
 
     // ── shared plumbing ──────────────────────────────────────────────────
