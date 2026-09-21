@@ -59,7 +59,7 @@ class Service
      *   Parameters/with_pdf.php               generatepdf, opengdrive
      *                                         (printable/pdfdownload/pdf are reads)
      *   Parameters/with_stripe.php            stripecheckout, stripecharge,
-     *                                         striperefund, stripepush
+     *                                         striperefund, stripepush, stripesync
      *                                         (stripestatus is a read)
      *   Parameters/with_ai.php                chat
      *
@@ -105,6 +105,7 @@ class Service
         'stripecharge',
         'striperefund',
         'stripepush',
+        'stripesync',
         'chat',
     ];
 
