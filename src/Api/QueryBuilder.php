@@ -207,6 +207,12 @@ class QueryBuilder
         }
 
         if (!empty($this->request['join'])) {
+            // join[]= / filter[Model]= arrive as arrays; a scalar used to be a
+            // TypeError (500) instead of a refusal.
+            if (!\is_array($this->request['join'])) {
+                $this->messages[] = "Join: Parameters incorrect.";
+                return true;
+            }
             if ($this->setJoins($this->request['join'])) {
                 return true;
             }
@@ -228,6 +234,10 @@ class QueryBuilder
         }
 
         if (!empty($this->request['filter'])) {
+            if (!\is_array($this->request['filter'])) {
+                $this->messages[] = "Filter: Parameters incorrect.";
+                return true;
+            }
             if ($this->setFilters($this->request['filter'])) {
                 return true;
             }
