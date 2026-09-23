@@ -108,6 +108,23 @@ class AuthyMiddleware implements MiddlewareInterface
             return $ApiResponse->getResponse();
         }
 
+        if (self::backendDenied(
+            ! empty(\ApiGoat\Utility\Settings::load()['backend_admin_only']),
+            $_SESSION[_AUTH_VAR],
+            $this->args,
+            $this->privilegeMap['exclude'] ?? []
+        )) {
+            $message = _('The admin panel is reserved for administrators.');
+            if ($request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
+                $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => [$message]]);
+                $ApiResponse->setStatus(403);
+                return $ApiResponse->getResponse();
+            }
+            $response = new Response();
+            $response->getBody()->write('<p>' . htmlspecialchars($message, ENT_QUOTES) . '</p><p><a href="' . htmlspecialchars(_SUB_DIR_URL . 'Authy/logout', ENT_QUOTES) . '">' . htmlspecialchars(_('Log out'), ENT_QUOTES) . '</a></p>');
+            return $response->withHeader('Cache-Control', 'no-store')->withStatus(403);
+        }
+
         $csrfFailure = $this->checkCsrf($request);
         if ($csrfFailure !== null) {
             return $csrfFailure;
@@ -520,6 +537,48 @@ class AuthyMiddleware implements MiddlewareInterface
             }
         }
         return false;
+    }
+
+    /**
+     * Session routes a non-admin may still reach under backend_admin_only:
+     * signing in/out and the account-recovery flows, whose pages run through
+     * this middleware with a live session.
+     */
+    public const BACKEND_OPEN_AUTHY_ACTIONS = ['login', 'auth', 'logout', 'register', 'google', 'reset', 'resetconfirm', 'confirm'];
+
+    /**
+     * settings `backend_admin_only` (opt-in per project): the session backend
+     * belongs to Admin-group and root users. A marketplace hands every
+     * self-registered member a session login plus Owner rights meant for the
+     * app/API — without this they could browse the admin panel. API routes
+     * (RBAC-governed), OAuth consent, the privilege-map exclude list and
+     * sign-in/out stay open; an anonymous session is left to the login redirect.
+     */
+    public static function backendDenied(bool $adminOnly, $session, array $args, array $exclude = []): bool
+    {
+        if (! $adminOnly || ! empty($args['is_api']) || ! is_object($session)) {
+            return false;
+        }
+        if ($session->get('connected') !== 'YES' || $session->isAdmin() || $session->isRoot()) {
+            return false;
+        }
+        $model  = strtolower((string) ($args['model'] ?? ''));
+        $action = strtolower((string) ($args['action'] ?? ''));
+        $route  = (string) ($args['route'] ?? '');
+        // Exact oauth/<endpoint> route only: a model or action SEGMENT named
+        // "oauth" on a catch-all route (Product/oauth) must not open the backend.
+        if (preg_match('#^oauth/[^/]+/?$#i', $route)) {
+            return false;
+        }
+        if ($model === 'authy' && in_array($action, self::BACKEND_OPEN_AUTHY_ACTIONS, true)) {
+            return false;
+        }
+        foreach ($exclude as $entry) {
+            if ($route === $entry || strpos($route, $entry . '/') === 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private function checkExclude($route)
