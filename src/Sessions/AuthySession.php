@@ -129,10 +129,8 @@ class AuthySession
         $q = $queryClass::create()->filterByPrimaryKey($pk);
 
         if (! $this->isRoot()) {
-            // Tenant hard partition.
-            if ($this->get('id_tenant') && method_exists($q, 'filterByIdTenant')) {
-                $q->filterByIdTenant($this->get('id_tenant'));
-            }
+            // Tenant hard partition (fail-closed on an empty session tenant).
+            $this->applyTenantScope($q);
             // Owner/Group row scope for this model + right. Shared with
             // AuthyACL::setAclFilter via applyOwnerGroupScope (#18) — one copy
             // of the security-critical row filter, fail-closed.
@@ -197,9 +195,7 @@ class AuthySession
         $q->filterByPrimaryKeys(array_values($pks));
 
         if (! $this->isRoot()) {
-            if ($this->get('id_tenant') && method_exists($q, 'filterByIdTenant')) {
-                $q->filterByIdTenant($this->get('id_tenant'));
-            }
+            $this->applyTenantScope($q);
             if ($model !== '') {
                 $this->applyOwnerGroupScope($q, $this->hasRights($model, $right));
             }
@@ -241,9 +237,13 @@ class AuthySession
      * result via where('1 = 0') instead of returning every row. Previously
      * setAclFilter fataled on the missing method while loadPkScoped's
      * method_exists guard fell through to NO filter (fail-open — a narrow IDOR
-     * on a mis-modelled table). A non-array $scope (true = unrestricted,
-     * false = no grant) carries no Owner/Group narrowing; model-level access is
-     * gated by the caller.
+     * on a mis-modelled table). $scope === true (unrestricted) carries no
+     * narrowing. Any other non-array $scope (false = no grant) now FAILS CLOSED
+     * too (review 2026-09-23): it used to return the query unscoped, so a
+     * caller that forgot to gate on the grant handed out every row. Root is
+     * the exception — hasRights() only short-circuits the Admin group, so a
+     * root user outside it can hold no grant and still sees every row, as
+     * everywhere else (loadPkScoped skips scoping for root).
      *
      * @param object $query A Propel ModelCriteria (by reference semantics via the object)
      * @param mixed  $scope hasRights() result: true, an array of ACL groups, or false
@@ -251,8 +251,11 @@ class AuthySession
      */
     public function applyOwnerGroupScope($query, $scope)
     {
-        if (!is_array($scope)) {
+        if ($scope === true) {
             return $query;
+        }
+        if (!is_array($scope)) {
+            return $this->isRoot() ? $query : $query->where('1 = 0');
         }
 
         $wantOwner = in_array('Owner', $scope);
@@ -274,6 +277,47 @@ class AuthySession
         }
 
         return $query;
+    }
+
+    /**
+     * Tenant hard partition for a query on a model with an id_tenant column
+     * (the single copy used by setAclFilter, loadPk(s)Scoped, ChildLink,
+     * DateCascadeDelete and autocomplete).
+     *
+     * - root, or a model without filterByIdTenant: untouched;
+     * - a session tenant: filterByIdTenant(tenant);
+     * - a CONNECTED non-root user with an EMPTY tenant: fail closed
+     *   (where 1 = 0) — the old `get('id_tenant') && ...` guard silently
+     *   dropped the partition and exposed every tenant's rows;
+     * - not connected (anonymous public reads, login flow, CLI): untouched —
+     *   authorization of those paths happens before any query is built.
+     *
+     * @param object $query A Propel ModelCriteria
+     * @return object the same query
+     */
+    public function applyTenantScope($query)
+    {
+        if ($this->isRoot() || !method_exists($query, 'filterByIdTenant')) {
+            return $query;
+        }
+        $tenant = $this->get('id_tenant');
+        if ($tenant) {
+            return $query->filterByIdTenant($tenant);
+        }
+        if ($this->get('connected') == 'YES') {
+            return $query->where('1 = 0');
+        }
+        return $query;
+    }
+
+    /**
+     * Whether a new row of a tenant-scoped model may be written by this
+     * session: false for a connected non-root user with no tenant (there is
+     * no tenant to stamp, and an unstamped row would leak across tenants).
+     */
+    public function canStampTenant(): bool
+    {
+        return $this->isRoot() || $this->get('connected') != 'YES' || (bool) $this->get('id_tenant');
     }
 
     public function getIdPrimaryGroup()

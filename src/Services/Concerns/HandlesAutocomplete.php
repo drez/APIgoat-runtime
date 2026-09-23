@@ -133,7 +133,12 @@ trait HandlesAutocomplete
         $s = $_SESSION[_AUTH_VAR] ?? null;
         // Tenant row-scoping: mirror AuthyACL::setAclFilter so autocomplete can't
         // surface FK-target rows from other tenants (non-root users).
-        if (is_object($s) && method_exists($s, 'get')
+        // An empty tenant on a connected user fails closed (applyTenantScope).
+        if (is_object($s) && method_exists($s, 'applyTenantScope')) {
+            if (!$s->get('isRoot')) {
+                $s->applyTenantScope($q);
+            }
+        } elseif (is_object($s) && method_exists($s, 'get')
             && !$s->get('isRoot') && $s->get('id_tenant')
             && method_exists($Model, 'filterByIdTenant')) {
             $q->filterByIdTenant($s->get('id_tenant'));

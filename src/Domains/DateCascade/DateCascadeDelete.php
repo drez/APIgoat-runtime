@@ -144,9 +144,7 @@ JS;
             $q->{'filterBy' . self::camel($col)}($vals[$col]);
         }
         if (! $session->isRoot()) {
-            if ($session->get('id_tenant') && method_exists($q, 'filterByIdTenant')) {
-                $q->filterByIdTenant($session->get('id_tenant'));
-            }
+            $session->applyTenantScope($q);
             $session->applyOwnerGroupScope($q, $session->hasRights($model, 'd'));
         }
         return $q;

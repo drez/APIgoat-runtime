@@ -91,17 +91,22 @@ trait AuthyACL
         // that has an id_tenant column. Added as a leading AND — Propel groups the
         // Owner/Group _or() below, so the tenant filter ANDs cleanly with it (no
         // (tenant AND owner) OR group leak; verified). Root users see all tenants.
-        if (! $_SESSION[\_AUTH_VAR]->get('isRoot')
-            && $_SESSION[\_AUTH_VAR]->get('id_tenant')
-            && method_exists($QueryObj, 'filterByIdTenant')) {
-            $QueryObj->filterByIdTenant($_SESSION[\_AUTH_VAR]->get('id_tenant'));
+        // A connected non-root user with an EMPTY tenant fails closed (see
+        // AuthySession::applyTenantScope) instead of seeing every tenant.
+        $sess = $_SESSION[\_AUTH_VAR];
+        if (! $sess->get('isRoot') && method_exists($QueryObj, 'filterByIdTenant')) {
+            if ($sess->get('id_tenant')) {
+                $QueryObj->filterByIdTenant($sess->get('id_tenant'));
+            } elseif ($sess->get('connected') == 'YES') {
+                $QueryObj->where('1 = 0');
+            }
         }
 
         // Owner/Group row scope — the single shared implementation, identical to
         // the privileged-PK-load path (#18: AuthySession::applyOwnerGroupScope).
-        // A non-array $aclGroup (true = unrestricted, false = no grant) is a
-        // no-op there, matching the previous behaviour; a missing scope column
-        // now fails closed (empty result) instead of fataling.
+        // true = unrestricted; false (no grant) and a missing scope column
+        // fail closed (empty result). null = authorize() was never called on
+        // this object (e.g. a Public read) and applies no Owner/Group scope.
         if (isset($this->aclGroup)) {
             $_SESSION[\_AUTH_VAR]->applyOwnerGroupScope($QueryObj, $this->aclGroup);
         }

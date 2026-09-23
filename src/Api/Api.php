@@ -788,9 +788,18 @@ class Api
             // own tenant (IdTenant is denylisted from the body, so this can't be
             // overridden by mass-assignment).
             if (method_exists($obj, 'setIdTenant')
-                && ! $_SESSION[_AUTH_VAR]->get('isRoot')
-                && $_SESSION[_AUTH_VAR]->get('id_tenant')) {
-                $obj->setIdTenant($_SESSION[_AUTH_VAR]->get('id_tenant'));
+                && ! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+                if ($_SESSION[_AUTH_VAR]->get('id_tenant')) {
+                    $obj->setIdTenant($_SESSION[_AUTH_VAR]->get('id_tenant'));
+                } elseif (method_exists($_SESSION[_AUTH_VAR], 'canStampTenant')
+                    && ! $_SESSION[_AUTH_VAR]->canStampTenant()) {
+                    // Connected non-root user with no tenant: there is no
+                    // tenant to stamp, and an unstamped row would be visible
+                    // across tenants. Refuse (fail closed).
+                    $this->response['status'] = 'failure';
+                    $this->response['error'] = "Permission denied";
+                    return $this->response;
+                }
             }
         } elseif (!($DataObj instanceof PropelCollection)) {
             $this->response['debug'][] = "Update {$this->tablename}";

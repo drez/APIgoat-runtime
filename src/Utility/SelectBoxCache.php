@@ -57,8 +57,9 @@ final class SelectBoxCache
      *
      * Mirrors what AuthySession::applyOwnerGroupScope() actually narrows on, so
      * two users share a cache entry only when their scoped query is identical:
-     * 'all' for unrestricted (or ungranted — no narrowing either way) rights,
-     * otherwise the owner id and/or the group id set the filter uses.
+     * 'all' for unrestricted rights (or root), 'none' for no grant (the query
+     * is emptied — review 2026-09-23 fail-closed), otherwise
+     * the owner id and/or the group id set the filter uses.
      */
     public static function scopeToken(string $model): string
     {
@@ -67,8 +68,13 @@ final class SelectBoxCache
             return 'all';
         }
         $scope = $_SESSION[\_AUTH_VAR]->hasRights($model, 'r');
+        if ($scope === true) {
+            return 'all';
+        }
         if (! \is_array($scope)) {
-            return 'all'; // true (unrestricted) or false (no grant): no narrowing
+            // false (no grant): applyOwnerGroupScope() fails closed (empty
+            // list) for non-root, so it must not share the unrestricted entry.
+            return (\method_exists($_SESSION[\_AUTH_VAR], 'isRoot') && $_SESSION[\_AUTH_VAR]->isRoot()) ? 'all' : 'none';
         }
 
         $parts = [];
