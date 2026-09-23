@@ -168,4 +168,23 @@ final class ReferenceScopeTest extends TestCase
         $_SESSION[_AUTH_VAR] = $this->session([], null, true);
         self::assertSame('all', SelectBoxCache::referenceScopeToken('Authy', 'Quote', false));
     }
+
+    public function testKeepStoredOptionAppendsAMissingValueWithItsLabel(): void
+    {
+        $opts = [['', ''], ['Books', 1]];
+        $calls = 0;
+        $load = function ($v) use (&$calls) { $calls++; return ['selDisplay' => 'Secret shelf', 'IdCategory' => $v]; };
+
+        self::assertSame($opts, SelectBoxCache::keepStoredOption($opts, 1, $load), 'listed value unchanged');
+        self::assertSame($opts, SelectBoxCache::keepStoredOption($opts, '1', $load), 'string/int agree');
+        self::assertSame($opts, SelectBoxCache::keepStoredOption($opts, null, $load));
+        self::assertSame($opts, SelectBoxCache::keepStoredOption($opts, '', $load));
+        self::assertSame(0, $calls, 'no lookup when nothing is missing');
+
+        $out = SelectBoxCache::keepStoredOption($opts, 12, $load);
+        self::assertSame([['', ''], ['Books', 1], ['Secret shelf', 12]], $out);
+
+        $out = SelectBoxCache::keepStoredOption($opts, 13, fn($v) => null);
+        self::assertSame(['#13', 13], $out[2], 'unresolvable value still kept');
+    }
 }

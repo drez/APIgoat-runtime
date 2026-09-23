@@ -138,6 +138,39 @@ final class SelectBoxCache
         return $token;
     }
 
+    /**
+     * Never lose a stored FK value (owner decision 2026-09-23): when the value
+     * a record currently holds is not among the options its dropdown lists
+     * (outside the caller's reference scope, filtered out, …), append it —
+     * with the label $loadRow resolves — so the edit form still shows it
+     * selected and a save posts it back unchanged.
+     *
+     * @param array    $options option tuples [label, value, ...] (assocToNum)
+     * @param mixed    $stored  the record's current FK value
+     * @param callable $loadRow fn($stored): ?array — the [label, value] row, or
+     *                          null when it cannot be resolved (then the raw
+     *                          value is shown as '#<value>')
+     */
+    public static function keepStoredOption(array $options, $stored, callable $loadRow): array
+    {
+        if ($stored === null || $stored === '' || \is_array($stored)) {
+            return $options;
+        }
+        foreach ($options as $opt) {
+            if (\is_array($opt) && \array_key_exists(1, $opt) && (string) $opt[1] === (string) $stored) {
+                return $options;
+            }
+        }
+        $row = $loadRow($stored);
+        $label = null;
+        if (\is_array($row)) {
+            $vals = \array_values($row);
+            $label = $vals[0] ?? null;
+        }
+        $options[] = [($label === null || $label === '') ? '#' . $stored : (string) $label, $stored];
+        return $options;
+    }
+
     private static function key(string $fkTableName, string $method, bool $tenantScoped, string $scopeToken = 'all'): string
     {
         return 'gc:sb:' . TableVersion::ns()
