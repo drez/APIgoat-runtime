@@ -125,36 +125,21 @@ trait HandlesAutocomplete
             }
         }
 
-        // Ownership scope: when the caller's read right on the FK target is
-        // Owner/Group-scoped, autocomplete only the rows they may access
-        // (mirrors Api::setAclFilter). method_exists guards mean ungoverned
-        // reference tables (no id_creation column, e.g. Country) and "All"
-        // rights are unaffected — browse stays open there.
+        // Row scope: the SAME reference-access rule as the FK dropdown
+        // (AuthySession::applyReferenceScope, owner decision 2026-09-23) —
+        // always tenant-partitioned; an 'r' grant on the target keeps its own
+        // All/Owner/Group scope; without 'r', rows are listed (id + label only)
+        // only when the user can w/a the FORM's model and the column is
+        // reference-allowed (auth/group targets need pick_users). The form
+        // model + allowed flag come from the build-time allowlist ('refs'),
+        // never from the request. The old inline copy treated "no 'r'" as
+        // "every row", so any logged-in user could enumerate e.g. Authy.
         $s = $_SESSION[_AUTH_VAR] ?? null;
-        // Tenant row-scoping: mirror AuthyACL::setAclFilter so autocomplete can't
-        // surface FK-target rows from other tenants (non-root users).
-        // An empty tenant on a connected user fails closed (applyTenantScope).
-        if (is_object($s) && method_exists($s, 'applyTenantScope')) {
-            if (!$s->get('isRoot')) {
-                $s->applyTenantScope($q);
-            }
-        } elseif (is_object($s) && method_exists($s, 'get')
-            && !$s->get('isRoot') && $s->get('id_tenant')
-            && method_exists($Model, 'filterByIdTenant')) {
-            $q->filterByIdTenant($s->get('id_tenant'));
-        }
-        if (is_object($s) && method_exists($s, 'hasRights')) {
-            $scope = $s->hasRights($fkt, 'r');
-            if (is_array($scope)) {
-                if (in_array('Owner', $scope, true) && method_exists($Model, 'filterByIdCreation')) {
-                    $q->filterByIdCreation($s->getIdAuthy());
-                    if (in_array('Group', $scope, true) && method_exists($Model, 'filterByIdGroupCreation')) {
-                        $q->_or()->filterByIdGroupCreation($s->getGroups(), \Criteria::IN);
-                    }
-                } elseif (in_array('Group', $scope, true) && method_exists($Model, 'filterByIdGroupCreation')) {
-                    $q->filterByIdGroupCreation($s->getGroups(), \Criteria::IN);
-                }
-            }
+        if (is_object($s) && method_exists($s, 'applyReferenceScope')) {
+            $ref = $this->autocReferenceTuple($s, (string)$fkt, $Model, $allow[$fkt]);
+            $s->applyReferenceScope($q, $ref['target'], $ref['form'], $ref['allowed']);
+        } else {
+            $q->where('1 = 0');
         }
 
         $q->limit($limit);
@@ -171,5 +156,46 @@ trait HandlesAutocomplete
         $body['count'] = count($body['data']);
         $body['status'] = 'success';
         return $body;
+    }
+
+    /**
+     * The (target, form, allowed) reference tuple for this lookup, from the
+     * build-time allowlist. Several autocomplete columns of one form may point
+     * at the same target: the first tuple that grants reference access to
+     * this session wins (an 'r' grant on the target is decided by
+     * applyReferenceScope itself). An allowlist baked before 'refs' existed
+     * gets the same decision derived server-side: the form is this service's
+     * own model, the auth/group tables are not reference data.
+     *
+     * @return array{target:string,form:string,allowed:bool}
+     */
+    protected function autocReferenceTuple($session, string $fkt, string $queryClass, array $entry): array
+    {
+        $refs = [];
+        foreach ((array)($entry['refs'] ?? []) as $r) {
+            if (is_array($r) && isset($r['form'])) {
+                $refs[] = [
+                    'target'  => (string)($r['target'] ?? ''),
+                    'form'    => (string)$r['form'],
+                    'allowed' => ($r['allowed'] ?? false) === true,
+                ];
+            }
+        }
+        if (!$refs) {
+            $owned = method_exists($queryClass, 'filterByIdCreation') || method_exists($queryClass, 'filterByIdGroupCreation');
+            $isAuth = in_array($fkt, ['Authy', 'AuthyGroup'], true) || method_exists($queryClass, 'filterByPasswdHash');
+            $short = (new \ReflectionClass($this))->getShortName();
+            $refs[] = [
+                'target'  => $owned ? $fkt : '',
+                'form'    => (string)preg_replace('/Service$/', '', $short),
+                'allowed' => !$isAuth,
+            ];
+        }
+        foreach ($refs as $r) {
+            if ($r['allowed'] && method_exists($session, 'canReferenceFrom') && $session->canReferenceFrom($r['form'])) {
+                return $r;
+            }
+        }
+        return $refs[0];
     }
 }
