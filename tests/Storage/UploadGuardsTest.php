@@ -98,4 +98,38 @@ final class UploadGuardsTest extends TestCase
         $body = UploadGuards::htaccessBody(true);
         $this->assertDoesNotMatchRegularExpression('/Require all granted/', $body);
     }
+
+    /**
+     * Wave 4: the public body used a DENYLIST (html/svg/xml forced to
+     * download) — any other scriptable or sniffable type (xhtml variants,
+     * .htm with odd casing, .js, .swf, office docs, unknown extensions)
+     * rendered inline under the app origin. Now every file is an attachment
+     * with nosniff, and only an allowlist of inline-safe types renders.
+     */
+    public function testPublicBodyDefaultsEveryFileToAttachmentWithNosniff(): void
+    {
+        $body = UploadGuards::htaccessBody(false);
+        $top = substr($body, 0, (int) strpos($body, '<FilesMatch'));
+        $this->assertStringContainsString('Header set Content-Disposition attachment', $top, 'attachment is the directory-wide default');
+        $this->assertStringContainsString('Header set X-Content-Type-Options nosniff', $top);
+    }
+
+    public function testPublicBodyInlineAllowlistIsSafeTypesOnly(): void
+    {
+        $body = UploadGuards::htaccessBody(false);
+        $this->assertSame(1, preg_match('/<FilesMatch "\(\?i\)\\\.\(([^)]*)\)\$">\n<IfModule mod_headers\.c>\nHeader set Content-Disposition inline/', $body, $m), 'one inline allowlist block');
+        $exts = explode('|', $m[1]);
+        foreach (['png', 'jpe?g', 'gif', 'webp', 'pdf', 'txt'] as $ok) {
+            $this->assertContains($ok, $exts);
+        }
+        foreach (['svg', 'svgz', 'html', 'htm', 'xhtml', 'xml', 'js', 'swf', 'css'] as $bad) {
+            $this->assertNotContains($bad, $exts, $bad . ' must never be inline');
+        }
+    }
+
+    public function testPublicBodyStillNeutralisesMarkupTypes(): void
+    {
+        $body = UploadGuards::htaccessBody(false);
+        $this->assertStringContainsString('ForceType text/plain', $body);
+    }
 }

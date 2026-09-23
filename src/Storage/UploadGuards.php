@@ -37,20 +37,35 @@ final class UploadGuards
         . "<FilesMatch \"\\.(php[0-9]?|phtml|phar|phps)$\">\n"
         . "SetHandler none\nRequire all denied\n</FilesMatch>\n";
 
-    /** Opt-in public directory: no script execution, html/svg forced to download. */
+    /**
+     * Opt-in public directory: no script execution, and an ALLOWLIST for
+     * inline rendering. Every file defaults to `Content-Disposition:
+     * attachment` + `nosniff`; only inline-safe types (raster images — never
+     * svg —, pdf, plain text, audio/video) render in the browser. The old
+     * body was a denylist (html/svg/xml), so any other sniffable/scriptable
+     * type rendered inline under the app origin. Markup types are still
+     * pinned to text/plain as a second layer. Requires mod_headers for the
+     * disposition headers (the ForceType layer does not).
+     */
     private const BODY_PUBLIC =
           "# GoatCheese PUBLIC upload directory (gc-upload-public) - no script execution\n"
         . "Require all granted\n"
+        . "<IfModule mod_headers.c>\nHeader set Content-Disposition attachment\nHeader set X-Content-Type-Options nosniff\n</IfModule>\n"
         . "<IfModule mod_php.c>\nphp_flag engine off\n</IfModule>\n"
         . "<IfModule mod_php7.c>\nphp_flag engine off\n</IfModule>\n"
         . "RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .phar .phps\n"
         . "RemoveType .php .phtml .php3 .php4 .php5 .php7 .phar .phps\n"
         . "<FilesMatch \"\\.(php[0-9]?|phtml|phar|phps)$\">\n"
         . "SetHandler none\nRequire all denied\n</FilesMatch>\n"
-        . "<FilesMatch \"\\.(html?|xhtml|svgz?|xml)$\">\n"
+        . "<FilesMatch \"(?i)\\.(html?|xhtml|svgz?|xml)$\">\n"
         . "ForceType text/plain\n"
-        . "<IfModule mod_headers.c>\nHeader set Content-Disposition attachment\nHeader set X-Content-Type-Options nosniff\n</IfModule>\n"
+        . "</FilesMatch>\n"
+        . "<FilesMatch \"(?i)\\.(" . self::INLINE_EXTENSIONS . ")$\">\n"
+        . "<IfModule mod_headers.c>\nHeader set Content-Disposition inline\n</IfModule>\n"
         . "</FilesMatch>\n";
+
+    /** Inline-safe extensions (FilesMatch alternation). NEVER add svg/html/xml/js/css. */
+    public const INLINE_EXTENSIONS = 'jpe?g|png|gif|webp|bmp|avif|pdf|txt|mp3|m4a|wav|ogg|mp4|webm';
 
     public static function htaccessBody(bool $private): string
     {
