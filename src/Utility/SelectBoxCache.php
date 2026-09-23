@@ -91,6 +91,53 @@ final class SelectBoxCache
         return $parts === [] ? 'all' : \implode('-', $parts);
     }
 
+    /**
+     * Cache discriminator for an option list built under
+     * AuthySession::applyReferenceScope($q, $targetModel, $formModel,
+     * $referenceAllowed). Two users share an entry only when that scoped
+     * query is identical:
+     *  - 'all'         root, no session, or unrestricted 'r' on the target
+     *                  (or $targetModel '' = tenant scope only);
+     *  - 'o<id>-g<..>' Owner/Group-scoped 'r' (same parts as scopeToken());
+     *  - 'ref'         no 'r' on the target, reference access granted;
+     *  - 'none'        no 'r' and no reference access (the list is emptied).
+     * For a connected non-root user the token also carries the session tenant
+     * ('@t<id>', '@t-' for an EMPTY tenant): applyReferenceScope empties the
+     * list for an empty tenant while the key's tenant part (TableVersion::
+     * tenantToken) reads 'all' for that user — without this suffix that user
+     * and root would share one entry in both directions.
+     */
+    public static function referenceScopeToken(string $targetModel, string $formModel = '', bool $referenceAllowed = true): string
+    {
+        if (! \defined('_AUTH_VAR') || ! isset($_SESSION[\_AUTH_VAR]) || ! \is_object($_SESSION[\_AUTH_VAR])
+            || ! \method_exists($_SESSION[\_AUTH_VAR], 'applyReferenceScope')) {
+            return 'all';
+        }
+        $s = $_SESSION[\_AUTH_VAR];
+        if ($s->isRoot()) {
+            return 'all';
+        }
+
+        if ($targetModel === '') {
+            $token = 'all';
+        } else {
+            $scope = $s->hasRights($targetModel, 'r');
+            if ($scope === false) {
+                $token = ($referenceAllowed && $s->canReferenceFrom($formModel)) ? 'ref' : 'none';
+            } elseif ($scope === true) {
+                $token = 'all';
+            } else {
+                $token = self::scopeToken($targetModel);
+            }
+        }
+
+        if ($s->get('connected') == 'YES') {
+            $tenant = $s->get('id_tenant');
+            $token .= '@t' . ($tenant ? (string) $tenant : '-');
+        }
+        return $token;
+    }
+
     private static function key(string $fkTableName, string $method, bool $tenantScoped, string $scopeToken = 'all'): string
     {
         return 'gc:sb:' . TableVersion::ns()

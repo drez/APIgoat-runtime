@@ -311,6 +311,79 @@ class AuthySession
     }
 
     /**
+     * Reference access (owner decision 2026-09-23): may this user pick rows
+     * of OTHER models as lookup values on a $formModel record? True when the
+     * user holds any 'w' or 'a' grant on the form's own model (Owner/Group
+     * scoped grants count — the row-level check of the record itself happens
+     * on its own load/save path). Root always may.
+     */
+    public function canReferenceFrom(string $formModel): bool
+    {
+        if ($this->isRoot()) {
+            return true;
+        }
+        if ($formModel === '') {
+            return false;
+        }
+        return $this->hasRights($formModel, 'w') !== false || $this->hasRights($formModel, 'a') !== false;
+    }
+
+    /**
+     * The row scope of a LOOKUP (FK dropdown option list, and the FK save
+     * guard that must accept exactly what the dropdown offers). Id + display
+     * label only — full-row reads (lists, API, edit/parent loads) keep going
+     * through setAclFilter / loadPkScoped and stay fail-closed.
+     *
+     *  - root: untouched;
+     *  - always tenant-partitioned (applyTenantScope, fail-closed on an empty
+     *    session tenant);
+     *  - $targetModel '' (a target without ownership columns): tenant only;
+     *  - 'r' on the target: its own scope — All = every row, Owner/Group =
+     *    that narrowing is KEPT even when reference access would allow more;
+     *  - no 'r' on the target: reference access — every (tenant) row when
+     *    $referenceAllowed and the user can write the form's model
+     *    (canReferenceFrom), else fail closed (where 1 = 0).
+     *
+     * $referenceAllowed is decided at build time by the emitter: false for an
+     * FK to the auth table (is_auth_table) or its group table (is_group_table)
+     * unless the column opts in (set_input_options {col: {pick_users: true}}).
+     *
+     * @param object $query A Propel ModelCriteria on the target model
+     * @return object the same query
+     */
+    public function applyReferenceScope($query, string $targetModel, string $formModel = '', bool $referenceAllowed = true)
+    {
+        if ($this->isRoot()) {
+            return $query;
+        }
+        $this->applyTenantScope($query);
+        if ($targetModel === '') {
+            return $query;
+        }
+        $scope = $this->hasRights($targetModel, 'r');
+        if ($scope !== false) {
+            return $this->applyOwnerGroupScope($query, $scope);
+        }
+        if ($referenceAllowed && $this->canReferenceFrom($formModel)) {
+            return $query;
+        }
+        return $query->where('1 = 0');
+    }
+
+    /**
+     * loadPkScoped() under the lookup rule (applyReferenceScope): would the
+     * FK dropdown of a $formModel record offer this $targetModel row? Used by
+     * the emitted FK save guard (gcFkScopeOk) so a posted FK value is accepted
+     * exactly when the dropdown could have listed it. Returns the row or null.
+     */
+    public function loadReferenceScoped($queryClass, $pk, string $targetModel, string $formModel = '', bool $referenceAllowed = true)
+    {
+        $q = $queryClass::create()->filterByPrimaryKey($pk);
+        $this->applyReferenceScope($q, $targetModel, $formModel, $referenceAllowed);
+        return $q->findOne();
+    }
+
+    /**
      * Whether a new row of a tenant-scoped model may be written by this
      * session: false for a connected non-root user with no tenant (there is
      * no tenant to stamp, and an unstamped row would leak across tenants).
