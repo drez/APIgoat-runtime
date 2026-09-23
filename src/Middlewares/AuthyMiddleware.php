@@ -138,15 +138,14 @@ class AuthyMiddleware implements MiddlewareInterface
                 $ApiResponse->setStatus(403);
                 return $ApiResponse->getResponse();
             }
-            $response = new Response();
             // Impersonating: offer the way back (a switch runs before this gate).
-            $back = '';
+            $backUrl = null;
             $impersonator = self::impersonatorId($_SESSION[_AUTH_VAR]);
             if ($impersonator !== null) {
                 $backUrl = _SUB_DIR_URL . 'admin?iarc=' . $impersonator . '&iarc_csrf=' . rawurlencode((string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? ''));
-                $back = ' · <a href="' . htmlspecialchars($backUrl, ENT_QUOTES) . '">' . htmlspecialchars(_('Stop impersonating'), ENT_QUOTES) . '</a>';
             }
-            $response->getBody()->write('<p>' . htmlspecialchars($message, ENT_QUOTES) . '</p><p><a href="' . htmlspecialchars(_SUB_DIR_URL . 'Authy/logout', ENT_QUOTES) . '">' . htmlspecialchars(_('Log out'), ENT_QUOTES) . '</a>' . $back . '</p>');
+            $response = new Response();
+            $response->getBody()->write(self::backendDeniedPage($message, (string) $_SESSION[_AUTH_VAR]->get('username'), $backUrl));
             return $response->withHeader('Cache-Control', 'no-store')->withStatus(403);
         }
 
@@ -635,6 +634,41 @@ class AuthyMiddleware implements MiddlewareInterface
             }
         }
         return true;
+    }
+
+    /**
+     * The backend_admin_only 403 page: a self-contained card (inline styles,
+     * no layout/asset dependency — the gate runs before any page rendering),
+     * with the project's admin logo when it has one.
+     */
+    public static function backendDeniedPage(string $message, string $username, ?string $backUrl): string
+    {
+        $e    = static fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES);
+        $logo = (\defined('_BASE_DIR') && is_file(_BASE_DIR . 'public/img/logo-admin.png'))
+            ? '<img src="' . $e(_SUB_DIR_URL . 'public/img/logo-admin.png') . '" alt="" style="max-height:44px;max-width:180px;margin-bottom:20px;">'
+            : '';
+        $who  = $username !== ''
+            ? '<p style="margin:0 0 24px;color:#697386;font-size:14px;">' . sprintf($e(_('Signed in as %s')), '<strong style="color:#0a2540;">' . $e($username) . '</strong>') . '</p>'
+            : '';
+        $btn  = 'display:block;padding:11px 16px;border-radius:8px;font-size:15px;font-weight:600;text-decoration:none;text-align:center;';
+        $primary = $backUrl !== null
+            ? '<a href="' . $e($backUrl) . '" style="' . $btn . 'background:#0a2540;color:#fff;">' . $e(_('Stop impersonating')) . '</a>'
+              . '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'margin-top:10px;background:#f4f6f8;color:#0a2540;">' . $e(_('Log out')) . '</a>'
+            : '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'background:#0a2540;color:#fff;">' . $e(_('Log out')) . '</a>';
+
+        return '<!doctype html><html><head><meta charset="utf-8">'
+            . '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            . '<meta name="robots" content="noindex">'
+            . '<title>' . $e(_('Access restricted')) . '</title></head>'
+            . '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;padding:16px;box-sizing:border-box;">'
+            . '<div style="width:100%;max-width:400px;background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(10,37,64,.08);padding:32px;box-sizing:border-box;text-align:center;">'
+            . $logo
+            . '<div style="width:48px;height:48px;margin:0 auto 16px;border-radius:50%;background:#fdecea;color:#c0392b;font-size:24px;line-height:48px;font-weight:700;">!</div>'
+            . '<h1 style="margin:0 0 8px;font-size:20px;color:#0a2540;">' . $e(_('Access restricted')) . '</h1>'
+            . '<p style="margin:0 0 8px;color:#425466;font-size:15px;line-height:1.5;">' . $e($message) . '</p>'
+            . $who
+            . $primary
+            . '</div></body></html>';
     }
 
     private function checkExclude($route)
