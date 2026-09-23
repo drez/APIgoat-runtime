@@ -20,6 +20,8 @@ use Psr\Log\InvalidArgumentException;
 class QueryBuilder
 {
     const _DEFAULT_LIMIT = 30;
+    /** Hard ceiling on limit / page size unless GC_API_MAX_LIMIT overrides it. */
+    const _MAX_LIMIT = 500;
     public $debug = false;
     /** @var \PropelModelPager|null set when the request paged (page=N) */
     private $pager = null;
@@ -1235,26 +1237,43 @@ class QueryBuilder
     }
 
     /**
-     * A positive integer limit, else the default. The old check was
-     * alnum()->length(1, 100) — a STRING-length test that accepted "abc", 0
-     * and 5000 — so a caller's cap was never enforced here. Pure.
+     * A positive integer limit, else the default, capped at maxLimit(). The
+     * old check was alnum()->length(1, 100) — a STRING-length test that
+     * accepted "abc", 0 and 5000 — so a caller's cap was never enforced here;
+     * then any positive int was accepted, so limit=10000000 made one request
+     * materialize a whole table. Pure (reads GC_API_MAX_LIMIT when $max null).
      */
-    public static function normalizeLimit($value, int $default = self::_DEFAULT_LIMIT): int
+    public static function normalizeLimit($value, int $default = self::_DEFAULT_LIMIT, ?int $max = null): int
     {
+        $max = $max ?? self::maxLimit();
         if (\is_int($value) || (\is_string($value) && \preg_match('/^\\s*\\d+\\s*$/', $value))) {
             $n = (int) $value;
             if ($n > 0) {
-                return $n;
+                return \min($n, $max);
             }
         }
-        return $default;
+        return \min($default, $max);
     }
 
-    /** Rows per page when paging: `max_page` (legacy alias) if a positive int, else `limit`. Pure. */
-    public static function pageSize($maxPage, int $limit): int
+    /** Rows per page when paging: `max_page` (legacy alias) if a positive int, else `limit`; capped. Pure. */
+    public static function pageSize($maxPage, int $limit, ?int $max = null): int
     {
-        $n = self::normalizeLimit($maxPage, 0);
-        return $n > 0 ? $n : \max(1, $limit);
+        $max = $max ?? self::maxLimit();
+        $n = self::normalizeLimit($maxPage, 0, $max);
+        return $n > 0 ? $n : \max(1, \min($limit, $max));
+    }
+
+    /**
+     * Largest limit / page size a request may ask for: GC_API_MAX_LIMIT (a
+     * positive integer in the project .env) else _MAX_LIMIT (500).
+     */
+    public static function maxLimit(): int
+    {
+        $raw = \getenv('GC_API_MAX_LIMIT');
+        if (\is_string($raw) && \ctype_digit(\trim($raw)) && (int) \trim($raw) > 0) {
+            return (int) \trim($raw);
+        }
+        return self::_MAX_LIMIT;
     }
 
     /**

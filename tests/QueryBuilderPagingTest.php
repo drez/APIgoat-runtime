@@ -35,6 +35,26 @@ assertEq(QueryBuilder::pageSize(0, 3), 3, 'max_page 0 → limit');
 assertEq(QueryBuilder::pageSize(7, 3), 7, 'explicit max_page wins as alias');
 assertEq(QueryBuilder::pageSize(null, 0), 1, 'never below 1');
 
+// cap: limit / page size never exceed maxLimit() (default 500, GC_API_MAX_LIMIT)
+putenv('GC_API_MAX_LIMIT');
+assertEq(QueryBuilder::maxLimit(), 500, 'default cap 500');
+assertEq(QueryBuilder::normalizeLimit(10000000), 500, 'huge limit capped (was accepted)');
+assertEq(QueryBuilder::normalizeLimit('501'), 500, 'string limit capped');
+assertEq(QueryBuilder::normalizeLimit(500), 500, 'cap itself allowed');
+assertEq(QueryBuilder::pageSize(99999, 3), 500, 'max_page alias capped');
+assertEq(QueryBuilder::pageSize(null, 99999), 500, 'page size from limit capped');
+putenv('GC_API_MAX_LIMIT=50');
+assertEq(QueryBuilder::maxLimit(), 50, 'env override');
+assertEq(QueryBuilder::normalizeLimit(80), 50, 'env cap applied');
+assertEq(QueryBuilder::normalizeLimit(null), 30, 'default under the cap kept');
+putenv('GC_API_MAX_LIMIT=20');
+assertEq(QueryBuilder::normalizeLimit(null), 20, 'default never above the cap');
+putenv('GC_API_MAX_LIMIT=abc');
+assertEq(QueryBuilder::maxLimit(), 500, 'garbage env → default cap');
+putenv('GC_API_MAX_LIMIT=0');
+assertEq(QueryBuilder::maxLimit(), 500, 'zero env → default cap');
+putenv('GC_API_MAX_LIMIT');
+
 // shapePaged: paged envelopes wrap, unpaged stay bare
 $paged = ['status' => 'success', 'data' => [['id' => 1]], 'count' => 1, 'page' => ['page' => 2, 'per_page' => 1, 'total' => 5, 'last_page' => 5]];
 $out = CrmList::shapePaged($paged);
