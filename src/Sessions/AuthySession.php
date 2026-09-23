@@ -423,6 +423,12 @@ class AuthySession
      */
     public function loadReferenceScoped($queryClass, $pk, string $targetModel, string $formModel = '', bool $referenceAllowed = true)
     {
+        // A user may always reference their OWN account: create paths stamp
+        // the caller as the row's owner FK (product.id_seller = me), which the
+        // auth-target exclusion otherwise refused for every non-admin create.
+        if ($targetModel === 'Authy' && $this->authyId && (string) $pk === (string) $this->authyId) {
+            return $queryClass::create()->filterByPrimaryKey($pk)->findOne();
+        }
         $q = $queryClass::create()->filterByPrimaryKey($pk);
         $this->applyReferenceScope($q, $targetModel, $formModel, $referenceAllowed);
         return $q->findOne();

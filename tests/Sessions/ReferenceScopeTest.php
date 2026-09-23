@@ -187,4 +187,24 @@ final class ReferenceScopeTest extends TestCase
         $out = SelectBoxCache::keepStoredOption($opts, 13, fn($v) => null);
         self::assertSame(['#13', 13], $out[2], 'unresolvable value still kept');
     }
+
+    /**
+     * A non-admin creating a row stamps THEMSELF as its owner FK
+     * (product.id_seller = caller): their own account is always a valid
+     * reference, with or without 'r' on Authy or the column's opt-in.
+     * Without it every member create 400'd "Permission denied" (2026-09-23).
+     */
+    public function testOwnAuthyRowIsAlwaysReferenceable(): void
+    {
+        $member = $this->session(['Product' => ['Owner' => 'rwad']]);
+        self::assertNotNull($member->loadReferenceScoped(RefFakeQuery::class, 42, 'Authy', 'Product', false));
+        self::assertNotNull($member->loadReferenceScoped(RefFakeQuery::class, '42', 'Authy', 'Product', false));
+        self::assertNull($member->loadReferenceScoped(RefFakeQuery::class, 5, 'Authy', 'Product', false), 'other accounts stay excluded');
+    }
+
+    public function testOwnRowExceptionIsAuthyOnly(): void
+    {
+        $member = $this->session(['Product' => ['Owner' => 'rwad']]);
+        self::assertNull($member->loadReferenceScoped(RefFakeQuery::class, 42, 'AuthyGroup', 'Product', false));
+    }
 }
