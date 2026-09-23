@@ -131,7 +131,11 @@ final class SessionRevalidateTest extends TestCase
     public function testMiddlewareUsesRevalidate(): void
     {
         $src = file_get_contents(__DIR__ . '/../../src/Middlewares/AuthyMiddleware.php');
-        self::assertStringContainsString('->revalidate($gcAuthy, AuthySession::loadGroupState($gcAuthy))', $src);
-        self::assertStringContainsString("if (\$gcVerdict !== 'ok') {\n                    \$access = \$this->checkPrivileges(\$request);", $src);
+        self::assertStringContainsString('->revalidate($authy, AuthySession::loadGroupState($authy))', $src);
+        // A changed session re-judges $access, on GUI routes AND on cookie-
+        // session /api/v* routes (review 3 #5: those used to skip the check).
+        self::assertSame(2, substr_count($src, "if (\$this->staleSessionCheck(\$request)) {"));
+        self::assertStringContainsString("return \$verdict !== 'ok';", $src);
+        self::assertStringContainsString('AccountSecurity::sessionEpochStale($sess)', $src);
     }
 }

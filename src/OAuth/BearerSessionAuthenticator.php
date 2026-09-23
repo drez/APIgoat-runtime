@@ -16,6 +16,10 @@ use Psr\Http\Message\ServerRequestInterface;
  * restore it directly, skipping RS256 validation, the revocation SELECT, the authy
  * findPk, group loads, and the per-call UPDATE authy (last_login stamp).
  *
+ * The cached blob carries the session epoch (authy.session_epoch) it was built
+ * under; a re-roll published by AccountSecurity::publishEpoch() invalidates it
+ * on the next call instead of after the TTL.
+ *
  * Knob: GC_BEARER_CACHE_TTL (seconds, default 60). Set to 0 to restore per-call
  * full authentication (revocation and deactivation are then instant). The raw token
  * is never stored — only its sha256 hash.
@@ -53,8 +57,12 @@ final class BearerSessionAuthenticator
                 // (stored below after a full authentication), and AuthySession
                 // carries only scalars/arrays, so nothing else may instantiate.
                 $restored = @\unserialize($blob, ['allowed_classes' => [\ApiGoat\Sessions\AuthySession::class]]);
+                // A password change / deactivation / revocation re-rolled the
+                // user's session epoch after this blob was cached (published
+                // marker differs): drop it and authenticate in full.
                 if ($restored instanceof \ApiGoat\Sessions\AuthySession
-                    && $restored->get('connected') === 'YES') {
+                    && $restored->get('connected') === 'YES'
+                    && !\ApiGoat\Auth\AccountSecurity::sessionEpochStale($restored)) {
                     $_SESSION[\_AUTH_VAR] = $restored;
                     // Same bytes as a token that passed full validation within
                     // the TTL, so its payload can be read without re-verifying.

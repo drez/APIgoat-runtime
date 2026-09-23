@@ -79,6 +79,14 @@ final class SessionLifetime
         if (self::isBearerRequest($_SERVER)) {
             return;
         }
+        // The API credential exchange (POST api/vN/Authy/auth|refresh) answers
+        // with a token and nothing else: it used to start (and persist) an
+        // ApiGoat cookie session too, and its "clean session for API auth"
+        // replaced — i.e. signed out — the GUI session of a browser that called
+        // it with its cookie. The API client gets only the token.
+        if (self::isApiTokenExchange($_SERVER)) {
+            return;
+        }
         $lifetime = self::guiDays() * 86400;
 
         // Long-lived sessions need a project-local save path: distro session
@@ -129,6 +137,21 @@ final class SessionLifetime
             }
         }
         return false;
+    }
+
+    /**
+     * POST to the API credential exchange (api/vN/Authy/auth or /refresh):
+     * a token-only response that must not own a cookie session.
+     *
+     * @param array<string,mixed> $server $_SERVER
+     */
+    public static function isApiTokenExchange(array $server): bool
+    {
+        if (strtoupper((string) ($server['REQUEST_METHOD'] ?? '')) !== 'POST') {
+            return false;
+        }
+        $path = (string) parse_url((string) ($server['REQUEST_URI'] ?? ''), PHP_URL_PATH);
+        return (bool) preg_match('#/api/v[0-9]+/Authy/(auth|refresh)/?$#', $path);
     }
 
     /** Cookie name startGuiSession() registers via session_name(). */

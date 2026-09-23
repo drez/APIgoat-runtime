@@ -57,39 +57,11 @@ class AuthyMiddleware implements MiddlewareInterface
                 $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
             }
 
-            // Stale-session guard: a session can outlive its user (DB reseed,
-            // deleted account) and its grants. Re-judge it against the authy
-            // row: gone, deactivated or expired → clear the session (the
-            // redirect below sends them to re-login); rights / groups / root /
-            // tenant changed (AuthySession::rightsFingerprint) → rebuild the
-            // grants in place, so a revoked right or a removed admin group
-            // stops applying without waiting for the session to expire. A DB
-            // error (query throws) must NOT log anyone out.
-            // Every state-changing request re-checks; GETs at most once a
-            // minute so page browsing doesn't pay the round-trips per request.
-            $gcStaleRecheck = $request->getMethod() !== 'GET'
-                || (time() - (int) $_SESSION[_AUTH_VAR]->get('stale_check_ts')) > 60;
-            if ($gcStaleRecheck && $_SESSION[_AUTH_VAR]->get('connected') == 'YES' && $_SESSION[_AUTH_VAR]->getIdAuthy()) {
-                $gcVerdict = 'ok';
-                try {
-                    $gcAuthy = \App\AuthyQuery::create()->findPk($_SESSION[_AUTH_VAR]->getIdAuthy());
-                    $gcVerdict = $gcAuthy === null
-                        ? 'logout'
-                        : $_SESSION[_AUTH_VAR]->revalidate($gcAuthy, AuthySession::loadGroupState($gcAuthy));
-                } catch (\Exception $e) { /* DB transient: keep the session, don't lock out */ }
-                if ($gcVerdict === 'logout') {
-                    unset($_SESSION[_AUTH_VAR]);
-                    $_SESSION[_AUTH_VAR] = new AuthySession();
-                    $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
-                } else {
-                    $_SESSION[_AUTH_VAR]->set('stale_check_ts', time());
-                }
+            if ($this->staleSessionCheck($request)) {
                 // $access was judged for the session as it was: a logged-out
                 // session must hit the login gate below, a rebuilt one its
                 // new grants.
-                if ($gcVerdict !== 'ok') {
-                    $access = $this->checkPrivileges($request);
-                }
+                $access = $this->checkPrivileges($request);
             }
 
             if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
@@ -113,7 +85,27 @@ class AuthyMiddleware implements MiddlewareInterface
                     return $response;
                 }
             }
-        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && ! $this->checkExclude($this->args['route']) && ! RoutePath::isOAuthRoute($request->getUri()->getPath())) {
+        } else {
+            $hasBearer = stripos($request->getHeaderLine('Authorization'), 'Bearer ') === 0
+                || stripos($request->getHeaderLine('X-Authorization'), 'Bearer ') === 0;
+            if (! $hasBearer) {
+                // A cookie session on an /api/v* route is the same browser
+                // session as the GUI: it gets the same stale-session re-check
+                // (it used to be skipped for every is_api request).
+                if ($this->staleSessionCheck($request)) {
+                    $access = $this->checkPrivileges($request);
+                }
+            } elseif (is_object($_SESSION[_AUTH_VAR] ?? null)
+                && \ApiGoat\Auth\AccountSecurity::tokenEpochMismatch($request->getAttribute('jwt_claims'), $_SESSION[_AUTH_VAR])) {
+                // An app JWT minted before a password change / deactivation
+                // (its `sep` claim != the row's session_epoch): the session was
+                // hydrated from the row just now, so this is the only place the
+                // difference shows. Refuse it like an expired token.
+                $_SESSION[_AUTH_VAR] = \ApiGoat\Auth\AccountSecurity::signedOutSession(null);
+                $access = $this->checkPrivileges($request);
+            }
+        }
+        if ($this->args['is_api'] && $_SESSION[_AUTH_VAR]->get('connected') != 'YES' && ! $this->checkExclude($this->args['route']) && ! RoutePath::isOAuthRoute($request->getUri()->getPath())) {
             $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
             $ApiResponse->setStatus(401);
             return $ApiResponse->getResponse();
@@ -200,6 +192,52 @@ class AuthyMiddleware implements MiddlewareInterface
             $response = $handler->handle($request);
         }
         return $response;
+    }
+
+    /**
+     * Stale-session guard: a session can outlive its user (DB reseed, deleted
+     * account), its grants and its credentials. Re-judge it against the authy
+     * row: gone, deactivated, expired or its session_epoch re-rolled (password
+     * change, token revocation) → sign the session out (the caller's login gate
+     * answers 303/401); rights / groups / root / tenant changed
+     * (AuthySession::rightsFingerprint) → rebuild the grants in place, so a
+     * revoked right or a removed admin group stops applying without waiting
+     * for the session to expire. A DB error (query throws) must NOT log anyone
+     * out. Every state-changing request re-checks; GETs at most once a minute,
+     * or at once when a published epoch marker says this session is behind
+     * (AccountSecurity::sessionEpochStale — an APCu read, no DB).
+     *
+     * @return bool true when the session changed (logged out or rebuilt), so
+     *              the caller re-judges $access
+     */
+    private function staleSessionCheck(ServerRequestInterface $request): bool
+    {
+        $sess = $_SESSION[_AUTH_VAR] ?? null;
+        if (! $sess instanceof AuthySession || $sess->get('connected') != 'YES' || ! $sess->getIdAuthy()) {
+            return false;
+        }
+        $recheck = $request->getMethod() !== 'GET'
+            || (time() - (int) $sess->get('stale_check_ts')) > 60
+            || \ApiGoat\Auth\AccountSecurity::sessionEpochStale($sess);
+        if (! $recheck) {
+            return false;
+        }
+        $verdict = 'ok';
+        try {
+            $authy = \App\AuthyQuery::create()->findPk($sess->getIdAuthy());
+            $verdict = $authy === null
+                ? 'logout'
+                : $sess->revalidate($authy, AuthySession::loadGroupState($authy));
+        } catch (\Exception $e) { /* DB transient: keep the session, don't lock out */ }
+        if ($verdict === 'logout') {
+            error_log('gc: stale session signed out for authy#' . (int) $sess->getIdAuthy());
+            // Keep the per-browser csrf token + language so the page's re-auth
+            // modal can sign straight back in.
+            $_SESSION[_AUTH_VAR] = \ApiGoat\Auth\AccountSecurity::signedOutSession($sess);
+        } else {
+            $sess->set('stale_check_ts', time());
+        }
+        return $verdict !== 'ok';
     }
 
     /**

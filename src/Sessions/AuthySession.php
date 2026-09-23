@@ -52,6 +52,12 @@ class AuthySession
     # fingerprint of the rights/groups/root/tenant state the session was built from.
     public $staleCheckTs = null;
     public $rightsFingerprint = null;
+    # authy.session_epoch the session was opened under (setSession). A
+    # password change, deactivation, expiry or token revocation re-rolls the
+    # row's epoch; revalidate() then logs every older session out. Null =
+    # unknown (a session from before the column existed): adopted on the next
+    # revalidation instead of locking anyone out.
+    public $sessionEpoch = null;
 
 
     function __construct()
@@ -542,6 +548,9 @@ class AuthySession
             case 'stale_check_ts':
                 return $this->staleCheckTs;
                 break;
+            case 'session_epoch':
+                return $this->sessionEpoch;
+                break;
         }
     }
 
@@ -595,6 +604,9 @@ class AuthySession
                 break;
             case 'stale_check_ts':
                 $this->staleCheckTs = $value;
+                break;
+            case 'session_epoch':
+                $this->sessionEpoch = ($value === null || $value === '') ? null : (int) $value;
                 break;
         }
     }
@@ -785,7 +797,8 @@ class AuthySession
 
     /**
      * Re-judge a live GUI session against its authy row (AuthyMiddleware,
-     * throttled): 'logout' when the user is deactivated / expired, 'refreshed'
+     * throttled): 'logout' when the user is deactivated / expired or the
+     * row's session_epoch moved past the session's, 'refreshed'
      * when the rights fingerprint changed (grants, groups, root, tenant are
      * rebuilt in place — impersonation/csrf state in sessVar is kept), else
      * 'ok'. A session with no fingerprint yet (built by a login before this
@@ -795,6 +808,17 @@ class AuthySession
     {
         if (self::authyLockedOut($Authy)) {
             return 'logout';
+        }
+        // Session epoch: a password change / deactivation / expiry / token
+        // revocation re-rolled authy.session_epoch after this session opened.
+        // No column (DB not rebuilt yet) = no epoch: never a logout.
+        $dbEpoch = \ApiGoat\Auth\AccountSecurity::epochOf($Authy);
+        if ($dbEpoch !== null) {
+            if ($this->sessionEpoch === null) {
+                $this->sessionEpoch = $dbEpoch;
+            } elseif ((int) $this->sessionEpoch !== $dbEpoch) {
+                return 'logout';
+            }
         }
         $fp = self::rightsFingerprint($Authy, $groupState);
         if ($this->rightsFingerprint !== null && hash_equals($this->rightsFingerprint, $fp)) {

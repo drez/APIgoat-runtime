@@ -96,7 +96,7 @@ class Api
      *
      * @var string[]
      */
-    public const CREDENTIAL_COLUMNS = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
+    public const CREDENTIAL_COLUMNS = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub', 'sessionepoch'];
 
     /**
      * Client-safe text for an exception caught in the generic CRUD paths.

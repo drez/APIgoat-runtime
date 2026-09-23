@@ -312,7 +312,7 @@ namespace {
     // Asserted as a literal set: a future edit that DROPS an entry from the
     // const silently re-opens every enforcement point below, so it must fail
     // loudly right here.
-    $expected = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
+    $expected = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub', 'sessionepoch'];
     check('Api::CREDENTIAL_COLUMNS is the historical list',
         \ApiGoat\Api\Api::CREDENTIAL_COLUMNS, $expected);
 
