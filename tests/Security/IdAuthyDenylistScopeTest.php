@@ -23,6 +23,7 @@ namespace {
     require_once __DIR__ . '/../../src/ACL/AuthyACL.php';
     require_once __DIR__ . '/../../src/Api/Message.php';
     require_once __DIR__ . '/../../src/Api/QueryBuilder.php';
+    require_once __DIR__ . '/../../src/ACL/AuthyRowGuard.php';
     require_once __DIR__ . '/../../src/Api/Api.php';
 
     use ApiGoat\Api\Api;

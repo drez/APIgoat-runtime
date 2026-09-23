@@ -2,6 +2,7 @@
 
 namespace ApiGoat\Api;
 
+use ApiGoat\ACL\AuthyRowGuard;
 use ApiGoat\Handlers\PropelErrorHandler;
 use PropelCollection;
 
@@ -330,6 +331,13 @@ class Api
         if (in_array($cam, $this->denyColumns, true)) {
             return false;
         }
+        // SECURITY (review 2026-09-23): authy.IdAuthyGroup / Deactivate and
+        // authy_group.Admin / DefaultGroup make or unmake an Admin — root or an
+        // Admin only, whatever the emitted allowlist says (older projects ship
+        // them on it unconditionally). AuthyRowGuard mirrors the emitter.
+        if (AuthyRowGuard::columnDenied($this->tablename, (string) $cam)) {
+            return false;
+        }
         if ($this->editableFields !== null && !in_array($cam, $this->editableFields, true)) {
             if (!$isI18n) {
                 return false;
@@ -478,13 +486,22 @@ class Api
         // authorization on create/update/delete. The router dispatches
         // Authy/auth/<id> to generic CRUD (setJson) inheriting rbac_public=='passed';
         // without this an unauthenticated caller could create/overwrite rows.
-        if ($request["action"] == 'update' || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'] ?? null)))) {
+        // A body carrying the PK is an UPDATE whatever the action says: setEntry
+        // resolves it to the stored row. It must need 'w' — with 'a' alone a
+        // "create" naming an existing id overwrote that row.
+        if ($request["action"] == 'update' || isset($data[$pkKey]) || ($QueryBuilder !== null || ($QueryBuilder === null && is_array($request['data']['query'] ?? null)))) {
             $acl = $this->authorize($this->tablename, 'w');
         } else {
             $acl = $this->authorize($this->tablename, 'a');
         }
 
         if (!$acl) {
+            $this->response['error'] = "Permission denied";
+            return $this->response;
+        }
+
+        // Group membership grants the group's rights: root / an Admin only.
+        if (AuthyRowGuard::membershipWriteDenied($this->tablename)) {
             $this->response['error'] = "Permission denied";
             return $this->response;
         }
@@ -518,6 +535,14 @@ class Api
 
             if ($DataObj instanceof PropelCollection) {
                 $count = $DataObj->count();
+                // All or nothing: a query update that reaches a user the caller
+                // may not modify (root / system / Admin) writes no row at all.
+                foreach ($DataObj as $Obj) {
+                    if (AuthyRowGuard::rowLocked($this->tablename, $Obj)) {
+                        $this->response['error'] = "Permission denied";
+                        return $this->response;
+                    }
+                }
                 if ($count > 0) {
                     foreach ($DataObj as $Obj) {
                         if (!empty($data)) {
@@ -707,7 +732,7 @@ class Api
         // create/update/delete (see setJson).
         $acls = $this->authorize($this->tablename, 'd');
 
-        if (!$acls) {
+        if (!$acls || AuthyRowGuard::membershipWriteDenied($this->tablename)) {
             $this->response['error'] = "Permission denied";
             return $this->response;
         }
@@ -729,6 +754,13 @@ class Api
                 $ret['error'] = 'Entry not found';
             } else {
                 $ret['count'] = 0;
+                // All or nothing: no row is deleted when the selection reaches a
+                // user the caller may not delete (root / system / Admin).
+                foreach ($obj as $item) {
+                    if (AuthyRowGuard::rowLocked($this->tablename, $item)) {
+                        return ['status' => 'failure', 'error' => 'Permission denied'];
+                    }
+                }
                 foreach ($obj as $item) {
                     if (\method_exists($this->ServiceWrapper, 'beforeDelete')) {
                         $this->ServiceWrapper->beforeDelete($item, $data, $this->response['messages']);
@@ -820,6 +852,14 @@ class Api
             $obj = $DataObj;
         }
 
+        if ($obj && !$isNew && AuthyRowGuard::rowLocked($this->tablename, $obj)) {
+            // Root / system users are root-only, Admin users root-or-Admin only
+            // — any column (AuthyRowGuard; the emitted Form enforces the same).
+            $this->response['status'] = 'failure';
+            $this->response['error'] = "Permission denied";
+            return false;
+        }
+
         if ($obj) {
 
             /**
@@ -849,6 +889,14 @@ class Api
                 $i18nData = array_intersect_key($data, array_flip($this->i18nColumns()));
                 $this->setColumn($obj, array_diff_key($data, $i18nData));
                 $this->applyI18n($obj, $i18nData);
+
+                // Posted FK values must stay in the caller's scope: the same
+                // check the generated Form runs on its own save path.
+                if (!$this->fkScopeOk($obj)) {
+                    $this->response['status'] = 'failure';
+                    $this->response['error'] = "Permission denied";
+                    return false;
+                }
 
                 if (!$this->validateSave($obj)) {
                     return false;
@@ -880,6 +928,23 @@ class Api
             return false;
         }
         return $obj;
+    }
+
+    /**
+     * The generated Form's FK scope check (goatcheese FkScopeGuard →
+     * gcFkScopeOk($e)): every changed single-column FK must load through
+     * loadPkScoped() for the caller. Projects built before it existed have no
+     * such method and pass unchanged.
+     */
+    private function fkScopeOk($obj): bool
+    {
+        $form = (is_object($this->ServiceWrapper) && isset($this->ServiceWrapper->Form) && is_object($this->ServiceWrapper->Form))
+            ? $this->ServiceWrapper->Form
+            : null;
+        if ($form === null || !\method_exists($form, 'gcFkScopeOk')) {
+            return true;
+        }
+        return (bool) $form->gcFkScopeOk($obj);
     }
 
     /**
