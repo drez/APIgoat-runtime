@@ -134,7 +134,10 @@ class RouteParser implements MiddlewareInterface
                     $this->args['action'] = 'list';
                 }
             } elseif ($this->args['action'] == 'update') {
-                if (empty($this->args['id'])) {
+                // `update` without an id in the URL is a create ('a') — unless
+                // the GUI body names the record, exactly as the emitted
+                // Service::saveUpdate() decides (see guiBodyNamesRecord()).
+                if (empty($this->args['id']) && !self::guiBodyNamesRecord($this->args)) {
                     $this->args['action'] = 'create';
                 }
             }
@@ -143,6 +146,73 @@ class RouteParser implements MiddlewareInterface
         if (empty($this->args['action'])) {
             $this->args['action'] = 'list';
         }
+    }
+
+    /**
+     * Does a GUI POST to {Model}/update (no id in the URL) name an EXISTING
+     * record? Mirrors the emitted Service::saveUpdate() branch signal:
+     *
+     *     parse_str($request['d'], $data);
+     *     $data['i'] = $data['<FirstPkPhpName>'] ?: $request['i'];
+     *     if (!empty($data['i'])) { ## Save (loadPkScoped 'w') } else { ## Create ('a') }
+     *
+     * where $request['i'] falls back to the body 'i'. The client
+     * (template screens.js) posts every save — create and edit alike — to
+     * {Model}/update with the form serialized into 'd' and the PK as a hidden
+     * <FirstPkPhpName> field, so treating every id-less update as a create made
+     * AuthyMiddleware demand 'a' for a plain edit: a 'rw' user got 403
+     * [Model, a] saving an existing record. Using the SAME signal as the
+     * Service means the middleware right and the Service branch cannot
+     * disagree; the Service still enforces 'w' on the named row
+     * (loadPkScoped) and 'a' on its create branch. Composite PKs: the Service
+     * reads the FIRST PK column only, and so does this.
+     *
+     * The JSON API (is_api) is left alone: Api::setJson() makes its own
+     * create/update call ('w' for a body PK) and an 'update' action would
+     * switch it onto the QueryBuilder path.
+     */
+    public static function guiBodyNamesRecord(array $args, ?string $pkPhpName = null): bool
+    {
+        if (!empty($args['is_api'])) {
+            return false;
+        }
+        $data = is_array($args['data'] ?? null) ? $args['data'] : [];
+        if (!empty($data['i'])) {
+            return true;
+        }
+        if (!isset($data['d']) || !is_string($data['d']) || $data['d'] === '') {
+            return false;
+        }
+        $pk = $pkPhpName ?? self::firstPkPhpName((string) ($args['model'] ?? ''));
+        if ($pk === null || $pk === '') {
+            return false;
+        }
+        parse_str($data['d'], $d);
+        return !empty($d[$pk]);
+    }
+
+    /**
+     * PhpName of the model's first primary-key column (what the emitter's
+     * $this->pkName is: getFirstPrimaryKeyColumn()->getPhpName()), or null
+     * when the route model has no Propel peer — the caller then keeps the
+     * old id-less-update-is-a-create rule (fails toward requiring 'a').
+     */
+    public static function firstPkPhpName(string $model): ?string
+    {
+        if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $model)) {
+            return null;
+        }
+        $peer = '\\App\\' . $model . 'Peer';
+        try {
+            if (class_exists($peer) && method_exists($peer, 'getTableMap')) {
+                foreach ($peer::getTableMap()->getPrimaryKeys() as $col) {
+                    return (string) $col->getPhpName();
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('RouteParser: no PK map for ' . $model . ': ' . $e->getMessage());
+        }
+        return null;
     }
 
     private function decodePath()
