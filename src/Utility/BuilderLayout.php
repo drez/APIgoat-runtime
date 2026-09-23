@@ -386,7 +386,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
                         "class='dr-userinfo'"
                     )
                     . $this->getImpersonateIcon()
-                    . href("<i class='ri-logout-box-r-line'></i>", _SITE_URL . 'Authy/logout', "class='dr-signout' title='" . _('Logout') . "' aria-label='" . _('Logout') . "'"),
+                    . $this->signOutForm(),
                     '',
                     "class='dr-footer'"
                 ),
@@ -497,6 +497,23 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
      * back to the original five for projects whose authy table predates
      * the theme column (no THEME constant / valueSet).
      */
+    /**
+     * Drawer-footer sign-out: a POST form carrying the session csrf token (the
+     * emitted Authy logout, goatcheese 69de5f6, honours GET only for a
+     * same-origin navigation). display:contents keeps the button the flex item
+     * the .dr-signout styles target; no inline handler, no dialog.
+     */
+    private function signOutForm(): string
+    {
+        $csrf = (defined('_AUTH_VAR') && isset($_SESSION[_AUTH_VAR]) && is_object($_SESSION[_AUTH_VAR]) && method_exists($_SESSION[_AUTH_VAR], 'getCsrf'))
+            ? (string) $_SESSION[_AUTH_VAR]->getCsrf() : '';
+        $label = htmlspecialchars((string) _('Logout'), ENT_QUOTES);
+        return "<form method='post' action='" . htmlspecialchars(_SITE_URL . 'Authy/logout', ENT_QUOTES) . "' class='dr-signout-form' style='display:contents;'>"
+            . "<input type='hidden' name='csrf' value='" . htmlspecialchars($csrf, ENT_QUOTES) . "'>"
+            . "<button type='submit' class='dr-signout' title='" . $label . "' aria-label='" . $label . "' style='cursor:pointer;padding:0;font:inherit;'>"
+            . "<i class='ri-logout-box-r-line'></i></button></form>";
+    }
+
     /**
      * Opaque, stable per-user key for client-side storage namespacing
      * (window.gcUserKey, read by template list.js): the first 20 hex chars of

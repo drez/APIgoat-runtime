@@ -165,7 +165,8 @@ class AuthyMiddleware implements MiddlewareInterface
                 ];
             }
             $response = new Response();
-            $response->getBody()->write(self::backendDeniedPage($message, (string) $_SESSION[_AUTH_VAR]->get('username'), $switchBack));
+            $sessCsrf = method_exists($_SESSION[_AUTH_VAR], 'getCsrf') ? (string) $_SESSION[_AUTH_VAR]->getCsrf() : '';
+            $response->getBody()->write(self::backendDeniedPage($message, (string) $_SESSION[_AUTH_VAR]->get('username'), $switchBack, $sessCsrf));
             return $response->withHeader('Cache-Control', 'no-store')->withStatus(403);
         }
 
@@ -666,8 +667,12 @@ class AuthyMiddleware implements MiddlewareInterface
      * POST form (token in the body, never the URL); a nonced script submits it
      * with fetch and then lands on 'land' — no inline handler (CSP is
      * nonce-only), no native dialog. Without JS the native POST still switches.
+     *
+     * "Log out" is a POST form carrying the session csrf token ($csrf): the
+     * emitted Authy logout (goatcheese 69de5f6) honours a GET only for a
+     * same-origin navigation and otherwise answers with a confirm page.
      */
-    public static function backendDeniedPage(string $message, string $username, ?array $switchBack): string
+    public static function backendDeniedPage(string $message, string $username, ?array $switchBack, string $csrf = ''): string
     {
         $e    = static fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES);
         $logo = (\defined('_BASE_DIR') && is_file(_BASE_DIR . 'public/img/logo-admin.png'))
@@ -677,6 +682,11 @@ class AuthyMiddleware implements MiddlewareInterface
             ? '<p style="margin:0 0 24px;color:#697386;font-size:14px;">' . sprintf($e(_('Signed in as %s')), '<strong style="color:#0a2540;">' . $e($username) . '</strong>') . '</p>'
             : '';
         $btn  = 'display:block;padding:11px 16px;border-radius:8px;font-size:15px;font-weight:600;text-decoration:none;text-align:center;';
+        $logout = static fn (string $style): string =>
+            '<form method="post" action="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="margin:0;">'
+            . '<input type="hidden" name="csrf" value="' . $e($csrf) . '">'
+            . '<button type="submit" style="' . $btn . 'width:100%;border:0;cursor:pointer;font-family:inherit;' . $style . '">' . $e(_('Log out')) . '</button>'
+            . '</form>';
         $script = '';
         if ($switchBack !== null) {
             $nonce   = \function_exists('gcNonceAttr') ? gcNonceAttr() : '';
@@ -687,7 +697,7 @@ class AuthyMiddleware implements MiddlewareInterface
                 . '<button type="submit" style="' . $btn . 'width:100%;border:0;cursor:pointer;font-family:inherit;background:#0a2540;color:#fff;">' . $e(_('Stop impersonating')) . '</button>'
                 . '</form>'
                 . '<p id="gc-iarc-err" hidden style="margin:10px 0 0;color:#c0392b;font-size:14px;">' . $e(_('Could not switch back — please try again.')) . '</p>'
-                . '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'margin-top:10px;background:#f4f6f8;color:#0a2540;">' . $e(_('Log out')) . '</a>';
+                . $logout('margin-top:10px;background:#f4f6f8;color:#0a2540;');
             $script = '<script' . $nonce . '>(function(){var f=document.getElementById("gc-iarc-back");'
                 . 'if(!f||!window.fetch||!window.URLSearchParams||!window.FormData){return;}'
                 . 'f.addEventListener("submit",function(ev){ev.preventDefault();var b=f.querySelector("button");if(b){b.disabled=true;}'
@@ -695,7 +705,7 @@ class AuthyMiddleware implements MiddlewareInterface
                 . '.then(function(r){if(!r.ok){throw new Error("switch");}window.location.href=f.getAttribute("data-land");})'
                 . '.catch(function(){if(b){b.disabled=false;}var m=document.getElementById("gc-iarc-err");if(m){m.hidden=false;}});});}());</script>';
         } else {
-            $primary = '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'background:#0a2540;color:#fff;">' . $e(_('Log out')) . '</a>';
+            $primary = $logout('background:#0a2540;color:#fff;');
         }
 
         return '<!doctype html><html><head><meta charset="utf-8">'
