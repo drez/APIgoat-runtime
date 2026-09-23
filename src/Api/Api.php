@@ -99,6 +99,25 @@ class Api
     public const CREDENTIAL_COLUMNS = ['passwdhash', 'resettokenhash', 'validationkey', 'googlesub'];
 
     /**
+     * Client-safe text for an exception caught in the generic CRUD paths.
+     * Propel/PDO exception messages carry the full SQL statement and the
+     * wrapped SQLSTATE text (table/column names, bound values), so the
+     * client gets only $label and the detail goes to the server log. The
+     * sole pass-through is QueryBuilder's own caller-input diagnostics
+     * (unknown column / model), which name only what the caller sent and
+     * which API/MCP clients need to correct a query.
+     */
+    public static function clientError(string $label, \Throwable $x, ?string $table = null): string
+    {
+        $msg = $x->getMessage();
+        if (preg_match('/^(Normalize: )?Unknown (column|model)[^\[\]\r\n]*$/', $msg)) {
+            return $label . ': ' . $msg;
+        }
+        error_log('ApiGoat Api ' . ($table ?? '?') . ' ' . $label . ': ' . \get_class($x) . ': ' . $msg);
+        return $label;
+    }
+
+    /**
      * ACL RIGHTS columns — the `is_rights_column` family the schema marks on
      * authy / authy_group (`rights_all`, `rights_owner`, `rights_group`).
      * Same normalisation as CREDENTIAL_COLUMNS (lowercase, underscores dropped)
@@ -626,7 +645,7 @@ class Api
             $ret['messages'][] = $QueryBuilder->getMessages();
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
-            $ret['error'] = "Invalid parameter 4: " . $x->getMessage();
+            $ret['error'] = self::clientError('Invalid parameter 4', $x, $this->tablename);
             return $ret;
         }
 
@@ -650,7 +669,7 @@ class Api
             }
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
-            $ret['error'] = "Invalid parameter 1: " . $x->getMessage();
+            $ret['error'] = self::clientError('Invalid parameter 1', $x, $this->tablename);
         }
 
         if ($QueryBuilder->debug) {
@@ -712,7 +731,7 @@ class Api
             return $ret;
         } catch (\Exception $x) {
             $ret['status'] = 'failure';
-            $ret['error'] = "Invalid parameter 2: " . $x->getMessage();
+            $ret['error'] = self::clientError('Invalid parameter 2', $x, $this->tablename);
         }
         return $ret;
     }
@@ -788,7 +807,7 @@ class Api
                 $ret['error'] = "Some not deleted";
             } else {
                 $ret['status'] = 'failure';
-                $ret['error'] = "Invalid parameter 3: " . $x->getMessage();
+                $ret['error'] = self::clientError('Invalid parameter 3', $x, $this->tablename);
             }
         }
         if ($QueryBuilder->debug) {
