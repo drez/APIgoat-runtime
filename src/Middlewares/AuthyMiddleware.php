@@ -35,7 +35,9 @@ class AuthyMiddleware implements MiddlewareInterface
 
         // OAuth discovery documents (RFC 8414 / 9728) are inherently public — they
         // must be reachable without a CRM session so an MCP client can bootstrap.
-        if (strpos($request->getUri()->getPath(), '/.well-known/') !== false) {
+        // Exact documents only (RoutePath) — a substring test exempted any
+        // catch-all model route carrying /.well-known/ in its trailing params.
+        if (RoutePath::isOAuthDiscovery($request->getUri()->getPath())) {
             return $handler->handle($request);
         }
 

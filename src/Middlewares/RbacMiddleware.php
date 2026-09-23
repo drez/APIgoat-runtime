@@ -64,7 +64,9 @@ class RbacMiddleware implements MiddlewareInterface
         // body varies per call, which defeats api_rbac's body-pattern matching (every shape would
         // auto-create a Deny row in prod). Mark it a passed public route so AuthyMiddleware lets
         // it reach McpEndpoint, and skip api_rbac entirely.
-        $isMcp = (bool) preg_match('#/api/v[0-9]+/mcp(/|$)#', $request->getUri()->getPath());
+        // Exact route only (RoutePath): a substring match let any model route
+        // ending in /api/v1/mcp through unauthenticated (review 2026-09-23).
+        $isMcp = RoutePath::isMcp($request->getUri()->getPath());
         // _meta is a fixed, read-only introspection catalog (entity + menu metadata)
         // consumed by the mobile and MCP clients to build their UI. Like /mcp it has
         // no per-entity request body, so api_rbac's body-pattern matching would
@@ -72,7 +74,7 @@ class RbacMiddleware implements MiddlewareInterface
         // endpoint out with a "Hard Deny". Skip api_rbac for it — but, UNLIKE /mcp,
         // keep authentication as the gate (do NOT set rbac_public='passed'): a valid
         // bearer/session is still required, mirroring the Account self-service exemption.
-        $isMeta = (bool) preg_match('#/api/v[0-9]+/_meta(/|$)#', $request->getUri()->getPath());
+        $isMeta = RoutePath::isMeta($request->getUri()->getPath());
         // /api/v1/ApiGoat/geocode + /reverseGeocode (bearer channel of the
         // location-field Nominatim proxy, GeoService): the query string varies
         // per keystroke (q=<free text>, lat/lng floats), so api_rbac's
@@ -81,7 +83,7 @@ class RbacMiddleware implements MiddlewareInterface
         // Mirror the _meta exemption: skip api_rbac, but keep authentication as
         // the gate (do NOT set rbac_public='passed' — AuthyMiddleware +
         // GeoService still require a connected session/bearer identity).
-        $isGeo = (bool) preg_match('#/api/v[0-9]+/ApiGoat/(geocode|reverseGeocode)(/|$)#i', $request->getUri()->getPath());
+        $isGeo = RoutePath::isGeo($request->getUri()->getPath());
         // Project-declared self-service ACTIONS (settings `self_service_models`,
         // shape `['Model' => ['action', ...]]`, same key + action-granularity
         // AuthyMiddleware::isProjectSelfServiceAction() enforces — review I1: this
