@@ -115,7 +115,7 @@ final class RefreshTokenService
                 return $this->err('token_reuse');
             }
             // Benign concurrent redeem (see REUSE_GRACE).
-            return $this->graceReplay($rawToken, $row, $mintAccessToken);
+            return $this->graceReplay($rawToken, $row, $mintAccessToken, $now);
         }
         if ($row['expires'] < $now || $row['family_expires'] < $now) {
             $this->store->markRevoked($row['id'], $now);
@@ -136,7 +136,7 @@ final class RefreshTokenService
         if (!$this->store->claimRotation($row['id'], $now)) {
             $row['revoked'] = 'Yes';
             $row['last_used_at'] = $now;
-            return $this->graceReplay($rawToken, $row, static fn () => $jwt);
+            return $this->graceReplay($rawToken, $row, static fn () => $jwt, $now);
         }
 
         [$raw2, $hash2] = $this->successor($rawToken);
@@ -168,16 +168,29 @@ final class RefreshTokenService
      * change, reuse detection) — only a live or itself-just-rotated
      * successor is returned. Without a JWT secret the successor is random
      * and cannot be re-derived: refuse rather than fork the family.
+     *
+     * Never past exp (review-3 #7): the grace path is reached BEFORE the
+     * normal expiry check, and the expiry branch itself stamps last_used_at
+     * (markRevoked) — so without this guard an expired token presented twice
+     * within REUSE_GRACE was redeemed for a fresh access JWT. Both the
+     * presented token and (when already inserted) its successor must be
+     * inside their per-token AND family expiry.
      */
-    private function graceReplay(string $rawToken, array $row, callable $mintAccessToken): array
+    private function graceReplay(string $rawToken, array $row, callable $mintAccessToken, int $now): array
     {
         if ($this->secret() === '') {
             return $this->err('token_reuse');
+        }
+        if ($this->isPastExpiry($row, $now)) {
+            return $this->err('expired');
         }
         [$raw2, $hash2] = $this->successor($rawToken);
         $succ = $this->store->findByHash($hash2);
         if ($succ !== null && $succ['revoked'] === 'Yes' && ($succ['last_used_at'] ?? null) === null) {
             return $this->err('token_reuse');   // family was revoked after the rotation
+        }
+        if ($succ !== null && $this->isPastExpiry($succ, $now)) {
+            return $this->err('expired');
         }
         $jwt = $mintAccessToken($row['id_authy']);
         if (($jwt['status'] ?? '') !== 'success' || empty($jwt['token'])) {
@@ -189,6 +202,12 @@ final class RefreshTokenService
             'expires'       => $jwt['expires'],
             'refresh_token' => $raw2,
         ];
+    }
+
+    /** True when a store row is past its per-token OR family expiry (unix ts). */
+    private function isPastExpiry(array $row, int $now): bool
+    {
+        return (int) ($row['expires'] ?? 0) < $now || (int) ($row['family_expires'] ?? 0) < $now;
     }
 
     public function revokeFamily(string $familyId): void
