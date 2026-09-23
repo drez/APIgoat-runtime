@@ -65,10 +65,17 @@ class BuilderLayout
         $notifPillOn = function_exists('env') ? filter_var(env('GC_NOTIF_PILL'), FILTER_VALIDATE_BOOLEAN) : false;
         $pillOffLiteral = $notifPillOn ? 'false' : 'true';
         $gcTheme = $this->resolveTheme();
+        // Per-user namespace for client-side persistence (list.js gc.filter.*
+        // snapshots) — opaque, so the key never exposes the username/id.
+        $gcUserKey = self::userKey(
+            (defined('_AUTH_VAR') && isset($_SESSION[_AUTH_VAR])) ? $_SESSION[_AUTH_VAR] : null,
+            function_exists('env') ? (string) (env('JWT_SECRET') ?: '') : ''
+        );
         $headjs = $csrfMeta . "<script type='text/javascript'" . gcNonceAttr() . ">
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
     let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
     window.gcNotifPillOff = " . $pillOffLiteral . ";
+" . ($gcUserKey !== '' ? "    window.gcUserKey = " . json_encode($gcUserKey) . ";\n" : '') . "
     (function () {
         var ok = " . json_encode(array_values($this->validThemes())) . ";
         var t = " . json_encode($gcTheme) . ";
@@ -490,6 +497,29 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
      * back to the original five for projects whose authy table predates
      * the theme column (no THEME constant / valueSet).
      */
+    /**
+     * Opaque, stable per-user key for client-side storage namespacing
+     * (window.gcUserKey, read by template list.js): the first 20 hex chars of
+     * HMAC-SHA256('gc-user-key|<IdAuthy>', project secret). Non-reversible and
+     * unforgeable without the secret, stable across sessions and renames.
+     * '' when there is no signed-in user or no secret — the client then falls
+     * back to its own identity source (or does not persist).
+     */
+    public static function userKey($session, string $secret): string
+    {
+        if ($secret === '' || ! is_object($session) || ! method_exists($session, 'getIdAuthy')) {
+            return '';
+        }
+        if (method_exists($session, 'get') && $session->get('connected') !== 'YES') {
+            return '';
+        }
+        $id = (int) $session->getIdAuthy();
+        if ($id <= 0) {
+            return '';
+        }
+        return substr(hash_hmac('sha256', 'gc-user-key|' . $id, $secret), 0, 20);
+    }
+
     private function validThemes()
     {
         if (class_exists('\App\AuthyPeer') && defined('\App\AuthyPeer::THEME')) {

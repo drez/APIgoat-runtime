@@ -7,7 +7,9 @@ namespace ApiGoat\Services;
  *
  * Searches Authy users (username/email/fullname LIKE) for the impersonation
  * dropdown rendered by BuilderLayout/BuilderMenus. Gated by isRoot + the
- * IarcCsrf token stashed in session by AuthyMiddleware::checkUserSwitch().
+ * IarcCsrf token stashed in session by AuthyMiddleware::checkUserSwitch(),
+ * read from the X-Iarc-Csrf request header (iarc_csrf query/body fallback for
+ * un-upgraded clients).
  *
  * Designed to be invoked from the existing modern route
  * `_SUB_DIR_URL . 'Authy/autoc'` via AuthyServiceWrapper. The wrapper short-
@@ -27,12 +29,35 @@ namespace ApiGoat\Services;
  */
 class IarcAutoc
 {
-    public static function handle(array $request): string
+    /** Request header the client sends the switch token in (kept off the URL). */
+    public const CSRF_HEADER = 'X-Iarc-Csrf';
+
+    /**
+     * @param string|null $headerCsrf the X-Iarc-Csrf header value; null reads
+     *        it from $_SERVER (HTTP_X_IARC_CSRF), so existing wrappers that call
+     *        handle($this->request) get the header path without changes.
+     */
+    public static function handle(array $request, ?string $headerCsrf = null): string
     {
-        return json_encode(self::respond($request));
+        return json_encode(self::respond($request, $headerCsrf));
     }
 
-    private static function respond(array $request): array
+    /**
+     * The submitted switch token: the X-Iarc-Csrf header first (a GET query
+     * string lands in access logs, history and the Referer), then — for
+     * clients not yet upgraded to send the header — the iarc_csrf query/body
+     * field.
+     */
+    public static function submittedCsrf(array $request, ?string $headerCsrf = null): string
+    {
+        $header = $headerCsrf ?? (string) ($_SERVER['HTTP_X_IARC_CSRF'] ?? '');
+        if ($header !== '') {
+            return $header;
+        }
+        return (string) ($request['iarc_csrf'] ?? $request['data']['iarc_csrf'] ?? '');
+    }
+
+    private static function respond(array $request, ?string $headerCsrf = null): array
     {
         if (! isset($_SESSION[_AUTH_VAR]) || ! is_object($_SESSION[_AUTH_VAR])) {
             return ['count' => 0, 'data' => [], '_why' => 'no_session'];
@@ -43,7 +68,7 @@ class IarcAutoc
         }
 
         $sessionCsrf   = (string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? '');
-        $submittedCsrf = (string) ($request['iarc_csrf'] ?? $request['data']['iarc_csrf'] ?? '');
+        $submittedCsrf = self::submittedCsrf($request, $headerCsrf);
         if ($sessionCsrf === '' || $submittedCsrf === '' || ! hash_equals($sessionCsrf, $submittedCsrf)) {
             error_log('iarc autoc rejected: csrf mismatch from ' . ($_SERVER['REMOTE_ADDR'] ?? '?'));
             return [

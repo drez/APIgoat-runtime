@@ -150,13 +150,22 @@ class AuthyMiddleware implements MiddlewareInterface
                 return $ApiResponse->getResponse();
             }
             // Impersonating: offer the way back (a switch runs before this gate).
-            $backUrl = null;
+            // The switch token travels in a POST body to the privilege-excluded
+            // GuiManager 'alive' endpoint (checkUserSwitch reads args['data'] on
+            // any route), never in a URL — a GET admin?iarc=…&iarc_csrf=… link
+            // left it in history, access logs and the Referer.
+            $switchBack = null;
             $impersonator = self::impersonatorId($_SESSION[_AUTH_VAR]);
             if ($impersonator !== null) {
-                $backUrl = _SUB_DIR_URL . 'admin?iarc=' . $impersonator . '&iarc_csrf=' . rawurlencode((string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? ''));
+                $switchBack = [
+                    'action' => _SUB_DIR_URL . 'GuiManager',
+                    'land'   => _SUB_DIR_URL . 'admin',
+                    'iarc'   => $impersonator,
+                    'csrf'   => (string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? ''),
+                ];
             }
             $response = new Response();
-            $response->getBody()->write(self::backendDeniedPage($message, (string) $_SESSION[_AUTH_VAR]->get('username'), $backUrl));
+            $response->getBody()->write(self::backendDeniedPage($message, (string) $_SESSION[_AUTH_VAR]->get('username'), $switchBack));
             return $response->withHeader('Cache-Control', 'no-store')->withStatus(403);
         }
 
@@ -400,8 +409,8 @@ class AuthyMiddleware implements MiddlewareInterface
         }
         $_SESSION[_AUTH_VAR]->sessVar['IdAuthy']        = (int) $authyObj->getIdAuthy();
         $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'] = $originalRootId;
-        // Rotate: the switch token travels in a GET URL (UI + the gate's
-        // "Stop impersonating" link), so a used one must not be replayable.
+        // Rotate: a used switch token must not be replayable (un-upgraded
+        // clients may still send it in a GET URL).
         $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf']       = bin2hex(random_bytes(16));
 
         try {
@@ -651,8 +660,14 @@ class AuthyMiddleware implements MiddlewareInterface
      * The backend_admin_only 403 page: a self-contained card (inline styles,
      * no layout/asset dependency — the gate runs before any page rendering),
      * with the project's admin logo when it has one.
+     *
+     * $switchBack (impersonating only): ['action' => GuiManager URL, 'land' =>
+     * admin URL, 'iarc' => impersonator id, 'csrf' => IarcCsrf]. Rendered as a
+     * POST form (token in the body, never the URL); a nonced script submits it
+     * with fetch and then lands on 'land' — no inline handler (CSP is
+     * nonce-only), no native dialog. Without JS the native POST still switches.
      */
-    public static function backendDeniedPage(string $message, string $username, ?string $backUrl): string
+    public static function backendDeniedPage(string $message, string $username, ?array $switchBack): string
     {
         $e    = static fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES);
         $logo = (\defined('_BASE_DIR') && is_file(_BASE_DIR . 'public/img/logo-admin.png'))
@@ -662,10 +677,26 @@ class AuthyMiddleware implements MiddlewareInterface
             ? '<p style="margin:0 0 24px;color:#697386;font-size:14px;">' . sprintf($e(_('Signed in as %s')), '<strong style="color:#0a2540;">' . $e($username) . '</strong>') . '</p>'
             : '';
         $btn  = 'display:block;padding:11px 16px;border-radius:8px;font-size:15px;font-weight:600;text-decoration:none;text-align:center;';
-        $primary = $backUrl !== null
-            ? '<a href="' . $e($backUrl) . '" style="' . $btn . 'background:#0a2540;color:#fff;">' . $e(_('Stop impersonating')) . '</a>'
-              . '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'margin-top:10px;background:#f4f6f8;color:#0a2540;">' . $e(_('Log out')) . '</a>'
-            : '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'background:#0a2540;color:#fff;">' . $e(_('Log out')) . '</a>';
+        $script = '';
+        if ($switchBack !== null) {
+            $nonce   = \function_exists('gcNonceAttr') ? gcNonceAttr() : '';
+            $primary = '<form id="gc-iarc-back" method="post" action="' . $e($switchBack['action'] ?? '') . '" data-land="' . $e($switchBack['land'] ?? '') . '" style="margin:0;">'
+                . '<input type="hidden" name="a" value="alive">'
+                . '<input type="hidden" name="iarc" value="' . $e($switchBack['iarc'] ?? '') . '">'
+                . '<input type="hidden" name="iarc_csrf" value="' . $e($switchBack['csrf'] ?? '') . '">'
+                . '<button type="submit" style="' . $btn . 'width:100%;border:0;cursor:pointer;font-family:inherit;background:#0a2540;color:#fff;">' . $e(_('Stop impersonating')) . '</button>'
+                . '</form>'
+                . '<p id="gc-iarc-err" hidden style="margin:10px 0 0;color:#c0392b;font-size:14px;">' . $e(_('Could not switch back — please try again.')) . '</p>'
+                . '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'margin-top:10px;background:#f4f6f8;color:#0a2540;">' . $e(_('Log out')) . '</a>';
+            $script = '<script' . $nonce . '>(function(){var f=document.getElementById("gc-iarc-back");'
+                . 'if(!f||!window.fetch||!window.URLSearchParams||!window.FormData){return;}'
+                . 'f.addEventListener("submit",function(ev){ev.preventDefault();var b=f.querySelector("button");if(b){b.disabled=true;}'
+                . 'fetch(f.action,{method:"POST",credentials:"same-origin",headers:{"X-Requested-With":"XMLHttpRequest"},body:new URLSearchParams(new FormData(f))})'
+                . '.then(function(r){if(!r.ok){throw new Error("switch");}window.location.href=f.getAttribute("data-land");})'
+                . '.catch(function(){if(b){b.disabled=false;}var m=document.getElementById("gc-iarc-err");if(m){m.hidden=false;}});});}());</script>';
+        } else {
+            $primary = '<a href="' . $e(_SUB_DIR_URL . 'Authy/logout') . '" style="' . $btn . 'background:#0a2540;color:#fff;">' . $e(_('Log out')) . '</a>';
+        }
 
         return '<!doctype html><html><head><meta charset="utf-8">'
             . '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -679,7 +710,7 @@ class AuthyMiddleware implements MiddlewareInterface
             . '<p style="margin:0 0 8px;color:#425466;font-size:15px;line-height:1.5;">' . $e($message) . '</p>'
             . $who
             . $primary
-            . '</div></body></html>';
+            . '</div>' . $script . '</body></html>';
     }
 
     private function checkExclude($route)
