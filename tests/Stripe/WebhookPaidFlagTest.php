@@ -71,6 +71,7 @@ final class WebhookPaidFlagTest extends TestCase
     {
         WebhookHandler::process(['id' => 'evt_1', 'type' => 'checkout.session.completed', 'data' => ['object' => $over + [
             'id' => 'cs_1', 'mode' => 'payment', 'payment_status' => 'paid', 'amount_total' => 5000, 'currency' => 'usd',
+            'metadata' => [WebhookHandler::OWED_MARK => '1'],
         ]]]);
     }
 
@@ -146,12 +147,27 @@ final class WebhookPaidFlagTest extends TestCase
         $pay = $this->ledger($p, 5000, 'usd', 'cs_9', 'pi_9');
         WebhookHandler::process(['id' => 'evt_2', 'type' => 'payment_intent.succeeded', 'data' => ['object' => [
             'id' => 'pi_9', 'amount' => 5000, 'amount_received' => 4999, 'currency' => 'usd',
+            'metadata' => [WebhookHandler::OWED_MARK => '1'],
         ]]]);
         $this->assertSame(0, $p->getIsPaid());
         $this->assertStringContainsString('amount 4999 != owed 5000', (string) $pay->getErrorMessage());
 
         WebhookHandler::process(['id' => 'evt_3', 'type' => 'payment_intent.succeeded', 'data' => ['object' => [
             'id' => 'pi_9', 'amount' => 5000, 'amount_received' => 5000, 'currency' => 'USD',
+            'metadata' => [WebhookHandler::OWED_MARK => '1'],
+        ]]]);
+        $this->assertSame(1, $p->getIsPaid());
+    }
+
+    public function testLegacySessionWithoutOwedMarkIsNotAmountChecked(): void
+    {
+        // A one-time package session created before the ledger recorded the
+        // catalog price (row holds the record's amount) and paid after the
+        // deploy: the buyer must still get what they paid for.
+        $p = $this->payable();
+        $pay = $this->ledger($p);
+        WebhookHandler::process(['id' => 'evt_l', 'type' => 'checkout.session.completed', 'data' => ['object' => [
+            'id' => 'cs_1', 'mode' => 'payment', 'payment_status' => 'paid', 'amount_total' => 1299, 'currency' => 'usd',
         ]]]);
         $this->assertSame(1, $p->getIsPaid());
     }

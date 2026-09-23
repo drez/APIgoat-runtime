@@ -304,7 +304,7 @@ final class CheckoutService
             'customer'    => $customer->getStripeCustomerId(),
             'success_url' => $baseUrl . 'stripe/return/' . $rawToken . '?s=success&sid={CHECKOUT_SESSION_ID}' . $rpQuery,
             'cancel_url'  => $baseUrl . 'stripe/return/' . $rawToken . '?s=cancel' . $rpQuery,
-            'metadata'    => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $rec->getPrimaryKey()],
+            'metadata'    => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $rec->getPrimaryKey(), WebhookHandler::OWED_MARK => '1'],
         ];
         if ($mode === 'payment') {
             if ($priceRow !== null) {

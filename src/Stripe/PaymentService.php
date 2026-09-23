@@ -72,7 +72,7 @@ final class PaymentService
                     'payment_method' => $method,
                     'off_session'    => true,
                     'confirm'        => true,
-                    'metadata'       => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $payableId],
+                    'metadata'       => ['gc_payable_table' => $table, 'gc_payable_id' => (string) $payableId, WebhookHandler::OWED_MARK => '1'],
                 ], ['idempotency_key' => self::chargeIdempotencyKey($table, $payableId, $amount, $currency, $attempt)]);
                 $pay->setStripePaymentIntentId($intent->id);
                 $ledger = self::intentStatusToLedger((string) $intent->status);

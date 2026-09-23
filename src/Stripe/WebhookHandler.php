@@ -91,7 +91,7 @@ final class WebhookHandler
             // amount-checked against the ledger row written at creation.
             $mismatch = (($session['mode'] ?? 'payment') === 'subscription')
                 ? null
-                : self::amountMismatch($pay, $session['amount_total'] ?? null, $session['currency'] ?? null);
+                : self::checkedMismatch($pay, $session, $session['amount_total'] ?? null, $session['currency'] ?? null);
             if ($mismatch === null) {
                 self::flipPaidFlag($pay);
             } else {
@@ -121,7 +121,7 @@ final class WebhookHandler
             if (!empty($charge['payment_method_details']['type'])) {
                 $pay->setPaymentMethodType((string) $charge['payment_method_details']['type']);
             }
-            $mismatch = self::amountMismatch($pay, $intent['amount_received'] ?? ($intent['amount'] ?? null), $intent['currency'] ?? null);
+            $mismatch = self::checkedMismatch($pay, $intent, $intent['amount_received'] ?? ($intent['amount'] ?? null), $intent['currency'] ?? null);
             if ($mismatch === null) {
                 self::flipPaidFlag($pay);
             } else {
@@ -140,6 +140,27 @@ final class WebhookHandler
      * created server-side (review-3 #6). The ledger row is server-owned
      * (set_readonly_columns), so it is the trusted figure. Pure.
      */
+    /**
+     * Metadata key stamped on every session / intent created since the
+     * ledger row records what is actually owed (review-3 #6). Sessions
+     * created BEFORE that (e.g. a one-time catalog package whose row holds
+     * the record's amount, not the catalog price) still in flight at deploy
+     * time lack it and are not amount-checked, so a buyer who pays one is
+     * never charged without the purchase landing. Stripe expires open
+     * sessions after 24h, so the unmarked path dies out on its own.
+     */
+    public const OWED_MARK = 'gc_owed_v2';
+
+    /** amountMismatch() for a marked Stripe object; null (no check) for a legacy one. */
+    public static function checkedMismatch(object $pay, array $obj, $paidAmount, $paidCurrency): ?string
+    {
+        if ((string) ($obj['metadata'][self::OWED_MARK] ?? '') !== '1') {
+            \error_log('[stripe] ' . ($obj['id'] ?? '?') . ' predates owed-amount recording — amount not checked');
+            return null;
+        }
+        return self::amountMismatch($pay, $paidAmount, $paidCurrency);
+    }
+
     public static function amountMismatch(object $pay, $paidAmount, $paidCurrency): ?string
     {
         $owedAmount   = (int) $pay->getAmount();
