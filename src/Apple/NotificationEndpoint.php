@@ -43,21 +43,15 @@ final class NotificationEndpoint
         }
 
         $uuid = (string) ($n['notificationUUID'] ?? '');
-        $q = AppleIap::query('AppleEvent');
-        $row = $uuid !== '' ? $q::create()->filterByNotificationUuid($uuid)->findOne() : null;
-        if ($row !== null && \in_array((string) $row->getStatus(), ['processed', 'ignored'], true)) {
+        $claim = self::claimEvent($uuid, $n, $jws, \time());
+        if ($claim === 'done') {
             return self::json($response, 200, ['status' => 'ok', 'message' => 'Already received']);
         }
-        if ($row === null) {
-            $model = AppleIap::model('AppleEvent');
-            $row = new $model();
-            $row->setNotificationUuid($uuid);
-            $row->setType((string) ($n['notificationType'] ?? ''));
-            $row->setSubtype((string) ($n['subtype'] ?? ''));
-            $row->setPayload($jws);
-            $row->setStatus('received');
-            $row->save();
+        if ($claim === 'busy') {
+            // Another delivery holds it; Apple retries on its backoff.
+            return self::json($response, 409, ['status' => 'error', 'message' => 'Notification is being processed']);
         }
+        $row = $claim;
 
         try {
             $handled = (new NotificationHandler($verifier, new PurchaseService($verifier), self::$listeners))->process($n);
@@ -68,9 +62,68 @@ final class NotificationEndpoint
         } catch (\Throwable $e) {
             $row->setStatus('failed');
             $row->setErrorMessage(\substr($e->getMessage(), 0, 500));
+            $row->setProcessedAt(null);   // release the claim: Apple's retry may re-drive at once
             $row->save();
             return self::json($response, 500, ['status' => 'error', 'message' => 'Handler failed']);
         }
+    }
+
+    /** A claim older than this is presumed dead (handler killed) and may be re-taken. */
+    public const CLAIM_LEASE_SECONDS = 300;
+
+    /**
+     * Store + atomically claim one notification (review-3 #6): two concurrent
+     * deliveries of the same notificationUUID used to both run the handler —
+     * a REFUND listener clawing back twice. Same lease as the Stripe webhook
+     * (WebhookEndpoint::claim): the apple_event status ENUM has no
+     * 'processing' value, so a NEGATIVE processed_at = -(claim time) marks a
+     * running handler. Each UPDATE is conditional; exactly one request sees
+     * affected rows == 1.
+     *
+     * @return object|string the claimed apple_event row, 'done' (already
+     *         processed/ignored) or 'busy' (another delivery holds the lease)
+     */
+    public static function claimEvent(string $uuid, array $n, string $jws, int $now)
+    {
+        $q = AppleIap::query('AppleEvent');
+        $row = $uuid !== '' ? $q::create()->filterByNotificationUuid($uuid)->findOne() : null;
+        if ($row === null) {
+            $model = AppleIap::model('AppleEvent');
+            $row = new $model();
+            $row->setNotificationUuid($uuid);
+            $row->setType((string) ($n['notificationType'] ?? ''));
+            $row->setSubtype((string) ($n['subtype'] ?? ''));
+            $row->setPayload($jws);
+            $row->setStatus('received');
+            try {
+                $row->save();
+            } catch (\Throwable $e) {
+                // A concurrent delivery inserted it first (unique notification_uuid).
+                $row = $uuid !== '' ? $q::create()->filterByNotificationUuid($uuid)->findOne() : null;
+                if ($row === null) {
+                    throw $e;
+                }
+            }
+        }
+        if (\in_array((string) $row->getStatus(), ['processed', 'ignored'], true)) {
+            return 'done';
+        }
+        $pk = (int) $row->getPrimaryKey();
+        $affected = (int) $q::create()->filterByPrimaryKey($pk)->filterByStatus(['received', 'failed'])
+            ->filterByProcessedAt(null, \Criteria::ISNULL)
+            ->update(['ProcessedAt' => -$now]);
+        if ($affected !== 1) {
+            // Free (a positive "done at" left by an older build) or an expired lease.
+            $affected = (int) $q::create()->filterByPrimaryKey($pk)->filterByStatus(['received', 'failed'])
+                ->filterByProcessedAt(-($now - self::CLAIM_LEASE_SECONDS), \Criteria::GREATER_THAN)
+                ->update(['ProcessedAt' => -$now]);
+        }
+        if ($affected !== 1) {
+            return 'busy';
+        }
+        // Mirror the lease in memory so the failure path's NULL is a real change.
+        $row->setProcessedAt(-$now);
+        return $row;
     }
 
     /** The notification must be for OUR app, in an environment we accept. */

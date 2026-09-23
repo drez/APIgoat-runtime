@@ -22,6 +22,13 @@ final class PayPage
         if (\in_array((string) $pay->getStatus(), ['succeeded', 'refunded', 'partially_refunded'], true)) {
             return self::html($response, 200, 'Payment received', '<p>This payment has already been completed. Thank you!</p>');
         }
+        // A canceled row is final: its session was expired because a newer
+        // checkout replaced it (CheckoutService::expireOpenSessionsFor) or
+        // Stripe canceled the intent. Regenerating a session for it would
+        // resurrect a superseded link next to the live one.
+        if ((string) $pay->getStatus() === 'canceled') {
+            return self::html($response, 410, 'Payment link replaced', '<p>This payment link is no longer valid. Please use the most recent link you received.</p>');
+        }
 
         // Re-create a fresh Checkout Session if the stored one is expired/consumed.
         $gw      = StripeGateway::fromEnv();

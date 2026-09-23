@@ -18,7 +18,25 @@ final class StripePrice
         private readonly int $id,
         private readonly string $type,
         private readonly string $stripePriceId,
+        private readonly int $amount = 999,
+        private readonly string $currency = 'usd',
+        private readonly bool $isActive = true,
     ) {
+    }
+
+    public function getAmount(): int
+    {
+        return $this->amount;
+    }
+
+    public function getCurrency(): string
+    {
+        return $this->currency;
+    }
+
+    public function getIsActive(): bool
+    {
+        return $this->isActive;
     }
 
     public function getPrimaryKey(): int

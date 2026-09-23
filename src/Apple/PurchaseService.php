@@ -38,6 +38,7 @@ final class PurchaseService
             throw new \RuntimeException('not-payable');
         }
         $tx = $this->verifiedTransaction($jws, TransactionRules::CONSUMABLE, $clientTable, $clientId);
+        $this->assertNotRevoked($tx, true);
         $product = self::product((string) $tx['productId']);
         if ($product === null || (string) $product->getType() !== 'consumable'
             || \strtolower((string) $product->getPayableTable()) !== \strtolower($payableTable)) {
@@ -76,6 +77,7 @@ final class PurchaseService
     public function claimSubscription(string $jws, string $clientTable, int $clientId, ?string $renewalJws = null): object
     {
         $tx = $this->verifiedTransaction($jws, TransactionRules::SUBSCRIPTION, $clientTable, $clientId);
+        $this->assertNotRevoked($tx, false);
         $product = self::product((string) $tx['productId']);
         if ($product === null || (string) $product->getType() !== 'auto_renewable') {
             throw new \RuntimeException('unknown-product');
@@ -138,6 +140,31 @@ final class PurchaseService
         TransactionRules::assertClaimable($tx, $type, AppleIap::accountToken($clientTable, $clientId),
             AppleIap::bundleId(), AppleIap::sandboxAllowed());
         return $tx;
+    }
+
+    /**
+     * A signed JWS stays cryptographically valid after Apple refunds or
+     * revokes the purchase — the revocationDate only shows up in LATER
+     * payloads (the REFUND/REVOKE notification). So a re-posted copy of the
+     * original JWS must be checked against what the ledger learned since
+     * (review-3 #6): refuse when this transaction is recorded refunded or
+     * revoked. For a consumable the originalTransactionId is the purchase
+     * itself, so any refunded/revoked row under it refuses too; a
+     * subscription's originalTransactionId spans every renewal, where a
+     * refunded past period must not block a later, valid one.
+     */
+    private function assertNotRevoked(array $tx, bool $consumable): void
+    {
+        $q = AppleIap::query('AppleTransaction');
+        $txId = (string) ($tx['transactionId'] ?? '');
+        $hit = $q::create()->filterByTransactionId($txId)->filterByStatus(['refunded', 'revoked'])->count();
+        if ((int) $hit === 0 && $consumable) {
+            $origId = (string) ($tx['originalTransactionId'] ?? $txId);
+            $hit = $q::create()->filterByOriginalTransactionId($origId)->filterByStatus(['refunded', 'revoked'])->count();
+        }
+        if ((int) $hit > 0) {
+            throw new \RuntimeException('revoked');
+        }
     }
 
     public function ledgerRow(string $transactionId): ?object

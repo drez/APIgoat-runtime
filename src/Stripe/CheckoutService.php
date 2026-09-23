@@ -33,6 +33,11 @@ final class CheckoutService
 
         $customer = self::customerForRecord($rec, $entry, $gw);
 
+        // One open Checkout per payable (review-3 #6): expire the sessions
+        // earlier requests left open so an old link cannot be paid on top of
+        // the new one (double payment / a stale price).
+        self::expireOpenSessionsFor($table, (int) $rec->getPrimaryKey(), $gw);
+
         $tok   = PayTokens::mint();
         $built = self::buildSessionParams($rec, $entry, $table, $customer, $opts, $tok['token']);
 
@@ -159,6 +164,70 @@ final class CheckoutService
         return (string) $session->url;
     }
 
+    /**
+     * Best-effort: expire every still-pending Checkout session of the ledger
+     * for ($table, $payableId) and mark those rows canceled, so their pay
+     * links stop working (PayPage refuses canceled rows). A session Stripe
+     * refuses to expire (already complete, already expired, network error) is
+     * left as is — the webhook stays the source of truth for a completed one.
+     * Returns the number of sessions expired.
+     */
+    public static function expireOpenSessionsFor(string $table, int $payableId, StripeGateway $gw): int
+    {
+        if ($payableId <= 0) {
+            return 0;
+        }
+        $expired = 0;
+        try {
+            $rows = StripeDb::query('StripePayment')::create()
+                ->filterByPayableTable($table)
+                ->filterByPayableId($payableId)
+                ->filterByStatus('pending')
+                ->find();
+        } catch (\Throwable $e) {
+            return 0;
+        }
+        foreach ($rows as $row) {
+            $sid = (string) $row->getStripeCheckoutSessionId();
+            if ($sid === '') {
+                continue;
+            }
+            try {
+                $session = $gw->client()->checkout->sessions->expire($sid);
+            } catch (\Throwable $e) {
+                continue;   // not open any more (or Stripe unreachable) — leave the row alone
+            }
+            if (($session->status ?? '') === 'expired') {
+                $row->setStatus('canceled');
+                $row->setErrorMessage('Superseded by a newer checkout');
+                $row->save();
+                $expired++;
+            }
+        }
+        return $expired;
+    }
+
+    /**
+     * Validate a CLIENT-supplied catalog price id (the GUI's "subscribe"
+     * picker, review-3 #6): only an active, recurring stripe_price row that
+     * has been pushed to Stripe is accepted — never a one_time package, an
+     * archived plan, or an unpushed draft. The local catalog is the
+     * server-side allowlist (admin-managed, PriceSync keeps it in step with
+     * Stripe). Returns the row's primary key; throws otherwise.
+     */
+    public static function clientSubscriptionPriceId($priceId): int
+    {
+        $id = \is_numeric($priceId) ? (int) $priceId : 0;
+        $row = $id > 0 ? StripeDb::query('StripePrice')::create()->findPk($id) : null;
+        if ($row === null
+            || !(bool) $row->getIsActive()
+            || (string) $row->getType() === 'one_time'
+            || (string) $row->getStripePriceId() === '') {
+            throw new \RuntimeException('This plan is not available');
+        }
+        return (int) $row->getPrimaryKey();
+    }
+
     private static function customerForRecord(object $rec, array $entry, StripeGateway $gw): object
     {
         $clientQ  = StripeDb::query($entry['client_entity']);
@@ -246,6 +315,11 @@ final class CheckoutService
                     throw new \RuntimeException('Price not found or not pushed to Stripe — use the Prices screen first');
                 }
                 $params['line_items'] = [['quantity' => 1, 'price' => $priceRow->getStripePriceId()]];
+                // What the session will actually collect is the catalog
+                // price, so that is what the ledger row records as owed —
+                // the webhook compares amount_total/currency against it.
+                $amount   = (int) $priceRow->getAmount();
+                $currency = \strtolower((string) $priceRow->getCurrency());
             } else {
                 $params['line_items'] = [[
                     'quantity'   => 1,

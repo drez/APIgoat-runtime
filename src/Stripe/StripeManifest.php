@@ -40,9 +40,9 @@ final class StripeManifest
         return \is_string($key) && \str_starts_with($key, 'sk_live_');
     }
 
-    /** Test seam. */
-    public static function reset(): void
+    /** Test seam: clear the cache, or pin a manifest (['payables' => …]). */
+    public static function reset(?array $manifest = null): void
     {
-        self::$cache = null;
+        self::$cache = $manifest;
     }
 }

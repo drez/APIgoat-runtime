@@ -85,7 +85,18 @@ final class WebhookHandler
         }
         if (($session['payment_status'] ?? '') === 'paid') {
             $pay->setStatus('succeeded');
-            self::flipPaidFlag($pay);
+            // Subscription sessions are priced by a server-selected recurring
+            // catalog price (trials/coupons/proration make amount_total differ
+            // from any stored figure), so only payment-mode sessions are
+            // amount-checked against the ledger row written at creation.
+            $mismatch = (($session['mode'] ?? 'payment') === 'subscription')
+                ? null
+                : self::amountMismatch($pay, $session['amount_total'] ?? null, $session['currency'] ?? null);
+            if ($mismatch === null) {
+                self::flipPaidFlag($pay);
+            } else {
+                self::refuseFlip($pay, 'checkout ' . ($session['id'] ?? '?'), $mismatch);
+            }
         }
         $pay->save();
         self::captureDefaultMethod($session);
@@ -110,25 +121,73 @@ final class WebhookHandler
             if (!empty($charge['payment_method_details']['type'])) {
                 $pay->setPaymentMethodType((string) $charge['payment_method_details']['type']);
             }
-            self::flipPaidFlag($pay);
+            $mismatch = self::amountMismatch($pay, $intent['amount_received'] ?? ($intent['amount'] ?? null), $intent['currency'] ?? null);
+            if ($mismatch === null) {
+                self::flipPaidFlag($pay);
+            } else {
+                self::refuseFlip($pay, 'intent ' . ($intent['id'] ?? '?'), $mismatch);
+            }
         } elseif ($status === 'failed') {
             $pay->setErrorMessage(\substr((string) ($intent['last_payment_error']['message'] ?? 'Payment failed'), 0, 500));
         }
         $pay->save();
     }
 
-    private static function flipPaidFlag(object $pay): void
+    /**
+     * Why a paid Stripe object must NOT mark the payable paid, or null when it
+     * may: the amount (minor units) and currency Stripe collected must equal
+     * what the ledger row recorded as owed when the session / intent was
+     * created server-side (review-3 #6). The ledger row is server-owned
+     * (set_readonly_columns), so it is the trusted figure. Pure.
+     */
+    public static function amountMismatch(object $pay, $paidAmount, $paidCurrency): ?string
+    {
+        $owedAmount   = (int) $pay->getAmount();
+        $owedCurrency = \strtolower((string) $pay->getCurrency());
+        if ($paidAmount === null || $paidAmount === '' || !\is_numeric($paidAmount)) {
+            return 'no amount on the Stripe object';
+        }
+        if ((int) $paidAmount !== $owedAmount) {
+            return 'amount ' . (int) $paidAmount . ' != owed ' . $owedAmount;
+        }
+        if ($owedCurrency === '' || \strtolower((string) $paidCurrency) !== $owedCurrency) {
+            return 'currency ' . \strtolower((string) $paidCurrency) . ' != owed ' . $owedCurrency;
+        }
+        return null;
+    }
+
+    private static function refuseFlip(object $pay, string $what, string $why): void
+    {
+        \error_log('[stripe] ' . $what . ' for ' . $pay->getPayableTable() . '#' . $pay->getPayableId()
+            . ': ' . $why . ' — payable NOT marked paid');
+        $pay->setErrorMessage(\substr('Not marked paid: ' . $why, 0, 500));
+    }
+
+    /**
+     * 0 → 1 on the payable's paid flag as ONE conditional UPDATE (review-3
+     * #6): only a row whose flag is still 0 (or NULL) flips, so a duplicate /
+     * replayed delivery or a second paid session never re-grants, and a
+     * consumed grant (2, the reconcilers' state) is never reset to 1.
+     * Returns true when this call flipped it (affected rows == 1).
+     */
+    public static function flipPaidFlag(object $pay): bool
     {
         $entry = StripeManifest::payable((string) $pay->getPayableTable());
         if ($entry === null || $entry['paid_flag_setter'] === null) {
-            return;
+            return false;
         }
-        $q   = StripeDb::query($entry['entity']);
-        $rec = $q::create()->findPk((int) $pay->getPayableId());
-        if ($rec !== null) {
-            $rec->{$entry['paid_flag_setter']}(1);
-            $rec->save();
+        $pk = (int) $pay->getPayableId();
+        if ($pk <= 0) {
+            return false;   // renewal ledger rows (payable_id 0) pay for no row
         }
+        $col    = \substr((string) $entry['paid_flag_setter'], 3);   // setIsPaid → IsPaid
+        $filter = 'filterBy' . $col;
+        $q      = StripeDb::query($entry['entity']);
+        $affected = (int) $q::create()->filterByPrimaryKey($pk)->{$filter}(0)->update([$col => 1]);
+        if ($affected !== 1) {
+            $affected = (int) $q::create()->filterByPrimaryKey($pk)->{$filter}(null, \Criteria::ISNULL)->update([$col => 1]);
+        }
+        return $affected === 1;
     }
 
     private static function captureDefaultMethod(array $session): void
