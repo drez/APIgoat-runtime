@@ -547,7 +547,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
      */
     private function getImpersonateIcon()
     {
-        if (empty($_SESSION[_AUTH_VAR]) || ! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+        if (empty($_SESSION[_AUTH_VAR]) || ! \ApiGoat\Middlewares\AuthyMiddleware::canSwitchUser($_SESSION[_AUTH_VAR])) {
             return '';
         }
         $inlineStyle = 'width:32px;height:32px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:#8898aa;background:transparent;border:none;cursor:pointer;font-size:18px;padding:0;line-height:1;';
@@ -564,7 +564,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
      */
     private function getImpersonatePanel()
     {
-        if (empty($_SESSION[_AUTH_VAR]) || ! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+        if (empty($_SESSION[_AUTH_VAR]) || ! \ApiGoat\Middlewares\AuthyMiddleware::canSwitchUser($_SESSION[_AUTH_VAR])) {
             return '';
         }
 

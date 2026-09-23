@@ -37,7 +37,8 @@ class IarcAutoc
         if (! isset($_SESSION[_AUTH_VAR]) || ! is_object($_SESSION[_AUTH_VAR])) {
             return ['count' => 0, 'data' => [], '_why' => 'no_session'];
         }
-        if (! $_SESSION[_AUTH_VAR]->get('isRoot')) {
+        // Root, or a session a root switched into (so it can switch on/back).
+        if (! \ApiGoat\Middlewares\AuthyMiddleware::canSwitchUser($_SESSION[_AUTH_VAR])) {
             return ['count' => 0, 'data' => [], '_why' => 'not_root'];
         }
 

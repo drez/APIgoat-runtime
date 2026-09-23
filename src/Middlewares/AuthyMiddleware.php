@@ -108,6 +108,24 @@ class AuthyMiddleware implements MiddlewareInterface
             return $ApiResponse->getResponse();
         }
 
+        $csrfFailure = $this->checkCsrf($request);
+        if ($csrfFailure !== null) {
+            return $csrfFailure;
+        }
+
+        $unsafeGet = $this->checkMutatingGet($request);
+        if ($unsafeGet !== null) {
+            return $unsafeGet;
+        }
+
+        // A switch changes who is asking: re-judge the route as the new user
+        // ($access was computed for the pre-switch session above).
+        if ($this->checkUserSwitch($request)) {
+            $access = $this->checkPrivileges($request);
+        }
+
+        // After the switch, so an impersonating root can switch back from a
+        // target the gate refuses; the gate then judges the switched session.
         if (self::backendDenied(
             ! empty(\ApiGoat\Utility\Settings::load()['backend_admin_only']),
             $_SESSION[_AUTH_VAR],
@@ -121,21 +139,17 @@ class AuthyMiddleware implements MiddlewareInterface
                 return $ApiResponse->getResponse();
             }
             $response = new Response();
-            $response->getBody()->write('<p>' . htmlspecialchars($message, ENT_QUOTES) . '</p><p><a href="' . htmlspecialchars(_SUB_DIR_URL . 'Authy/logout', ENT_QUOTES) . '">' . htmlspecialchars(_('Log out'), ENT_QUOTES) . '</a></p>');
+            // Impersonating: offer the way back (a switch runs before this gate).
+            $back = '';
+            $impersonator = self::impersonatorId($_SESSION[_AUTH_VAR]);
+            if ($impersonator !== null) {
+                $backUrl = _SUB_DIR_URL . 'admin?iarc=' . $impersonator . '&iarc_csrf=' . rawurlencode((string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? ''));
+                $back = ' · <a href="' . htmlspecialchars($backUrl, ENT_QUOTES) . '">' . htmlspecialchars(_('Stop impersonating'), ENT_QUOTES) . '</a>';
+            }
+            $response->getBody()->write('<p>' . htmlspecialchars($message, ENT_QUOTES) . '</p><p><a href="' . htmlspecialchars(_SUB_DIR_URL . 'Authy/logout', ENT_QUOTES) . '">' . htmlspecialchars(_('Log out'), ENT_QUOTES) . '</a>' . $back . '</p>');
             return $response->withHeader('Cache-Control', 'no-store')->withStatus(403);
         }
 
-        $csrfFailure = $this->checkCsrf($request);
-        if ($csrfFailure !== null) {
-            return $csrfFailure;
-        }
-
-        $unsafeGet = $this->checkMutatingGet($request);
-        if ($unsafeGet !== null) {
-            return $unsafeGet;
-        }
-
-        $this->checkUserSwitch($request);
 
        // $access = $this->checkPrivileges($request);
         if (false !== $access) {
@@ -301,10 +315,30 @@ class AuthyMiddleware implements MiddlewareInterface
         return $ApiResponse->getResponse();
     }
 
-    private function checkUserSwitch($request)
+    /**
+     * The root user behind an impersonated session, or null. Set only by a
+     * switch (checkUserSwitch); it is what lets the impersonated session
+     * switch again or back while carrying the TARGET's real rights.
+     */
+    public static function impersonatorId($session): ?int
     {
-        if (! $_SESSION[_AUTH_VAR]->get('isRoot')) {
-            return;
+        if (! is_object($session) || ! isset($session->sessVar) || ! is_array($session->sessVar)) {
+            return null;
+        }
+        $id = (int) ($session->sessVar['ImpersonatorId'] ?? 0);
+        return $id > 0 ? $id : null;
+    }
+
+    /** Root, or a session a root switched into: may use the impersonate switch. */
+    public static function canSwitchUser($session): bool
+    {
+        return is_object($session) && ($session->get('isRoot') || self::impersonatorId($session) !== null);
+    }
+
+    private function checkUserSwitch($request): bool
+    {
+        if (! self::canSwitchUser($_SESSION[_AUTH_VAR])) {
+            return false;
         }
 
         if (empty($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'])) {
@@ -315,29 +349,50 @@ class AuthyMiddleware implements MiddlewareInterface
         }
 
         if (! isset($this->args['data']['iarc']) || ! $this->args['data']['iarc']) {
-            return;
+            return false;
         }
 
         $submittedCsrf = $this->args['data']['iarc_csrf'] ?? '';
         $sessionCsrf   = (string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? '');
         if ($submittedCsrf === '' || $sessionCsrf === '' || ! hash_equals($sessionCsrf, (string) $submittedCsrf)) {
             error_log('iarc switch rejected: csrf mismatch from ' . $_SERVER['REMOTE_ADDR'] . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
-            return;
+            return false;
         }
 
         $authyObj = \App\AuthyQuery::create()->findPk($this->args['data']['iarc']);
         if (! $authyObj || ! $authyObj->getIdAuthy()) {
-            return;
+            return false;
         }
 
-        $originalRootId     = $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'];
-        $targetUsername     = $authyObj->getUsername();
+        // The root behind this switch: the impersonator when already switched,
+        // else the (root) session user. Re-checked against the DB on every
+        // switch, so a demoted root loses the switch even mid-impersonation.
+        $originalRootId = self::impersonatorId($_SESSION[_AUTH_VAR]) ?? (int) $_SESSION[_AUTH_VAR]->get('id');
+        $rootObj        = \App\AuthyQuery::create()->findPk($originalRootId);
+        if (! $rootObj || $rootObj->getIsRoot() !== 'Yes') {
+            error_log('iarc switch rejected: impersonator ' . $originalRootId . ' is not root');
+            unset($_SESSION[_AUTH_VAR]->sessVar['ImpersonatorId']);
+            return false;
+        }
+        $targetUsername = $authyObj->getUsername();
 
+        // The switched session carries the TARGET's real rights (root only if
+        // the target is root) — it used to force isRoot=true, so a root viewing
+        // "as" a member bypassed every row scope and the backend_admin_only
+        // gate and never saw what that user sees. Only the impersonator id is
+        // kept, to allow switching again or back.
         $AuthyForm = new \App\AuthyService($request, null, $this->args['data']);
         $AuthyForm->setSession($authyObj, $targetUsername);
-        $_SESSION[_AUTH_VAR]->set('isRoot', true);
-        $_SESSION[_AUTH_VAR]->sessVar['IdAuthy']        = $this->args['data']['iarc'];
+        if ((int) $authyObj->getIdAuthy() !== $originalRootId) {
+            $_SESSION[_AUTH_VAR]->sessVar['ImpersonatorId'] = $originalRootId;
+        } else {
+            unset($_SESSION[_AUTH_VAR]->sessVar['ImpersonatorId']);
+        }
+        $_SESSION[_AUTH_VAR]->sessVar['IdAuthy']        = (int) $authyObj->getIdAuthy();
         $_SESSION[_AUTH_VAR]->sessVar['OriginalRootId'] = $originalRootId;
+        // Rotate: the switch token travels in a GET URL (UI + the gate's
+        // "Stop impersonating" link), so a used one must not be replayable.
+        $_SESSION[_AUTH_VAR]->sessVar['IarcCsrf']       = bin2hex(random_bytes(16));
 
         try {
             $al = new \App\AuthyLog();
@@ -350,6 +405,7 @@ class AuthyMiddleware implements MiddlewareInterface
         } catch (\Exception $e) {
             error_log('iarc switch audit log failed: ' . $e->getMessage());
         }
+        return true;
     }
 
     /**

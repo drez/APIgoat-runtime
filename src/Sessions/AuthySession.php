@@ -566,7 +566,10 @@ class AuthySession
 
     public function setRights(array $rights)
     {
-        include_once _BASE_DIR . "config/permissions.php";
+        // include, not include_once: $omMap is a local of THIS call, so a
+        // second login in the same process (switch user, WS server, tests)
+        // got no map and hasParentMenu(null) fataled.
+        include _BASE_DIR . "config/permissions.php";
         foreach ($rights as $group => $acls) {
             if (is_array($acls)) {
                 foreach ($acls as $model => $acl) {
