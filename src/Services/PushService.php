@@ -27,7 +27,8 @@ class PushService extends Service
 
     public function getApiResponse()
     {
-        $userId = (int) ($_SESSION[\_AUTH_VAR]->get('id') ?? 0);
+        $sess = $_SESSION[\_AUTH_VAR] ?? null;
+        $userId = ($sess && $sess->get('connected') === 'YES') ? (int) ($sess->get('id') ?? 0) : 0;
         if (!$userId) {
             return $this->respond(['status' => 'failure', 'errors' => ['Not authenticated']], 401);
         }
@@ -52,20 +53,60 @@ class PushService extends Service
             $platform = 'ios';
         }
 
-        // Upsert on the unique token: an existing token re-registered by another
-        // user is reassigned (device handed over); else insert.
-        $device = \App\PushDeviceQuery::create()->filterByToken($token)->findOne();
-        if (!$device) {
-            $device = new \App\PushDevice();
-            $device->setToken($token);
+        try {
+            self::bindDevice($userId, $token, $platform);
+        } catch (\Throwable $e) {
+            // e.g. a concurrent insert of the same token hit the UNIQUE index.
+            error_log('PushService: register failed for user ' . $userId . ': ' . $e->getMessage());
+            return $this->respond(['status' => 'failure', 'errors' => ['Could not register the device']], 500);
         }
-        $device->setIdAuthy($userId);
+
+        return $this->respond(['status' => 'success', 'data' => ['registered' => true]]);
+    }
+
+    /**
+     * Bind an Expo push token to the (already authenticated, connected)
+     * caller. The token is device-bound: a token already bound to ANOTHER
+     * user means the device changed hands (sign-out / sign-in on a shared
+     * phone). That old binding is DELETED and a fresh row inserted for the
+     * caller — the previous owner's row (and any per-row state on it) is
+     * never mutated in place and carried over, and nothing about the
+     * previous owner reaches the client: the response is identical for
+     * insert / refresh / rebind. The rebind is logged server-side.
+     *
+     * $find / $create are test seams (default: the generated Propel classes).
+     *
+     * @return string 'inserted' | 'refreshed' | 'rebound'
+     */
+    public static function bindDevice(int $userId, string $token, string $platform, ?callable $find = null, ?callable $create = null): string
+    {
+        if ($userId <= 0) {
+            throw new \InvalidArgumentException('bindDevice requires an authenticated user');
+        }
+        $find   ??= static fn (string $t) => \App\PushDeviceQuery::create()->filterByToken($t)->findOne();
+        $create ??= static fn () => new \App\PushDevice();
+
+        $outcome = 'inserted';
+        $device  = $find($token);
+        if ($device && (int) $device->getIdAuthy() === $userId) {
+            $outcome = 'refreshed';
+        } elseif ($device) {
+            $previous = (int) $device->getIdAuthy();
+            $device->delete();
+            $device  = null;
+            $outcome = 'rebound';
+            error_log('PushService: push token rebound from user ' . $previous . ' to user ' . $userId);
+        }
+        if (!$device) {
+            $device = $create();
+            $device->setToken($token);
+            $device->setIdAuthy($userId);
+        }
         if (method_exists($device, 'setPlatform')) {
             $device->setPlatform($platform);
         }
         $device->save();
-
-        return $this->respond(['status' => 'success', 'data' => ['registered' => true]]);
+        return $outcome;
     }
 
     private function respond(array $body, ?int $status = null)
