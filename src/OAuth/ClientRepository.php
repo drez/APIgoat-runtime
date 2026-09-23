@@ -18,6 +18,7 @@ class ClientRepository implements ClientRepositoryInterface
         $c->setName((string) $row->getName());
         $c->setRedirectUri(json_decode((string) $row->getRedirectUris(), true) ?: []);
         $c->setConfidential($row->getIsConfidential() === 'Yes');
+        $c->setRegisteredScopes(method_exists($row, 'getScopes') ? $row->getScopes() : null);
         return $c;
     }
 

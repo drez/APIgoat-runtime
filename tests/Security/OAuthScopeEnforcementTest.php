@@ -1,8 +1,11 @@
 <?php
 // OAuth scopes were issued and shown on the consent page but read nowhere: a
-// token granted crm:read alone could write. Enforcement is deliberately
-// narrow — ONLY "has crm:read, lacks crm:write" restricts; no scopes / legacy
-// scope names / non-bearer requests behave exactly as before.
+// token granted crm:read alone could write. Since 2026-09-23 bearer tokens
+// are default-deny: writes need crm:write, reads crm:read or crm:write; a
+// token with no crm:* scope (none, offline_access only, legacy "read write")
+// is refused. Non-bearer requests (granted() null) are untouched, and
+// ScopeRepository::finalizeScopes gives a client that requests no crm:* scope
+// its registered ones.
 namespace ApiGoat\Sessions {
     if (!class_exists(AuthySession::class, false)) {
         class AuthySession
@@ -61,23 +64,58 @@ final class OAuthScopeEnforcementTest extends TestCase
         TokenScopes::set(null);
     }
 
-    public function test_only_read_without_write_is_read_only(): void
+    public function test_default_deny_read_and_write(): void
     {
+        // [scopes, allowsRead, allowsWrite, readOnly]
         $cases = [
-            [null, false],                                           // not a bearer request
-            [[], false],                                             // client requested no scope
-            [['read'], false],                                       // pre-"crm:" legacy tokens
-            [['read', 'write'], false],
-            [['offline_access'], false],
-            [['crm:read', 'crm:write', 'offline_access'], false],    // every first-party client
-            [['crm:write'], false],
-            [['crm:read'], true],
-            [['crm:read', 'offline_access'], true],
+            [null, true, true, false],                                          // not a bearer request
+            [[], false, false, false],                                          // no scope: denied (was unrestricted)
+            [['read'], false, false, false],                                    // pre-"crm:" legacy tokens
+            [['read', 'write'], false, false, false],
+            [['offline_access'], false, false, false],
+            [['crm:read', 'crm:write', 'offline_access'], true, true, false],   // every first-party client
+            [['crm:write'], true, true, false],                                 // write implies read
+            [['crm:read'], true, false, true],
+            [['crm:read', 'offline_access'], true, false, true],
         ];
-        foreach ($cases as [$scopes, $expected]) {
+        foreach ($cases as [$scopes, $read, $write, $ro]) {
             TokenScopes::set($scopes);
-            $this->assertSame($expected, TokenScopes::readOnly(), json_encode($scopes));
+            $this->assertSame($read, TokenScopes::allowsRead(), 'read ' . json_encode($scopes));
+            $this->assertSame($write, TokenScopes::allowsWrite(), 'write ' . json_encode($scopes));
+            $this->assertSame($ro, TokenScopes::readOnly(), 'ro ' . json_encode($scopes));
+            $this->assertSame($write ? null : 'crm:write', TokenScopes::missingFor(true));
+            $this->assertSame($read ? null : 'crm:read', TokenScopes::missingFor(false));
         }
+    }
+
+    public function test_finalize_scopes_defaults_and_clamps(): void
+    {
+        $full = ['crm:read', 'crm:write', 'offline_access'];
+        $f = [\ApiGoat\OAuth\ScopeRepository::class, 'finalIdentifiers'];
+        // real clients: request == registered → unchanged
+        $this->assertSame($full, $f($full, $full));
+        // a client requesting no scope gets its registered crm:* scopes
+        $this->assertSame(['crm:read', 'crm:write'], $f([], $full));
+        $this->assertSame(['offline_access', 'crm:read', 'crm:write'], $f(['offline_access'], $full));
+        // an explicitly narrow request stays narrow
+        $this->assertSame(['crm:read', 'offline_access'], $f(['crm:read', 'offline_access'], $full));
+        // never more than registered
+        $this->assertSame(['crm:read'], $f(['crm:read', 'crm:write'], ['crm:read']));
+        // unknown identifiers dropped
+        $this->assertSame(['crm:read'], $f(['crm:read', 'admin'], $full));
+        // legacy client row without registered scopes → DEFAULT
+        $this->assertSame(['crm:read', 'crm:write'], $f([], null));
+        $this->assertSame(['crm:read'], $f(['crm:read'], null));
+    }
+
+    public function test_finalize_scopes_reads_the_client_registration(): void
+    {
+        $client = new \ApiGoat\OAuth\Entities\ClientEntity();
+        $client->setIdentifier('c1');
+        $client->setRegisteredScopes('crm:read  offline_access');
+        $repo = new \ApiGoat\OAuth\ScopeRepository();
+        $out = $repo->finalizeScopes([], 'authorization_code', $client);
+        $this->assertSame(['crm:read'], array_map(fn ($s) => $s->getIdentifier(), $out));
     }
 
     public function test_scopes_are_read_from_a_league_jwt_payload(): void
@@ -107,10 +145,16 @@ final class OAuthScopeEnforcementTest extends TestCase
         $this->assertFalse(ToolRegistry::isReadTool(new \ApiGoat\Mcp\Tools\CrmUpdate()));
         $this->assertFalse(ToolRegistry::isReadTool(new \ApiGoat\Mcp\Tools\CrmDelete()));
 
-        foreach ([null, [], ['crm:read', 'crm:write'], ['read']] as $scopes) {
+        foreach ([null, ['crm:read', 'crm:write'], ['crm:write']] as $scopes) {
             TokenScopes::set($scopes);
             $this->assertTrue($registry->granted($write, $admin), json_encode($scopes));
             $this->assertTrue($registry->granted($ungated, $admin), json_encode($scopes));
+        }
+        // default deny: no crm:* scope reaches nothing, not even read tools
+        foreach ([[], ['read'], ['offline_access']] as $scopes) {
+            TokenScopes::set($scopes);
+            $this->assertFalse($registry->granted($write, $admin), json_encode($scopes));
+            $this->assertFalse($registry->granted($read, $admin), json_encode($scopes));
         }
     }
 
@@ -123,6 +167,18 @@ final class OAuthScopeEnforcementTest extends TestCase
         foreach (['GET', 'HEAD', 'OPTIONS'] as $m) {
             $this->assertFalse(OAuthResourceMiddleware::refusedByScope(true, $m), $m);
         }
+    }
+
+    public function test_rest_missing_scope_per_method(): void
+    {
+        TokenScopes::set(['crm:read']);
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('POST'));
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET'));
+        TokenScopes::set([]);
+        $this->assertSame('crm:read', OAuthResourceMiddleware::missingScope('GET'));
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('DELETE'));
+        TokenScopes::set(null);
+        $this->assertNull(OAuthResourceMiddleware::missingScope('DELETE'), 'non-bearer untouched');
     }
 }
 }

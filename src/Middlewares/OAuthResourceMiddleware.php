@@ -81,7 +81,18 @@ class OAuthResourceMiddleware implements MiddlewareInterface
     /** Pure predicate (unit-tested): a read-only token may only use safe HTTP methods. */
     public static function refusedByScope(bool $tokenIsReadOnly, string $method): bool
     {
-        return $tokenIsReadOnly && !in_array(strtoupper($method), ['GET', 'HEAD', 'OPTIONS'], true);
+        return $tokenIsReadOnly && self::isWriteMethod($method);
+    }
+
+    public static function isWriteMethod(string $method): bool
+    {
+        return !in_array(strtoupper($method), ['GET', 'HEAD', 'OPTIONS'], true);
+    }
+
+    /** The scope the CURRENT bearer token lacks for $method, or null (TokenScopes). */
+    public static function missingScope(string $method): ?string
+    {
+        return \ApiGoat\OAuth\TokenScopes::missingFor(self::isWriteMethod($method));
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -105,18 +116,20 @@ class OAuthResourceMiddleware implements MiddlewareInterface
 
         $status = BearerSessionAuthenticator::authenticate($request);
 
-        // OAuth scope: the one authorization decision made here. A token granted
-        // crm:read WITHOUT crm:write is refused on anything but a safe method;
-        // every other token (incl. one with no scopes recorded) is untouched.
-        if ($status === BearerSessionAuthenticator::AUTHENTICATED
-            && self::refusedByScope(\ApiGoat\OAuth\TokenScopes::readOnly(), $request->getMethod())) {
+        // OAuth scope: the one authorization decision made here (default
+        // deny, see TokenScopes): a non-safe method needs crm:write, anything
+        // else crm:read or crm:write.
+        $gcMissingScope = $status === BearerSessionAuthenticator::AUTHENTICATED
+            ? self::missingScope($request->getMethod())
+            : null;
+        if ($gcMissingScope !== null) {
             $response = new Response();
             $response->getBody()->write(json_encode(
                 ['status' => 'failure', 'errors' => ['insufficient_scope']],
                 JSON_UNESCAPED_SLASHES
             ));
             return $response->withStatus(403)
-                ->withHeader('WWW-Authenticate', 'Bearer error="insufficient_scope", scope="' . \ApiGoat\OAuth\TokenScopes::WRITE . '"')
+                ->withHeader('WWW-Authenticate', 'Bearer error="insufficient_scope", scope="' . $gcMissingScope . '"')
                 ->withHeader('Content-Type', 'application/json');
         }
 

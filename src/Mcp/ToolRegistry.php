@@ -172,10 +172,10 @@ class ToolRegistry
      */
     public function granted(McpTool $tool, AuthySession $session): bool
     {
-        // OAuth scope first: a token granted crm:read WITHOUT crm:write may only
-        // reach read tools, whatever rights its user holds. Tokens with no
-        // scopes recorded are unrestricted (see OAuth\TokenScopes).
-        if (\ApiGoat\OAuth\TokenScopes::readOnly() && !self::isReadTool($tool)) {
+        // OAuth scope first (default deny, see OAuth\TokenScopes): a read tool
+        // needs crm:read or crm:write, any other tool crm:write — whatever
+        // rights the user holds. Non-bearer sessions are unaffected.
+        if (\ApiGoat\OAuth\TokenScopes::missingFor(!self::isReadTool($tool)) !== null) {
             return false;
         }
 
