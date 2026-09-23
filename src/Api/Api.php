@@ -166,6 +166,108 @@ class Api
     protected $outputDenyColumns = self::CREDENTIAL_COLUMNS;
 
     /**
+     * Per-model SECRET columns (review-3 #12), normalised like
+     * CREDENTIAL_COLUMNS: the emitter's SecretColumns::forTable() list
+     * (Campaign.EventSecret, Quote/Invoice.PublicToken, PushDevice.Token, …),
+     * handed in as the 4th constructor argument by the generated service.
+     * Merged into $outputDenyColumns (never in a response) and refused as a
+     * select / filter / order / groupby reference (no extraction oracle).
+     * Empty for a service emitted before the list existed — that service keeps
+     * the credential-only behaviour.
+     *
+     * @var string[]
+     */
+    protected $secretColumns = [];
+
+    /** Runtime column normalisation: lowercase, underscores dropped. */
+    public static function normalizeColumn($name): string
+    {
+        return strtolower(str_replace('_', '', (string) $name));
+    }
+
+    /** The normalised per-model secret columns this Api instance enforces. */
+    public function getSecretColumns(): array
+    {
+        return $this->secretColumns;
+    }
+
+    /**
+     * First select / filter / order / groupby reference in the request that
+     * names one of this model's secret columns, or null. Every dot segment and
+     * an aggregate's argument are tested (same shape as
+     * QueryBuilder::isCredentialColumnName), in the raw query, the in-process
+     * normalized_query (MCP) and a write's data.query. A query string delivers
+     * select/filter as JSON text, so strings are decoded first.
+     */
+    protected function secretQueryRef($request): ?string
+    {
+        if ($this->secretColumns === [] || !is_array($request)) {
+            return null;
+        }
+        $queries = [];
+        foreach ([$request['query'] ?? null, $request['normalized_query'] ?? null, $request['data']['query'] ?? null] as $q) {
+            if (is_array($q)) {
+                $queries[] = $q;
+            }
+        }
+        $refs = [];
+        foreach ($queries as $q) {
+            $sel = isset($q['select']) ? \ApiGoat\Api\QueryBuilder::decodeJsonParam($q['select']) : null;
+            foreach ((array) $sel as $s) {
+                $refs[] = is_array($s) ? ($s[0] ?? null) : $s;
+            }
+            $filter = $q['filter'] ?? null;
+            if (is_string($filter)) {
+                $filter = \ApiGoat\Api\QueryBuilder::decodeJsonParam($filter);
+            }
+            foreach ((array) $filter as $rows) {
+                if (is_string($rows)) {
+                    $rows = \ApiGoat\Api\QueryBuilder::decodeJsonParam($rows);
+                }
+                if (!is_array($rows) || $rows === []) {
+                    continue;
+                }
+                if (!is_array($rows[0] ?? null)) {
+                    $rows = [$rows];
+                }
+                foreach ($rows as $row) {
+                    $refs[] = is_array($row) ? ($row[0] ?? null) : null;
+                }
+            }
+            foreach ((array) ($q['order'] ?? []) as $o) {
+                $refs[] = is_array($o) ? ($o[0] ?? null) : $o;
+            }
+            foreach ((array) ($q['groupby'] ?? []) as $g) {
+                $refs[] = $g;
+            }
+        }
+        foreach ($refs as $ref) {
+            if (!is_string($ref) || $ref === '') {
+                continue;
+            }
+            $c = trim($ref);
+            if (preg_match('/^(?:COUNT|SUM|AVG|MIN|MAX)\(\s*(?:DISTINCT\s+)?(.+?)\s*\)$/i', $c, $m)) {
+                $c = $m[1];
+            }
+            foreach (explode('.', $c) as $segment) {
+                if (in_array(preg_replace('/[^a-z0-9]/', '', strtolower($segment)), $this->secretColumns, true)) {
+                    return $ref;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Failure envelope for a query naming a secret column (null = none). */
+    private function refuseSecretQuery($request): ?array
+    {
+        if ($this->secretQueryRef($request) === null) {
+            return null;
+        }
+        return ['status' => 'failure', 'error' => 'Invalid parameter: column is not queryable'];
+    }
+
+    /**
      * Strip outputDenyColumns from an API result set (array of row arrays, or a
      * single row array). Defense in depth — independent of RBAC / select.
      */
@@ -196,8 +298,20 @@ class Api
      * @param string|object $ServiceWrapper
      * @param array|null $editableFields per-form editable column allowlist
      */
-    public function __construct(string $tablename, string|object|null $ServiceWrapper = null, ?array $editableFields = null)
+    public function __construct(string $tablename, string|object|null $ServiceWrapper = null, ?array $editableFields = null, ?array $secretFields = null)
     {
+        // Review-3 #12: the generated service's per-model secret list. A
+        // service emitted before this argument existed passes three and keeps
+        // the credential-only output policy.
+        if ($secretFields) {
+            foreach ($secretFields as $f) {
+                $n = self::normalizeColumn($f);
+                if ($n !== '' && !in_array($n, $this->secretColumns, true)) {
+                    $this->secretColumns[] = $n;
+                }
+            }
+            $this->outputDenyColumns = array_values(array_unique(array_merge($this->outputDenyColumns, $this->secretColumns)));
+        }
         $this->tablename = \camelize($tablename, true);
         $this->queryObjName = "\App\\" . $this->tablename . "Query";
         if ($ServiceWrapper) {
@@ -476,6 +590,13 @@ class Api
             return $this->response;
         }
 
+        // A query-driven update filtering on a secret column is the same
+        // oracle as a read ("Found no result" vs an update).
+        if ($this->secretQueryRef($request) !== null) {
+            $this->response['error'] = 'Invalid parameter: column is not queryable';
+            return $this->response;
+        }
+
         #one entry, or multiple with querybuilder
 
         $data = $this->filterRequest($request['data']);
@@ -613,6 +734,9 @@ class Api
         // the generated catch-all CRUD route carrying rbac_public == 'passed'.
         // The invariant: a Public rule may waive owner/tenant ACL on reads of
         // ordinary tables, never on a table that holds credentials.
+        if (($refused = $this->refuseSecretQuery($data)) !== null) {
+            return $refused;
+        }
         if ($data['rbac_public'] != 'passed' || $this->isCredentialTable()) {
             $acls = $this->authorize($this->tablename, 'r');
             if (!$acls) {
@@ -704,6 +828,9 @@ class Api
         // ordinary tables, never on a table that holds credentials.
         // Identical hole to getJson's — the single-row read is reached by the
         // same catch-all route with an id segment, so it carries the same gate.
+        if (($refused = $this->refuseSecretQuery($data)) !== null) {
+            return $refused;
+        }
         if ($data['rbac_public'] != 'passed' || $this->isCredentialTable()) {
             $acls = $this->authorize($this->tablename, 'r');
             if (!$acls) {
@@ -749,6 +876,9 @@ class Api
         // SECURITY: delete ALWAYS runs authorize(), regardless of rbac_public.
         // Public status may waive owner/tenant ACL on READS only, never on
         // create/update/delete (see setJson).
+        if (($refused = $this->refuseSecretQuery($data)) !== null) {
+            return $refused;
+        }
         $acls = $this->authorize($this->tablename, 'd');
 
         if (!$acls || AuthyRowGuard::membershipWriteDenied($this->tablename)) {
