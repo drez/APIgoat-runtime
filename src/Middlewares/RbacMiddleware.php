@@ -48,17 +48,18 @@ class RbacMiddleware implements MiddlewareInterface
     {
         $error = [];
         $this->args = $request->getAttribute('parsed_args');
-        $this->raw_parameters = $request->getUri()->getQuery();
-        if (empty($this->raw_parameters) && isset($this->args['data']['query'])) {
-            $this->raw_parameters = json_encode($this->args['data']['query']);
-        }
         $rawBody = (string)$request->getBody();
         $request->getBody()->rewind();
-        if ($rawBody) {
-            $this->raw_parameters = $this->raw_parameters
-                ? $this->raw_parameters . '&body=' . rawurlencode($rawBody)
-                : $rawBody;
-        }
+        // api_log.raw_parameters: credentials (passwords, tokens, codes,
+        // secrets, csrf) are redacted at any depth, and credential routes
+        // (Authy/auth…, oauth/*) never log their body (review 2026-09-23).
+        $this->raw_parameters = ApiLogRedactor::rawParameters(
+            $request->getUri()->getPath(),
+            $request->getUri()->getQuery(),
+            $this->args['data']['query'] ?? null,
+            $rawBody,
+            $request->getHeaderLine('Content-Type')
+        );
         // The MCP endpoint (api/v[0-9]/mcp) authenticates via the OAuth bearer (resource-server
         // check in McpEndpoint) + per-tool Api::authorize(); it is also jwt-ignored. Its JSON-RPC
         // body varies per call, which defeats api_rbac's body-pattern matching (every shape would
