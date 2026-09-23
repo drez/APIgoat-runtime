@@ -62,6 +62,39 @@ TableVersion::bump('client');
 check('second bump changes it again', TableVersion::get('client') !== $g1, true);
 check('other tables unaffected', TableVersion::get('supplier'), '0');
 
+// ---------------------------------------------------------------- post-commit bump (review-3 #18)
+
+/** Stand-in for PropelPDO: only isInTransaction() matters to TableVersion. */
+class FakeCon
+{
+    public bool $tx = true;
+    public function isInTransaction() { return $this->tx; }
+}
+
+MicroCache::flushLocal();
+$con = new FakeCon();
+TableVersion::bump('ticket', $con);           // inside save()'s transaction
+$pre = MicroCache::counter('gc:gen:' . TableVersion::ns() . ':ticket');
+check('in-transaction bump still bumps now', $pre > 0, true);
+check('in-transaction bump is queued for after commit', TableVersion::pendingTables(), ['ticket']);
+TableVersion::flushPending();
+check('flush while the transaction is open keeps it queued', TableVersion::pendingTables(), ['ticket']);
+check('...and does not bump again yet', MicroCache::counter('gc:gen:' . TableVersion::ns() . ':ticket'), $pre);
+$con->tx = false;                              // $con->commit()
+$post = TableVersion::get('ticket');           // next reader after the commit
+check('first read after commit sees the post-commit generation', $post, (string) ($pre + 1));
+check('queue drained', TableVersion::pendingTables(), []);
+TableVersion::bump('ticket', $con);            // write outside a transaction
+check('bump outside a transaction is immediate, not queued', TableVersion::pendingTables(), []);
+check('...one bump', TableVersion::get('ticket'), (string) ($pre + 2));
+TableVersion::bump('ticket');                  // legacy one-arg emitted call
+check('one-arg bump (older emitted code) unchanged', TableVersion::get('ticket'), (string) ($pre + 3));
+$con->tx = true;
+TableVersion::bump('ticket', $con);
+TableVersion::bump('client', $con);
+TableVersion::flushPending(true);              // shutdown fallback
+check('forced (shutdown) flush drains everything', TableVersion::pendingTables(), []);
+
 // ---------------------------------------------------------------- tenant token
 // Truth table mirrors GoatCheese.php tenantQueryGuard verbatim.
 
@@ -72,7 +105,9 @@ check('tenantToken: connected non-root tenant → t3', TableVersion::tenantToken
 $_SESSION[_AUTH_VAR] = new FakeSession(['connected' => 'YES', 'isRoot' => true, 'id_tenant' => 3]);
 check('tenantToken: root → all (sees every tenant)', TableVersion::tenantToken(), 'all');
 $_SESSION[_AUTH_VAR] = new FakeSession(['connected' => 'YES', 'isRoot' => false, 'id_tenant' => 0]);
-check('tenantToken: falsy id_tenant → all (guard does not filter)', TableVersion::tenantToken(), 'all');
+check('tenantToken: falsy id_tenant → tnone (guard fails closed, never shares root entries)', TableVersion::tenantToken(), 'tnone');
+$_SESSION[_AUTH_VAR] = new FakeSession(['connected' => 'YES', 'isRoot' => false, 'id_tenant' => null]);
+check('tenantToken: null id_tenant → tnone', TableVersion::tenantToken(), 'tnone');
 $_SESSION[_AUTH_VAR] = new FakeSession(['connected' => 'NO', 'isRoot' => false, 'id_tenant' => 3]);
 check('tenantToken: not connected → all', TableVersion::tenantToken(), 'all');
 $_SESSION[_AUTH_VAR] = new FakeSession(['connected' => 'YES', 'isRoot' => false, 'id_tenant' => 3]);

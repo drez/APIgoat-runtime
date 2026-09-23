@@ -13,8 +13,18 @@ use ApiGoat\Sync\Exceptions\ValidationRejected;
  * claimed_at, plus id_tenant).
  *
  * Lifecycle: Pending → Running (atomic claim, safe under overlapping cron
- * drainers) → Done | Pending (deferred with backoff) | Failed. A Running row
- * whose claim is older than STALE_RUNNING_MINUTES is reclaimed on the next drain.
+ * drainers) → Done | Pending (deferred with backoff) | Failed. claimed_at is
+ * the LEASE: a long handler keeps it fresh with heartbeat($row); a Running row
+ * whose lease is older than STALE_RUNNING_MINUTES is reclaimed on the next
+ * drain — which counts an attempt (a job that keeps killing its worker must
+ * end Failed, not loop forever) and marks it Failed at maxAttempts.
+ *
+ * Fencing: attempts doubles as the lease generation (every reclaim bumps it),
+ * plus an optional `claimed_by` column (VARCHAR(64)) holding a per-claim
+ * token when the emitted table has it. A worker whose lease was reclaimed
+ * finds the row no longer matches its (attempts, claimed_by) and does NOT
+ * write its outcome over the new owner's. Without claimed_by the attempts
+ * fence still works; the column only closes the same-attempts corner.
  *
  * Two drain call styles are served so both existing shapes (Sync\SyncQueue's
  * `drain($limit, $handlers)` and apicrm's `register($kind, $h)` + `drain($limit)`)
@@ -40,6 +50,9 @@ class JobQueue
     private array $handlers = [];
 
     private int $maxAttempts;
+
+    /** @var array<int, string> pk => claim token of the rows this worker holds */
+    private array $claimTokens = [];
 
     public function __construct(?int $maxAttempts = null)
     {
@@ -73,6 +86,16 @@ class JobQueue
         }
         $short = substr(strrchr('\\' . ltrim(static::modelClass(), '\\'), '\\'), 1);
         return strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $short));
+    }
+
+    /**
+     * Does the emitted table carry $column? Read off the generated Peer's
+     * column constant (e.g. JobQueuePeer::CLAIMED_BY), so the queue keeps
+     * working on tables emitted before a column was added.
+     */
+    protected static function hasColumn(string $column): bool
+    {
+        return \defined(static::peerClass() . '::' . \strtoupper($column));
     }
 
     /** GoatCheese convention: the pk column is `id_<table>`. */
@@ -224,6 +247,7 @@ class JobQueue
             if (!$this->claim((int) $job->getPrimaryKey())) {
                 continue; // another drainer won the race
             }
+            $leaseAttempts = (int) $job->getAttempts();
             // Keep the in-memory object consistent with the row the claim just wrote,
             // else a later setState('Pending') on defer is a no-op modification.
             $job->setState(static::STATE_RUNNING);
@@ -234,11 +258,17 @@ class JobQueue
                     throw new \RuntimeException('No handler for ' . $job->getKind());
                 }
                 $handler(json_decode((string) $job->getPayloadJson(), true) ?: [], $job);
+                if (!$this->stillOwns($job, $leaseAttempts)) {
+                    continue; // lease reclaimed meanwhile: the new owner decides the outcome
+                }
                 $job->setState(static::STATE_DONE);
                 $job->setLastError(null);
                 $job->save();
                 $stats['ok']++;
             } catch (\Throwable $e) {
+                if (!$this->stillOwns($job, $leaseAttempts)) {
+                    continue; // lease reclaimed meanwhile: the new owner decides the outcome
+                }
                 if ($this->isDeferrable($e)) {
                     // Throttle / transient outage: always defer, NEVER count toward
                     // maxAttempts (attempts stays put — a 429 isn't the job's fault).
@@ -262,6 +292,13 @@ class JobQueue
                     $stats['deferred']++;
                 }
                 $job->save();
+            } finally {
+                unset($this->claimTokens[(int) $job->getPrimaryKey()]);
+                // Commit point between jobs: long-running drainers never reach
+                // a request shutdown, so flush queued cache-generation bumps.
+                if (\class_exists(\ApiGoat\Utility\TableVersion::class, false)) {
+                    \ApiGoat\Utility\TableVersion::flushPending();
+                }
             }
         }
         return $stats;
@@ -273,18 +310,109 @@ class JobQueue
     protected function claim(int $pk): bool
     {
         // state is TINYINT (valueSet index) — bind the translated indexes, not labels.
-        $st = $this->connection()->prepare(
-            'UPDATE ' . static::tableName() . ' SET state = ?, claimed_at = NOW() WHERE ' . static::pkColumn() . ' = ? AND state = ?'
-        );
-        $st->execute([static::stateIndex(static::STATE_RUNNING), $pk, static::stateIndex(static::STATE_PENDING)]);
-        return $st->rowCount() === 1;
+        $token = \bin2hex(\random_bytes(8));
+        if (static::hasColumn('claimed_by')) {
+            $st = $this->connection()->prepare(
+                'UPDATE ' . static::tableName() . ' SET state = ?, claimed_at = NOW(), claimed_by = ? WHERE ' . static::pkColumn() . ' = ? AND state = ?'
+            );
+            $st->execute([static::stateIndex(static::STATE_RUNNING), $token, $pk, static::stateIndex(static::STATE_PENDING)]);
+        } else {
+            $st = $this->connection()->prepare(
+                'UPDATE ' . static::tableName() . ' SET state = ?, claimed_at = NOW() WHERE ' . static::pkColumn() . ' = ? AND state = ?'
+            );
+            $st->execute([static::stateIndex(static::STATE_RUNNING), $pk, static::stateIndex(static::STATE_PENDING)]);
+        }
+        if ($st->rowCount() !== 1) {
+            return false;
+        }
+        $this->claimTokens[$pk] = $token;
+        return true;
     }
 
+    /**
+     * Renew the lease of a job this worker is running. A handler that can run
+     * longer than STALE_RUNNING_MINUTES calls this periodically (the handler
+     * receives the row: `$queue->heartbeat($row)`). Returns false when the
+     * lease is already lost (reclaimed by another drainer) — the handler
+     * should stop; its outcome will not be written either way.
+     */
+    public function heartbeat(object $job): bool
+    {
+        $pk = (int) $job->getPrimaryKey();
+        [$fence, $params] = $this->leaseFence($pk, (int) $job->getAttempts());
+        $st = $this->connection()->prepare(
+            'UPDATE ' . static::tableName() . ' SET claimed_at = NOW() WHERE ' . $fence
+        );
+        $st->execute($params);
+        // rowCount can be 0 for a same-second renewal (MySQL counts CHANGED
+        // rows), so ownership is re-read rather than inferred from it.
+        return $this->stillOwns($job, (int) $job->getAttempts());
+    }
+
+    /**
+     * Is the row still Running under this worker's lease? $attempts is the
+     * attempts value at claim time (a reclaim bumps it). On any read failure
+     * the answer is true: the pre-lease behaviour (write the outcome) is the
+     * safer degradation than silently dropping a finished job's result.
+     */
+    protected function stillOwns(object $job, int $attempts): bool
+    {
+        $pk = (int) $job->getPrimaryKey();
+        try {
+            [$fence, $params] = $this->leaseFence($pk, $attempts);
+            $st = $this->connection()->prepare(
+                'SELECT COUNT(*) FROM ' . static::tableName() . ' WHERE ' . $fence
+            );
+            $st->execute($params);
+            $n = $st->fetchColumn();
+        } catch (\Throwable $e) {
+            return true;
+        }
+        if ($n === false || $n === null) {
+            return true;
+        }
+        if ((int) $n === 1) {
+            return true;
+        }
+        \error_log(\sprintf('[gc-queue] %s #%d: lease lost (reclaimed while running) — outcome not written', static::tableName(), $pk));
+        return false;
+    }
+
+    /** @return array{0: string, 1: array} WHERE clause + params matching this worker's lease on $pk */
+    private function leaseFence(int $pk, int $attempts): array
+    {
+        $sql    = static::pkColumn() . ' = ? AND state = ? AND attempts = ?';
+        $params = [$pk, static::stateIndex(static::STATE_RUNNING), $attempts];
+        if (isset($this->claimTokens[$pk]) && static::hasColumn('claimed_by')) {
+            $sql     .= ' AND claimed_by = ?';
+            $params[] = $this->claimTokens[$pk];
+        }
+        return [$sql, $params];
+    }
+
+    /**
+     * Reclaim Running rows whose lease (claimed_at, renewed by heartbeat)
+     * expired: the worker died or hung. Each reclaim COUNTS an attempt, so a
+     * job that keeps killing its worker ends Failed at maxAttempts instead of
+     * being re-run forever; the bumped attempts also fences the old worker.
+     * MySQL evaluates single-table SET assignments left to right, so state
+     * and last_error read the pre-increment attempts.
+     */
     protected function reclaimStale(): void
     {
         $st = $this->connection()->prepare(
-            'UPDATE ' . static::tableName() . ' SET state = ? WHERE state = ? AND claimed_at < (NOW() - INTERVAL ' . static::STALE_RUNNING_MINUTES . ' MINUTE)'
+            'UPDATE ' . static::tableName()
+            . ' SET state = IF(attempts + 1 >= ?, ?, ?),'
+            . ' last_error = ?,'
+            . ' attempts = attempts + 1'
+            . ' WHERE state = ? AND claimed_at < (NOW() - INTERVAL ' . static::STALE_RUNNING_MINUTES . ' MINUTE)'
         );
-        $st->execute([static::stateIndex(static::STATE_PENDING), static::stateIndex(static::STATE_RUNNING)]);
+        $st->execute([
+            $this->maxAttempts,
+            static::stateIndex(static::STATE_FAILED),
+            static::stateIndex(static::STATE_PENDING),
+            'Reclaimed: lease expired after ' . static::STALE_RUNNING_MINUTES . ' minutes without a heartbeat',
+            static::stateIndex(static::STATE_RUNNING),
+        ]);
     }
 }

@@ -255,8 +255,12 @@ final class JobQueueTest extends TestCase
         JobQueue::enqueue('a', []);
         (new TestJobQueue())->drain(10, ['a' => fn () => null]);
         self::assertSame([
-            ['sql' => 'UPDATE job_queue SET state = ? WHERE state = ? AND claimed_at < (NOW() - INTERVAL 10 MINUTE)', 'params' => [0, 1]],
+            // reclaim counts an attempt and fails at maxAttempts (review-3 #20)
+            ['sql' => 'UPDATE job_queue SET state = IF(attempts + 1 >= ?, ?, ?), last_error = ?, attempts = attempts + 1 WHERE state = ? AND claimed_at < (NOW() - INTERVAL 10 MINUTE)',
+             'params' => [5, 3, 0, 'Reclaimed: lease expired after 10 minutes without a heartbeat', 1]],
             ['sql' => 'UPDATE job_queue SET state = ?, claimed_at = NOW() WHERE id_job_queue = ? AND state = ?', 'params' => [1, 1, 0]],
+            // lease fence before the outcome is written
+            ['sql' => 'SELECT COUNT(*) FROM job_queue WHERE id_job_queue = ? AND state = ? AND attempts = ?', 'params' => [1, 1, 0]],
         ], $this->conn->log);
     }
 
@@ -266,8 +270,12 @@ final class JobQueueTest extends TestCase
         $stats = (new TestSyncQueue())->drain(25, [SyncQueue::KIND_PUSH => fn () => null]);
         self::assertSame(1, $stats['ok']);
         self::assertSame([
-            ['sql' => 'UPDATE acct_sync_job SET state = ? WHERE state = ? AND claimed_at < (NOW() - INTERVAL 10 MINUTE)', 'params' => [0, 1]],
+            // reclaim counts an attempt and fails at maxAttempts (review-3 #20)
+            ['sql' => 'UPDATE acct_sync_job SET state = IF(attempts + 1 >= ?, ?, ?), last_error = ?, attempts = attempts + 1 WHERE state = ? AND claimed_at < (NOW() - INTERVAL 10 MINUTE)',
+             'params' => [5, 3, 0, 'Reclaimed: lease expired after 10 minutes without a heartbeat', 1]],
             ['sql' => 'UPDATE acct_sync_job SET state = ?, claimed_at = NOW() WHERE id_acct_sync_job = ? AND state = ?', 'params' => [1, 1, 0]],
+            // lease fence before the outcome is written
+            ['sql' => 'SELECT COUNT(*) FROM acct_sync_job WHERE id_acct_sync_job = ? AND state = ? AND attempts = ?', 'params' => [1, 1, 0]],
         ], $this->conn->log);
         self::assertSame('Done', $this->row(\App\AcctSyncJob::class, 1)->getState());
     }

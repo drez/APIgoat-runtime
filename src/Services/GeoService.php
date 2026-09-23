@@ -23,7 +23,12 @@ namespace ApiGoat\Services;
  *
  * Fair-use guards toward the public Nominatim instance:
  *   - descriptive User-Agent
- *   - >= ~1s spacing between upstream calls (cross-process, flock-backed)
+ *   - >= ~1s spacing between upstream calls (cross-process, flock-backed,
+ *     polled with LOCK_NB for at most ~1.2s — never a blocking flock() queue;
+ *     a slot still busy after that answers HTTP 429 + Retry-After)
+ *   - per-user token bucket on upstream calls (GC_GEO_USER_PER_MIN, default
+ *     20/min; cache hits are free) → HTTP 429
+ *   - https-only transport (CURLOPT_PROTOCOLS / REDIR_PROTOCOLS)
  *   - 24h result cache keyed on the normalized query/coords
  *     (APCu when available, file fallback under tmp/gc-geocache)
  *   - 5s upstream timeout; upstream failure → HTTP 502 {"error": "..."}
@@ -42,6 +47,12 @@ class GeoService extends Service
     private const UPSTREAM_TIMEOUT = 5;
     private const MIN_SPACING = 1.05;  // seconds between upstream Nominatim calls
     private const MAX_QUERY_LEN = 300;
+    private const USER_PER_MIN_DEFAULT = 20;
+    private const THROTTLE_MAX_WAIT = 1.2;    // seconds a worker may wait for the upstream slot
+    private const THROTTLE_POLL_US = 100000;  // LOCK_NB retry interval (lock never held while sleeping)
+
+    /** Set by fetch() when the upstream call was refused locally (429). */
+    private bool $throttled = false;
 
     /**
      * Injectable HTTP transport for tests: (string $url): ?string (null = failure).
@@ -110,6 +121,9 @@ class GeoService extends Service
         }
 
         $body = $this->fetch(self::NOMINATIM_BASE . '/search?' . http_build_query($params));
+        if ($this->throttled) {
+            return [429, ['error' => 'Too many geocoding requests — retry shortly']];
+        }
         $rows = ($body !== null) ? json_decode($body, true) : null;
         if (!is_array($rows)) {
             return [502, ['error' => 'Geocoding service unavailable']];
@@ -145,6 +159,9 @@ class GeoService extends Service
             'lat'            => sprintf('%.8F', $lat),
             'lon'            => sprintf('%.8F', $lng),
         ]));
+        if ($this->throttled) {
+            return [429, ['error' => 'Too many geocoding requests — retry shortly']];
+        }
         $obj = ($body !== null) ? json_decode($body, true) : null;
         if (!is_array($obj)) {
             return [502, ['error' => 'Geocoding service unavailable']];
@@ -230,14 +247,23 @@ class GeoService extends Service
      * Transport, throttle and cache
      * ------------------------------------------------------------------- */
 
-    /** GET $url; null on transport failure or upstream HTTP >= 400. */
+    /**
+     * GET $url; null on transport failure or upstream HTTP >= 400. Sets
+     * $this->throttled (and returns null) when the per-user bucket or the
+     * shared upstream slot refuses the call — the caller answers 429.
+     */
     private function fetch(string $url): ?string
     {
+        $this->throttled = false;
         if ($this->http !== null) {
             return ($this->http)($url);
         }
 
-        $this->throttleUpstream();
+        if (!self::takeUserToken(self::sessionUserId(), self::userPerMinute())
+            || !$this->throttleUpstream()) {
+            $this->throttled = true;
+            return null;
+        }
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -247,7 +273,7 @@ class GeoService extends Service
             CURLOPT_USERAGENT      => self::userAgent(),
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS      => 3,
-        ]);
+        ] + self::httpsOnlyCurlOptions());
         $body = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
@@ -256,29 +282,98 @@ class GeoService extends Service
     }
 
     /**
-     * Enforce ~1s spacing between upstream Nominatim calls across ALL
-     * PHP-FPM workers: a flock-serialized timestamp file. Best-effort — an
-     * unwritable directory must never break geocoding, only fair-use pacing.
+     * Restrict the transport (and every redirect it follows) to https: a
+     * redirect can never downgrade to http or reach file://, gopher://, ….
+     * PHP >= 8.3 exposes the string forms libcurl now prefers.
+     *
+     * @return array<int, mixed>
      */
-    private function throttleUpstream(): void
+    public static function httpsOnlyCurlOptions(): array
+    {
+        if (\defined('CURLOPT_PROTOCOLS_STR') && \defined('CURLOPT_REDIR_PROTOCOLS_STR')) {
+            return [\CURLOPT_PROTOCOLS_STR => 'https', \CURLOPT_REDIR_PROTOCOLS_STR => 'https'];
+        }
+        return [\CURLOPT_PROTOCOLS => \CURLPROTO_HTTPS, \CURLOPT_REDIR_PROTOCOLS => \CURLPROTO_HTTPS];
+    }
+
+    /**
+     * Per-user token bucket on UPSTREAM calls: $perMinute tokens per user per
+     * minute window, each an atomic MicroCache::add slot (apcu_add on FPM), so
+     * concurrent requests can never both take the last token. Keys carry
+     * TableVersion::ns() (APCu is shared by every project in the pool).
+     */
+    public static function takeUserToken(int $userId, int $perMinute): bool
+    {
+        if ($perMinute <= 0) {
+            return false;
+        }
+        $window = (int) (\time() / 60);
+        $prefix = 'gc:geo:rl:' . \ApiGoat\Utility\TableVersion::ns() . ':' . $userId . ':' . $window . ':';
+        for ($i = 0; $i < $perMinute; $i++) {
+            if (\ApiGoat\Utility\MicroCache::add($prefix . $i, 120, 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function userPerMinute(): int
+    {
+        $v = \function_exists('env') ? env('GC_GEO_USER_PER_MIN') : \getenv('GC_GEO_USER_PER_MIN');
+        return ($v === false || $v === null || $v === '' || !\is_numeric($v)) ? self::USER_PER_MIN_DEFAULT : (int) $v;
+    }
+
+    private static function sessionUserId(): int
+    {
+        if (!\defined('_AUTH_VAR') || !isset($_SESSION[\_AUTH_VAR]) || !\is_object($_SESSION[\_AUTH_VAR])
+            || !\method_exists($_SESSION[\_AUTH_VAR], 'get')) {
+            return 0;
+        }
+        return (int) ($_SESSION[\_AUTH_VAR]->get('id') ?? 0);
+    }
+
+    /**
+     * Enforce ~1s spacing between upstream Nominatim calls across ALL
+     * PHP-FPM workers with a flock-guarded timestamp file. The slot is POLLED
+     * (non-blocking LOCK_NB try every THROTTLE_POLL_US) for at most
+     * THROTTLE_MAX_WAIT seconds: a user typing with a 400ms debounce just waits
+     * out the spacing, while a real burst answers 429 instead of parking the
+     * FPM pool behind a blocking flock() queue. The lock is never held while
+     * sleeping. false = refuse (429).
+     * Best-effort: an unopenable stamp file must never break geocoding.
+     */
+    public function throttleUpstream(?float $maxWait = null): bool
     {
         $fh = @fopen($this->resolveCacheDir() . '/throttle.stamp', 'c+');
         if (!$fh) {
-            return;
+            return true;
         }
-        if (flock($fh, LOCK_EX)) {
-            $last = (float) trim((string) stream_get_contents($fh));
-            $wait = self::MIN_SPACING - (microtime(true) - $last);
-            if ($wait > 0 && $wait <= self::MIN_SPACING) {
-                usleep((int) round($wait * 1000000));
+        $deadline = microtime(true) + ($maxWait ?? self::THROTTLE_MAX_WAIT);
+        $ok = false;
+        while (true) {
+            if (flock($fh, LOCK_EX | LOCK_NB)) {
+                rewind($fh);
+                $last = (float) trim((string) stream_get_contents($fh));
+                $since = microtime(true) - $last;
+                if ($since >= self::MIN_SPACING || $since < 0) {
+                    ftruncate($fh, 0);
+                    rewind($fh);
+                    fwrite($fh, sprintf('%.6F', microtime(true)));
+                    fflush($fh);
+                    $ok = true;
+                }
+                flock($fh, LOCK_UN);
+                if ($ok) {
+                    break;
+                }
             }
-            ftruncate($fh, 0);
-            rewind($fh);
-            fwrite($fh, sprintf('%.6F', microtime(true)));
-            fflush($fh);
-            flock($fh, LOCK_UN);
+            if (microtime(true) + self::THROTTLE_POLL_US / 1000000 > $deadline) {
+                break;
+            }
+            usleep(self::THROTTLE_POLL_US);
         }
         fclose($fh);
+        return $ok;
     }
 
     /**
@@ -382,9 +477,12 @@ class GeoService extends Service
             $payload,
             JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
         ));
-        return $this->response
+        $response = $this->response
             ->withHeader('Content-Type', 'application/json')
-            ->withHeader('Cache-Control', $status < 400 ? 'private, max-age=3600' : 'no-store')
-            ->withStatus($status);
+            ->withHeader('Cache-Control', $status < 400 ? 'private, max-age=3600' : 'no-store');
+        if ($status === 429) {
+            $response = $response->withHeader('Retry-After', '1');
+        }
+        return $response->withStatus($status);
     }
 }

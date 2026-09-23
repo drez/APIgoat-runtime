@@ -249,6 +249,13 @@ class RbacMiddleware implements MiddlewareInterface
         }
 
         $rbacRow = $this->matchRule($emptyBody);
+        if (!$rbacRow && $this->rbacCacheTtl() > 0 && !$this->rbacCacheVerify()) {
+            // The cached ruleset can lag: auto-minted Deny rows do not bump
+            // the api_rbac@rules generation (see autoMintAllowed()). Confirm a
+            // cache miss against SQL before minting, so a repeated unmatched
+            // request finds its Deny row instead of minting another one.
+            $rbacRow = $emptyBody ? $this->sqlEmptyBodyMatch() : $this->sqlBestMatch();
+        }
         if (!$emptyBody) {
             //get the wildcard rule
             $bodyData = is_array($this->args['data'])
@@ -258,22 +265,33 @@ class RbacMiddleware implements MiddlewareInterface
         }
 
         if (!$rbacRow) {
-            // add a new rule with default values
-            $ApiRbac = new \App\ApiRbac();
-            $body = (isset($wildBody[2]) ? $wildBody[2] : ((isset($wildBody[1]) && $wildBody[1]) ? $wildBody[1] : $wildBody[0]));
-            $ApiRbac->setModel($this->args['model']);
-            $ApiRbac->setAction($this->args['action']);
-            $ApiRbac->setMethod($this->args['method']);
-            $default_rule = (\defined('app_status') && \app_status == 'dev') ? 'Allow' : 'Deny';
-            $ApiRbac->setRule($default_rule);
-            $ApiRbac->setBody(((\is_null($body)) ? null : \json_encode(\json_decode($body, true), \JSON_PRETTY_PRINT)));
-            $ApiRbac->setCount(1);
-            $ApiRbac->setScope($this->isExcludedRoute() ? 'Public' : 'Private');
-            $this->rbac_id = $this->saveBookkeeping($ApiRbac);
+            // No rule: the default applies (dev Allow, otherwise Deny) whether
+            // or not a row is recorded for it.
+            $isDev = \defined('app_status') && \app_status == 'dev';
+            $default_rule = $isDev ? 'Allow' : 'Deny';
             $this->rbac_rule = $default_rule;
-            $this->rbac_is_new = true;
+            $this->rbac_id = null;
+            if ($this->autoMintAllowed()) {
+                // add a new rule with default values (route discovery for the admin)
+                $ApiRbac = new \App\ApiRbac();
+                $body = (isset($wildBody[2]) ? $wildBody[2] : ((isset($wildBody[1]) && $wildBody[1]) ? $wildBody[1] : $wildBody[0]));
+                $ApiRbac->setModel($this->args['model']);
+                $ApiRbac->setAction($this->args['action']);
+                $ApiRbac->setMethod($this->args['method']);
+                $ApiRbac->setRule($default_rule);
+                $ApiRbac->setBody(((\is_null($body)) ? null : \json_encode(\json_decode($body, true), \JSON_PRETTY_PRINT)));
+                $ApiRbac->setCount(1);
+                $ApiRbac->setScope($this->isExcludedRoute() ? 'Public' : 'Private');
+                if ($default_rule === 'Deny' && \property_exists($ApiRbac, 'gcRbacAutoDeny')) {
+                    // Same outcome as "no rule": must not flush the RBAC /
+                    // public HTTP caches (emitted api_rbac preSave honours it).
+                    $ApiRbac->gcRbacAutoDeny = true;
+                }
+                $this->rbac_id = $this->saveBookkeeping($ApiRbac);
+                $this->rbac_is_new = true;
+            }
             $this->logApi($this->rbac_id);
-            if (\defined('app_status') && \app_status == 'dev') {
+            if ($isDev) {
                 return false;
             }
             return true;
@@ -298,6 +316,137 @@ class RbacMiddleware implements MiddlewareInterface
             }
             return true;
         }
+    }
+
+    /** Actions RouteParser itself produces for the generic model routes. */
+    private const CORE_ACTIONS = ['', 'list', 'get', 'create', 'update', 'edit', 'delete'];
+
+    /**
+     * May an unmatched request be recorded as a new api_rbac row? The row is
+     * route discovery for the admin, never a policy: the request gets the
+     * default rule either way. Recording is refused (review-3 #19):
+     *  - for anonymous callers outside dev — anyone could otherwise grow the
+     *    table (and, before gcRbacAutoDeny, flush the RBAC/public caches)
+     *    with every new model/action/body shape;
+     *  - for a model/action that no route serves (settings.routes json
+     *    models, or a model/action already present in api_rbac, e.g. a
+     *    seeded custom endpoint);
+     *  - past the caps: GC_RBAC_AUTO_MAX_PER_ROUTE rows per model/action/
+     *    method (default 25), GC_RBAC_AUTO_MAX rows in the table (default
+     *    5000), GC_RBAC_AUTO_PER_MIN mints per minute (default 30).
+     * Any failure answers false (fail toward not writing).
+     */
+    private function autoMintAllowed(): bool
+    {
+        try {
+            $isDev = \defined('app_status') && \app_status == 'dev';
+            $connected = \defined('_AUTH_VAR') && isset($_SESSION[\_AUTH_VAR]) && \is_object($_SESSION[\_AUTH_VAR])
+                && \method_exists($_SESSION[\_AUTH_VAR], 'get')
+                && $_SESSION[\_AUTH_VAR]->get('connected') == 'YES';
+            if (!$isDev && !$connected) {
+                return false;
+            }
+            $model  = (string) ($this->args['model'] ?? '');
+            $action = (string) ($this->args['action'] ?? '');
+            $method = (string) ($this->args['method'] ?? '');
+            if (!self::isKnownRoute($model, $action, self::jsonRouteModels())) {
+                return false;
+            }
+            $perRoute = self::envInt('GC_RBAC_AUTO_MAX_PER_ROUTE', 25);
+            $sameRoute = \App\ApiRbacQuery::create()
+                ->filterByModel($model)
+                ->filterByAction($action)
+                ->filterByMethod($method)
+                ->count();
+            if ($sameRoute >= $perRoute) {
+                return false;
+            }
+            if (\App\ApiRbacQuery::create()->count() >= self::envInt('GC_RBAC_AUTO_MAX', 5000)) {
+                return false;
+            }
+            return self::takeMintToken(self::envInt('GC_RBAC_AUTO_PER_MIN', 30));
+        } catch (\Throwable $e) {
+            $this->logWarning('api_rbac auto-mint skipped: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Does a route serve $model/$action? A model is known when settings.routes
+     * lists it under json (the generic /api/v{N}/{Model} routes) or api_rbac
+     * already holds a rule for it (seeded custom endpoints); an action when
+     * RouteParser produces it, the model's Service implements a method of that
+     * name (custom actions), or api_rbac already holds a rule for the pair.
+     *
+     * @param string[] $jsonModels
+     */
+    public static function isKnownRoute(string $model, string $action, array $jsonModels, ?callable $hasRule = null): bool
+    {
+        if (!\preg_match('/^[A-Za-z][A-Za-z0-9_]{0,63}$/', $model)
+            || !\preg_match('/^([A-Za-z][A-Za-z0-9_]{0,63})?$/', $action)) {
+            return false;
+        }
+        $hasRule = $hasRule ?? static function (string $m, ?string $a): bool {
+            $q = \App\ApiRbacQuery::create()->filterByModel($m);
+            if ($a !== null) {
+                $q->filterByAction($a);
+            }
+            return $q->count() > 0;
+        };
+        $modelKnown = \in_array($model, $jsonModels, true) || $hasRule($model, null);
+        if (!$modelKnown) {
+            return false;
+        }
+        if (\in_array($action, self::CORE_ACTIONS, true)) {
+            return true;
+        }
+        foreach (['\\App\\' . $model . 'ServiceWrapper', '\\App\\' . $model . 'Service'] as $class) {
+            if (\class_exists($class) && \method_exists($class, $action)) {
+                return true;
+            }
+        }
+        return $hasRule($model, $action);
+    }
+
+    /** @return string[] models served by the generic json API routes */
+    private static function jsonRouteModels(): array
+    {
+        static $models = null;
+        if ($models === null) {
+            $models = [];
+            $file = (\defined('_BASE_DIR') ? \_BASE_DIR : '') . 'config/Built/settings.routes.php';
+            if (\is_file($file)) {
+                $routes = require $file;
+                $models = \array_map('strval', \array_keys((array) ($routes['json']['GET'] ?? [])));
+            }
+        }
+        return $models;
+    }
+
+    /**
+     * Rate cap on auto-mints: $perMinute tokens per project per minute window,
+     * each an atomic MicroCache::add slot (APCu apcu_add), so concurrent
+     * requests can never both take the last token.
+     */
+    public static function takeMintToken(int $perMinute): bool
+    {
+        if ($perMinute <= 0) {
+            return false;
+        }
+        $window = (int) (\time() / 60);
+        $prefix = 'gc:rbacmint:' . \ApiGoat\Utility\TableVersion::ns() . ':' . $window . ':';
+        for ($i = 0; $i < $perMinute; $i++) {
+            if (\ApiGoat\Utility\MicroCache::add($prefix . $i, 120, 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function envInt(string $name, int $default): int
+    {
+        $v = \function_exists('env') ? env($name) : \getenv($name);
+        return ($v === false || $v === null || $v === '' || !\is_numeric($v)) ? $default : (int) $v;
     }
 
     /**

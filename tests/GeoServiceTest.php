@@ -21,6 +21,8 @@ namespace ApiGoat\Services {
 namespace {
 
 require __DIR__ . '/../src/Services/GeoService.php';
+require_once __DIR__ . '/../src/Utility/MicroCache.php';
+require_once __DIR__ . '/../src/Utility/TableVersion.php';
 
 use ApiGoat\Services\GeoService;
 
@@ -187,6 +189,59 @@ check('nothing found -> {} serializes as {}', json_encode($p), '{}');
 
 [$s] = makeService(['lat' => '13.34', 'lng' => '56.78'], function ($u) { return null; })->reverseGeocodeAction();
 check('reverse transport failure -> 502', $s, 502);
+
+echo "upstream throttle (review-3 #21)\n";
+$tsvc = makeService([], function ($u) { return null; });
+@unlink($testCache . '/throttle.stamp');
+check('first upstream slot granted', $tsvc->throttleUpstream(0.0), true);
+$t0 = microtime(true);
+check('inside the spacing with no wait budget -> refused', $tsvc->throttleUpstream(0.0), false);
+check('refusal with no budget does not sleep', (microtime(true) - $t0) < 0.2, true);
+$t0 = microtime(true);
+check('inside the spacing, default budget -> waits out the ~1s spacing', $tsvc->throttleUpstream(), true);
+$waited = microtime(true) - $t0;
+check('...waited, bounded by ~1.2s', $waited > 0.5 && $waited < 1.35, true);
+// A slot held by another worker (LOCK_EX) for longer than the budget -> 429.
+$holder = fopen($testCache . '/throttle.stamp', 'c+');
+flock($holder, LOCK_EX);
+file_put_contents($testCache . '/throttle.stamp', '0');
+$t0 = microtime(true);
+check('saturated slot -> refused', $tsvc->throttleUpstream(), false);
+$waited = microtime(true) - $t0;
+check('saturated slot gives up after the ~1.2s budget', $waited > 1.0 && $waited < 1.35, true);
+flock($holder, LOCK_UN);
+fclose($holder);
+check('stale stamp -> granted again', $tsvc->throttleUpstream(0.0), true);
+
+echo "per-user token bucket\n";
+\ApiGoat\Utility\MicroCache::flushLocal();
+$granted = 0;
+for ($i = 0; $i < 5; $i++) { $granted += GeoService::takeUserToken(42, 3) ? 1 : 0; }
+check('bucket grants exactly perMinute tokens', $granted, 3);
+check('another user has its own bucket', GeoService::takeUserToken(43, 3), true);
+check('perMinute 0 refuses', GeoService::takeUserToken(44, 0), false);
+
+putenv('GC_GEO_USER_PER_MIN=0');
+$rl = makeService(['q' => 'uncached-rate-limited-q'], function ($u) { return '[]'; });
+$rl->http = null; // real transport path: the bucket refuses before any network
+[$s, $p] = $rl->geocodeAction();
+check('bucket exhausted -> 429 (no upstream call)', $s, 429);
+$rl2 = makeService(['lat' => '3.5', 'lng' => '2.5'], function ($u) { return '[]'; });
+$rl2->http = null;
+putenv('GC_GEO_USER_PER_MIN=0');
+[$s] = $rl2->reverseGeocodeAction();
+check('reverse: bucket exhausted -> 429', $s, 429);
+putenv('GC_GEO_USER_PER_MIN');
+
+echo "https-only transport\n";
+$opts = GeoService::httpsOnlyCurlOptions();
+if (defined('CURLOPT_PROTOCOLS_STR')) {
+    check('protocols https only', $opts[CURLOPT_PROTOCOLS_STR] ?? null, 'https');
+    check('redirect protocols https only', $opts[CURLOPT_REDIR_PROTOCOLS_STR] ?? null, 'https');
+} else {
+    check('protocols https only', $opts[CURLOPT_PROTOCOLS] ?? null, CURLPROTO_HTTPS);
+    check('redirect protocols https only', $opts[CURLOPT_REDIR_PROTOCOLS] ?? null, CURLPROTO_HTTPS);
+}
 
 echo "dispatch\n";
 // Unknown action must 400 without requiring auth wiring — exercised via the
