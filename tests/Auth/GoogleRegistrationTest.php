@@ -116,4 +116,45 @@ final class GoogleRegistrationTest extends TestCase
         putenv('GOOGLE_AUTO_REGISTER="1"');
         $this->assertTrue(GoogleRegistration::fromEnv()->isEnabled());
     }
+
+    /**
+     * Wave 4: a domain allowlist is a Workspace-domain restriction. Google
+     * lets anyone create a consumer account on ANY email address (an
+     * "unmanaged" account) with email_verified=true — only the `hd` claim
+     * proves the account is managed by that Workspace domain.
+     */
+    public function testAllowlistedDomainRequiresMatchingHdClaim(): void
+    {
+        putenv('GOOGLE_AUTO_REGISTER=1');
+        putenv('GOOGLE_AUTO_REGISTER_DOMAINS=apigoat.com');
+        $p = GoogleRegistration::fromEnv();
+
+        $this->assertTrue($p->allowsClaims(['email' => 'a@apigoat.com', 'hd' => 'apigoat.com']));
+        $this->assertTrue($p->allowsClaims(['email' => 'a@ApiGoat.com', 'hd' => 'APIGOAT.com']));
+        $this->assertFalse($p->allowsClaims(['email' => 'a@apigoat.com']), 'unmanaged account (no hd) refused');
+        $this->assertFalse($p->allowsClaims(['email' => 'a@apigoat.com', 'hd' => 'evil.com']));
+        $this->assertFalse($p->allowsClaims(['email' => 'a@evil.com', 'hd' => 'evil.com']));
+    }
+
+    public function testConsumerGmailAllowlistNeedsNoHd(): void
+    {
+        putenv('GOOGLE_AUTO_REGISTER=1');
+        putenv('GOOGLE_AUTO_REGISTER_DOMAINS=gmail.com');
+        $p = GoogleRegistration::fromEnv();
+        $this->assertTrue($p->allowsClaims(['email' => 'a@gmail.com']));
+        $this->assertFalse($p->allowsClaims(['email' => 'a@other.com']));
+    }
+
+    public function testNoAllowlistAllowsAnyVerifiedClaims(): void
+    {
+        putenv('GOOGLE_AUTO_REGISTER=1');
+        $p = GoogleRegistration::fromEnv();
+        $this->assertTrue($p->allowsClaims(['email' => 'a@whatever.org']));
+        $this->assertFalse(GoogleRegistration::fromEnv()->allowsClaims([]));
+    }
+
+    public function testClaimsDisabledByDefault(): void
+    {
+        $this->assertFalse(GoogleRegistration::fromEnv()->allowsClaims(['email' => 'a@apigoat.com', 'hd' => 'apigoat.com']));
+    }
 }

@@ -69,7 +69,11 @@ final class GoogleRegistration
         return $this->domains;
     }
 
-    /** Enabled AND (no allowlist OR the email's domain is an exact allowlist entry). */
+    /**
+     * Enabled AND (no allowlist OR the email's domain is an exact allowlist
+     * entry). Email-only: does NOT prove Workspace membership — callers
+     * holding the verified token claims must use allowsClaims().
+     */
     public function allowsEmail(string $email): bool
     {
         if (!$this->enabled) {
@@ -83,6 +87,36 @@ final class GoogleRegistration
             return true;
         }
         return in_array(strtolower(substr($email, $at + 1)), $this->domains, true);
+    }
+
+    /** Consumer Google domains: accounts there never carry an `hd` claim. */
+    private const CONSUMER_DOMAINS = ['gmail.com', 'googlemail.com'];
+
+    /**
+     * Claims-aware variant of allowsEmail() — prefer it. With a domain
+     * allowlist, the verified ID token's `hd` (hosted domain) claim must
+     * equal the email's domain: anyone can create an unmanaged consumer
+     * Google account on any address (email_verified=true, no `hd`), so the
+     * email domain alone does not prove Workspace membership. Consumer
+     * domains (gmail.com) have no `hd` and are matched on the email alone.
+     *
+     * @param array<string,mixed> $claims verified claims from GoogleIdToken::verify()
+     */
+    public function allowsClaims(array $claims): bool
+    {
+        $email = (string) ($claims['email'] ?? '');
+        if (!$this->allowsEmail($email)) {
+            return false;
+        }
+        if ($this->domains === []) {
+            return true;
+        }
+        $domain = strtolower(substr($email, (int) strrpos($email, '@') + 1));
+        if (in_array($domain, self::CONSUMER_DOMAINS, true)) {
+            return true;
+        }
+        $hd = strtolower(trim((string) ($claims['hd'] ?? '')));
+        return $hd !== '' && $hd === $domain;
     }
 
     /**
