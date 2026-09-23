@@ -37,7 +37,7 @@ final class BearerSessionAuthenticator
         $ttl   = self::cacheTtl();
         // Scopes belong to THIS request's token; never inherit a previous one's.
         TokenScopes::set(null);
-        $key   = $token !== '' ? 'gc:bearer:' . \hash('sha256', $token) : '';
+        $key   = self::cacheKey($token);
 
         // Fast path: a token we fully authenticated within the TTL restores the
         // hydrated session with zero OAuth/DB work. Bounded staleness: revocation
@@ -45,7 +45,10 @@ final class BearerSessionAuthenticator
         // restores per-call checks. The raw token is never stored, only its hash.
         if ($key !== '' && $ttl > 0) {
             $blob = \ApiGoat\Utility\MicroCache::get($key);
-            if (\is_string($blob) && $blob !== '') {
+            // The cached session is only as good as the token that minted it:
+            // never restore it past the token's own expiry.
+            $exp = self::jwtExp($token);
+            if (\is_string($blob) && $blob !== '' && ($exp === null || $exp > \time())) {
                 // allowed_classes: defense-in-depth — the blob is server-produced
                 // (stored below after a full authentication), and AuthySession
                 // carries only scalars/arrays, so nothing else may instantiate.
@@ -118,7 +121,11 @@ final class BearerSessionAuthenticator
 
         // Store the hydrated session for subsequent calls with this token.
         if ($ok && $key !== '' && $ttl > 0) {
-            \ApiGoat\Utility\MicroCache::put($key, $ttl, \serialize($_SESSION[\_AUTH_VAR]));
+            $exp = self::jwtExp($token);
+            $keep = $exp === null ? $ttl : \min($ttl, $exp - \time());
+            if ($keep > 0) {
+                \ApiGoat\Utility\MicroCache::put($key, $keep, \serialize($_SESSION[\_AUTH_VAR]));
+            }
         }
 
         return $ok ? self::AUTHENTICATED : self::UNKNOWN_USER;
@@ -137,6 +144,30 @@ final class BearerSessionAuthenticator
         }
         $header = \json_decode($json, true);
         return \is_array($header) && ($header['alg'] ?? '') === 'RS256';
+    }
+
+    /**
+     * APCu is shared by every project on the same PHP-FPM master: without the
+     * project namespace a token cached by project A restored A's session
+     * (identity, rights, isRoot) when replayed against project B.
+     */
+    public static function cacheKey(string $token): string
+    {
+        return $token === ''
+            ? ''
+            : 'gc:bearer:' . \ApiGoat\Utility\TableVersion::ns() . ':' . \hash('sha256', $token);
+    }
+
+    /** The `exp` claim of a JWT-shaped token, or null when it has none. */
+    public static function jwtExp(string $token): ?int
+    {
+        $parts = \explode('.', $token);
+        if (\count($parts) !== 3) {
+            return null;
+        }
+        $json = \base64_decode(\strtr($parts[1], '-_', '+/'), false);
+        $claims = \is_string($json) ? \json_decode($json, true) : null;
+        return (\is_array($claims) && \is_numeric($claims['exp'] ?? null)) ? (int) $claims['exp'] : null;
     }
 
     private static function rawBearerToken(ServerRequestInterface $request): string

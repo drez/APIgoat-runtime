@@ -70,6 +70,15 @@ final class SessionLifetime
         if (self::shouldDeferGuiSession($_SERVER, $_COOKIE)) {
             return;
         }
+        // A bearer request authenticates from its token on every call; it
+        // must never own a cookie session. Starting one here let the bearer
+        // hydrate (setSession + regenerate) persist a 30-day ApiGoat cookie
+        // that then authenticated on its own — outliving a 15-minute or
+        // revoked token. $_SESSION stays a plain in-process array, exactly
+        // like the deferred anonymous path above.
+        if (self::isBearerRequest($_SERVER)) {
+            return;
+        }
         $lifetime = self::guiDays() * 86400;
 
         // Long-lived sessions need a project-local save path: distro session
@@ -104,6 +113,22 @@ final class SessionLifetime
                 || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'),
         ]);
         session_start();
+    }
+
+    /**
+     * True when the request carries a Bearer credential (Authorization or
+     * X-Authorization, however the web server exposed it).
+     *
+     * @param array<string,mixed> $server $_SERVER
+     */
+    public static function isBearerRequest(array $server): bool
+    {
+        foreach (['HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION', 'HTTP_X_AUTHORIZATION'] as $k) {
+            if (stripos(ltrim((string) ($server[$k] ?? '')), 'Bearer ') === 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Cookie name startGuiSession() registers via session_name(). */

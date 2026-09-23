@@ -22,6 +22,8 @@ class QueryBuilder
     const _DEFAULT_LIMIT = 30;
     /** Hard ceiling on limit / page size unless GC_API_MAX_LIMIT overrides it. */
     const _MAX_LIMIT = 500;
+    /** Columns the owner/group/tenant scope is built on (normalized: lowercase alnum). */
+    const ACL_COLUMNS = ['idcreation', 'idgroupcreation', 'idtenant'];
     public $debug = false;
     /** @var \PropelModelPager|null set when the request paged (page=N) */
     private $pager = null;
@@ -400,6 +402,17 @@ class QueryBuilder
      * @param mixed $name
      * @return boolean
      */
+    public static function isAclColumnName($name)
+    {
+        // Normalized like isCredentialColumnName(): PHP method names are
+        // case-insensitive and camelize() folds '-', '_' and ' ', so
+        // "idcreation", "IDCREATION" and "id-creation" all reach
+        // filterByIdCreation(). A case-sensitive compare on the camelized
+        // name let those spellings through and OR the ACL scope away.
+        return \is_string($name)
+            && in_array(preg_replace('/[^a-z0-9]/', '', strtolower(trim($name))), self::ACL_COLUMNS, true);
+    }
+
     public static function isCredentialColumnName($name)
     {
         if (!\is_string($name)) {
@@ -771,7 +784,7 @@ class QueryBuilder
                     $aclParts = explode('.', $filter[0]);
                     if (!isset($aclParts[1]) || ("App\\" . \camelize($aclParts[0], true)) == $this->modelName) {
                         $isRoot = isset($_SESSION[_AUTH_VAR]) && $_SESSION[_AUTH_VAR]->get('isRoot');
-                        if (!$isRoot && in_array(\camelize($aclParts[1] ?? $aclParts[0], true), ['IdCreation', 'IdGroupCreation', 'IdTenant'], true)) {
+                        if (!$isRoot && self::isAclColumnName($aclParts[1] ?? $aclParts[0])) {
                             $this->messages[] = "Filter: column ({$filter[0]}) is access-controlled and cannot be filtered on ({$table})";
                             continue;
                         }

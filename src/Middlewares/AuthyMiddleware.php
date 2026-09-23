@@ -180,13 +180,17 @@ class AuthyMiddleware implements MiddlewareInterface
                     $ApiResponse->setStatus(403);
                     return $ApiResponse->getResponse();
                 } else {
-                    // progress anyways
-                    $response = $handler->handle($request);
+                    // A denial is terminal: the route handler must NOT run.
+                    // It used to be invoked and its response discarded — but
+                    // the action had already executed (and legacy handlers
+                    // that echo + exit even delivered their output), so any
+                    // custom action ran for a user lacking the right.
+                    error_log('gc: access denied ' . $request->getMethod() . ' '
+                        . $this->args['model'] . '/' . $this->args['action']
+                        . ' for authy#' . (int) $_SESSION[_AUTH_VAR]->getIdAuthy());
                     $response = new Response();
-                    $request  = $request->withAttribute('authy_access', 'denied');
-                    $request  = $request->withAttribute('authy_message', $access->getMessage());
                     $response->getBody()->write($access->getMessage());
-                    return $response->withStatus(403);
+                    return $response->withHeader('Cache-Control', 'no-store')->withStatus(403);
                 }
             } else {
                 throw new HttpForbiddenException($request, $access);

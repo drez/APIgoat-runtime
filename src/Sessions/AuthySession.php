@@ -64,6 +64,41 @@ class AuthySession
         }
     }
 
+    /**
+     * What reaches the session file / the bearer cache. Secrets stay in
+     * process: config['jwt'] carries JWT_SECRET (re-set per request by
+     * config/container.php, read by nobody off the session) and passHash is
+     * the user's bcrypt hash — neither belongs in tmp/sessions or in APCu,
+     * which every project on the same PHP-FPM master shares.
+     */
+    public function __serialize(): array
+    {
+        $data = \get_object_vars($this);
+        unset($data['passHash']);
+        if (\is_array($data['config'] ?? null)) {
+            unset($data['config']['jwt']);
+        }
+        return $data;
+    }
+
+    public function __unserialize(array $data): void
+    {
+        foreach ($data as $name => $value) {
+            // Sessions written before __serialize existed carry mangled
+            // private/protected names ("\0Class\0prop", "\0*\0prop").
+            $name = (string) $name;
+            if ($name !== '' && $name[0] === "\0") {
+                $name = \substr($name, \strrpos($name, "\0") + 1);
+            }
+            if ($name === 'passHash') {
+                continue;
+            }
+            if (\property_exists($this, $name)) {
+                $this->$name = $value;
+            }
+        }
+    }
+
     public function isAdmin()
     {
         if ($this->group === 'Admin') {
