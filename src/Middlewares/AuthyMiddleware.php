@@ -83,7 +83,10 @@ class AuthyMiddleware implements MiddlewareInterface
 
             if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
 
-                if (strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
+                // Only the registered oauth/* routes run anonymously (exact
+                // match — an action or model segment named "oauth" on any
+                // catch-all model route used to skip the login check).
+                if (! RoutePath::isOAuthRoute($request->getUri()->getPath())) {
                     if ($request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
                         $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
                         $ApiResponse->setStatus(401);
@@ -99,7 +102,7 @@ class AuthyMiddleware implements MiddlewareInterface
                     return $response;
                 }
             }
-        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && ! $this->checkExclude($this->args['route']) && strtolower($this->args['model']) != "oauth" && $this->args['action'] != "oauth") {
+        } elseif ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && ! $this->checkExclude($this->args['route']) && ! RoutePath::isOAuthRoute($request->getUri()->getPath())) {
             $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
             $ApiResponse->setStatus(401);
             return $ApiResponse->getResponse();

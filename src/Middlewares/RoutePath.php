@@ -36,6 +36,18 @@ final class RoutePath
     }
 
     /**
+     * The registered OAuth routes: `oauth/{p}[/{c}]` (covers oauth/authorize,
+     * oauth/token, oauth/register and the legacy Opauth callback) and
+     * `api/v{n}/oauth/{p}[/{c}]`. These are reachable without a session.
+     * Anchored so `Client/oauth` or `Client/list/oauth` (action or trailing
+     * catch-all param named "oauth") never matches.
+     */
+    public static function isOAuthRoute(string $path, ?string $subDir = null): bool
+    {
+        return (bool) preg_match('#^(api/v[0-9]+/)?oauth/[^/]+(/[^/]+)?/?$#', self::relative($path, $subDir));
+    }
+
+    /**
      * The two RFC 8414 / 9728 documents, served both under the app sub-dir and
      * at the host root (with_mcp rewrites the origin-level URLs into the app).
      */

@@ -45,4 +45,24 @@ final class RoutePathTest extends TestCase
     {
         self::assertFalse(RoutePath::isMcp('/other/api/v1/mcp', '/test/.admin/'));
     }
+
+    public function testOnlyTheRegisteredOAuthRoutesAreOAuthRoutes(): void
+    {
+        foreach (['oauth/authorize', 'oauth/token', 'oauth/register', 'oauth/google', 'oauth/google/callback',
+                  'api/v1/oauth/google', 'api/v1/oauth/google/x', 'oauth/authorize/'] as $p) {
+            self::assertTrue(RoutePath::isOAuthRoute('/test/.admin/' . $p, '/test/.admin/'), $p);
+            self::assertTrue(RoutePath::isOAuthRoute('/' . $p, '/'), $p);
+        }
+    }
+
+    public function testAnOAuthActionOrParamOnAModelRouteIsNotAnOAuthRoute(): void
+    {
+        foreach (['Client/oauth', 'Client/list/oauth', 'Client/oauth/1', 'api/v1/Client/oauth',
+                  'api/v1/Client/1/oauth/x', 'Client/list/oauth/token', 'oauth', 'oauth/a/b/c',
+                  'x/oauth/authorize', 'api/v1/oauth'] as $p) {
+            self::assertFalse(RoutePath::isOAuthRoute('/test/.admin/' . $p, '/test/.admin/'), $p);
+            self::assertFalse(RoutePath::isOAuthRoute('/' . $p, '/'), $p);
+        }
+        self::assertFalse(RoutePath::isOAuthRoute('/other/oauth/authorize', '/test/.admin/'));
+    }
 }
