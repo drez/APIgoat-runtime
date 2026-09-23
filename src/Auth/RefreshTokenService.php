@@ -30,9 +30,18 @@ final class RefreshTokenService
      * detection and revoked the WHOLE family — killing the session exactly
      * when it should have refreshed (overnight hard-401s, seen live on
      * vidifye). A token rotated less than REUSE_GRACE seconds ago is a
-     * benign concurrent redeem: mint a fresh pair in the same family.
-     * Security trade-off: a stolen-and-replayed token gains a bounded 30s
-     * window before family revocation kicks in; the redeem throttle
+     * benign concurrent redeem.
+     *
+     * Wave 4 (2026-09-23): the grace path no longer forks the family. The
+     * successor of a token is DERIVED (HMAC of the presented raw token under
+     * the JWT secret), so a grace replay returns the SAME successor refresh
+     * token the winning redeem issued — the family keeps exactly one live
+     * token. Rotation itself is an atomic compare-and-swap
+     * (RefreshTokenStore::claimRotation): of N truly concurrent redeems
+     * that all read the row while live, exactly one inserts the successor;
+     * the others take the grace path. Only the short-lived access JWT is
+     * re-minted per caller (stateless). A replayed token gains a bounded
+     * REUSE_GRACE window before family revocation; the redeem throttle
      * (THROTTLE_MAX) still applies inside it.
      */
     const REUSE_GRACE = 30;       // seconds
@@ -105,9 +114,8 @@ final class RefreshTokenService
                 $this->store->revokeFamily($row['family_id']);   // reuse attack
                 return $this->err('token_reuse');
             }
-            // Benign concurrent redeem (see REUSE_GRACE): fall through and
-            // mint a fresh pair — the presented row is already revoked, so
-            // the expiry/rotation steps below skip re-revoking it.
+            // Benign concurrent redeem (see REUSE_GRACE).
+            return $this->graceReplay($rawToken, $row, $mintAccessToken);
         }
         if ($row['expires'] < $now || $row['family_expires'] < $now) {
             $this->store->markRevoked($row['id'], $now);
@@ -122,12 +130,16 @@ final class RefreshTokenService
             return $this->err('invalid_token');
         }
 
-        // rotate (grace path: the presented row is already revoked — don't
-        // stamp it again, its last_used_at anchors the grace window)
-        if ($row['revoked'] !== 'Yes') {
-            $this->store->markRevoked($row['id'], $now);
+        // Atomic rotation claim. Losing means a concurrent redeem of the
+        // same token rotated it between our read and now: it is a grace
+        // replay of a just-rotated token — return that redeem's successor.
+        if (!$this->store->claimRotation($row['id'], $now)) {
+            $row['revoked'] = 'Yes';
+            $row['last_used_at'] = $now;
+            return $this->graceReplay($rawToken, $row, static fn () => $jwt);
         }
-        [$raw2, $hash2] = $this->generate();
+
+        [$raw2, $hash2] = $this->successor($rawToken);
         $newExpires = min(
             $this->ts($this->refreshExpire(), $now),
             $row['family_expires']
@@ -140,6 +152,37 @@ final class RefreshTokenService
             'family_expires' => $row['family_expires'],
         ]);
 
+        return [
+            'status'        => 'success',
+            'token'         => $jwt['token'],
+            'expires'       => $jwt['expires'],
+            'refresh_token' => $raw2,
+        ];
+    }
+
+    /**
+     * Grace replay of a token rotated < REUSE_GRACE ago: hand back the SAME
+     * successor refresh token the rotation issued (never mint a sibling),
+     * plus a fresh short-lived access JWT. Refused when the successor has
+     * since been revoked by a family/user revocation (logout, password
+     * change, reuse detection) — only a live or itself-just-rotated
+     * successor is returned. Without a JWT secret the successor is random
+     * and cannot be re-derived: refuse rather than fork the family.
+     */
+    private function graceReplay(string $rawToken, array $row, callable $mintAccessToken): array
+    {
+        if ($this->secret() === '') {
+            return $this->err('token_reuse');
+        }
+        [$raw2, $hash2] = $this->successor($rawToken);
+        $succ = $this->store->findByHash($hash2);
+        if ($succ !== null && $succ['revoked'] === 'Yes' && ($succ['last_used_at'] ?? null) === null) {
+            return $this->err('token_reuse');   // family was revoked after the rotation
+        }
+        $jwt = $mintAccessToken($row['id_authy']);
+        if (($jwt['status'] ?? '') !== 'success' || empty($jwt['token'])) {
+            return $this->err('invalid_token');
+        }
         return [
             'status'        => 'success',
             'token'         => $jwt['token'],
@@ -192,6 +235,29 @@ final class RefreshTokenService
         }
         $ts = strtotime((string) $expr, $now);
         return $ts !== false ? $ts : $now;
+    }
+
+    /**
+     * Successor of a presented refresh token: HMAC-SHA256(raw, jwt secret),
+     * so a grace replay can re-derive the already-issued successor without
+     * storing raw tokens. Unforgeable without the server secret; falls back
+     * to a random token when no secret is configured.
+     * @return array{0:string,1:string} [raw, sha256hash]
+     */
+    private function successor(string $rawToken): array
+    {
+        $secret = $this->secret();
+        if ($secret === '') {
+            return $this->generate();
+        }
+        $raw = rtrim(strtr(base64_encode(hash_hmac('sha256', 'refresh-successor|' . $rawToken, $secret, true)), '+/', '-_'), '=');
+        return [$raw, $this->hashToken($raw)];
+    }
+
+    private function secret(): string
+    {
+        $s = $this->jwt['secret'] ?? '';
+        return is_string($s) ? $s : '';
     }
 
     /** @return array{0:string,1:string} [raw, sha256hash] */

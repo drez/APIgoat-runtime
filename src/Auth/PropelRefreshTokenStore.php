@@ -52,6 +52,20 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
         }
     }
 
+    public function claimRotation(int $id, int $at): bool
+    {
+        // Single conditional UPDATE ... WHERE id = ? AND revoked = 'No':
+        // the DB serialises concurrent claims, only one sees 1 affected row.
+        $n = \App\AuthyRefreshTokenQuery::create()
+            ->filterByIdAuthyRefreshToken($id)
+            ->filterByRevoked('No')
+            ->update([
+                'Revoked'    => 1,   // 1 = 'Yes' in tinyint ENUM (see revokeFamily)
+                'LastUsedAt' => (new \DateTime())->setTimestamp($at)->format('Y-m-d H:i:s'),
+            ]);
+        return (int) $n === 1;
+    }
+
     public function revokeFamily(string $familyId): void
     {
         \App\AuthyRefreshTokenQuery::create()

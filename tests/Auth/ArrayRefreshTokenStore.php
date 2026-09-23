@@ -14,6 +14,9 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
     private int $seq = 0;
     /** @var array<int,array{ip:string,family:string,at:int}> */
     public array $attempts = [];
+    /** test knob: findByHash returns the snapshot taken when first set (simulates concurrent readers) */
+    public bool $freezeReads = false;
+    private array $frozen = [];
 
     public function insert(array $row): void
     {
@@ -24,6 +27,17 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
     }
 
     public function findByHash(string $hash): ?array
+    {
+        if ($this->freezeReads) {
+            if (!array_key_exists($hash, $this->frozen)) {
+                $this->frozen[$hash] = $this->scan($hash);
+            }
+            return $this->frozen[$hash];
+        }
+        return $this->scan($hash);
+    }
+
+    private function scan(string $hash): ?array
     {
         foreach ($this->rows as $r) {
             if ($r['token_hash'] === $hash) {
@@ -39,6 +53,16 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
             $this->rows[$id]['revoked'] = 'Yes';
             $this->rows[$id]['last_used_at'] = $lastUsedAt;
         }
+    }
+
+    public function claimRotation(int $id, int $at): bool
+    {
+        if (!isset($this->rows[$id]) || $this->rows[$id]['revoked'] !== 'No') {
+            return false;
+        }
+        $this->rows[$id]['revoked'] = 'Yes';
+        $this->rows[$id]['last_used_at'] = $at;
+        return true;
     }
 
     public function revokeFamily(string $familyId): void

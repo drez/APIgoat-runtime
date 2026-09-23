@@ -85,17 +85,14 @@ final class RefreshTokenServiceTest extends TestCase
     }
 
     /**
-     * Concurrency grace (2026-07-30): several parallel clients of ONE
-     * session (a web page load fires 4+ app-server requests; the mobile app
-     * does the same) can all present the same refresh token when the access
-     * token expires. The first redeem rotates it; before this grace, every
-     * later redeem tripped reuse detection and revoked the WHOLE family —
-     * the session died exactly when it should have refreshed (the
-     * overnight hard-401 report). A token rotated less than REUSE_GRACE ago
-     * is a benign concurrent redeem: mint a fresh pair in the same family,
-     * leave everything else alone.
+     * Concurrency grace (2026-07-30, tightened 2026-09-23 Wave 4): several
+     * parallel clients of ONE session can all present the same refresh
+     * token when the access token expires. The first redeem rotates it; a
+     * straggler inside REUSE_GRACE must NOT revoke the family — and must not
+     * fork it either: it gets the SAME successor refresh token the first
+     * redeem issued, so the family keeps exactly one live token.
      */
-    public function testConcurrentRedeemWithinGraceMintsInsteadOfRevoking(): void
+    public function testConcurrentRedeemWithinGraceReturnsSameSuccessor(): void
     {
         $store = new ArrayRefreshTokenStore();
         $svc = $this->svc($store);
@@ -108,10 +105,60 @@ final class RefreshTokenServiceTest extends TestCase
 
         $this->assertSame('success', $second['status']);
         $this->assertSame('JWT-for-7', $second['token']);
-        $this->assertNotSame($first['refresh_token'], $second['refresh_token']);
-        // Both minted pairs stay live — nothing was revoked.
-        $this->assertSame(2, $store->liveCountForFamily($family));
+        $this->assertSame($first['refresh_token'], $second['refresh_token']);
+        // No fork: still exactly one live token in the family.
+        $this->assertSame(1, $store->liveCountForFamily($family));
         $this->assertSame('No', $store->findByHash(hash('sha256', (string) $first['refresh_token']))['revoked']);
+    }
+
+    /**
+     * Atomic CAS (Wave 4): two redeems that BOTH read the row while it was
+     * still live (true concurrency) — only one may win the rotation; the
+     * loser must return the winner's successor, never mint a second one.
+     */
+    public function testRacingRedeemsBothSeeingLiveRowMintOnlyOneSuccessor(): void
+    {
+        $store = new ArrayRefreshTokenStore();
+        $svc = $this->svc($store);
+        $raw = $svc->mintForLogin(7);
+        $family = array_values($store->rows)[0]['family_id'];
+
+        $store->freezeReads = true;   // every findByHash returns the pre-rotation snapshot
+        $a = $svc->redeem($raw, '1.2.3.4', $this->minter());
+        $b = $svc->redeem($raw, '1.2.3.4', $this->minter());
+        $store->freezeReads = false;
+
+        $this->assertSame('success', $a['status']);
+        $this->assertSame('success', $b['status']);
+        $this->assertSame($a['refresh_token'], $b['refresh_token']);
+        $this->assertSame(1, $store->liveCountForFamily($family));
+        $this->assertCount(2, $store->rows, 'exactly one successor row inserted');
+    }
+
+    public function testGraceReplayAfterFamilyRevokedIsRefused(): void
+    {
+        $store = new ArrayRefreshTokenStore();
+        $svc = $this->svc($store);
+        $raw = $svc->mintForLogin(7);
+        $family = array_values($store->rows)[0]['family_id'];
+
+        $svc->redeem($raw, '1.2.3.4', $this->minter());
+        $svc->revokeFamily($family);          // e.g. logout / password change
+        $this->clock += 5;
+        $out = $svc->redeem($raw, '1.2.3.4', $this->minter());
+
+        $this->assertSame('error', $out['status']);
+    }
+
+    public function testSuccessorIsNotDerivableWithoutSecret(): void
+    {
+        $store = new ArrayRefreshTokenStore();
+        $svc = $this->svc($store);
+        $raw = $svc->mintForLogin(7);
+        $first = $svc->redeem($raw, '1.2.3.4', $this->minter());
+        // unkeyed derivations of the old token must not be the live successor
+        $this->assertNotSame(hash('sha256', $raw), $first['refresh_token']);
+        $this->assertNotSame(rtrim(strtr(base64_encode(hash_hmac('sha256', $raw, '', true)), '+/', '-_'), '='), $first['refresh_token']);
     }
 
     public function testGraceRedeemStillClampsToFamilyExpiry(): void

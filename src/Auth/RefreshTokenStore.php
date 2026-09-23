@@ -18,6 +18,14 @@ interface RefreshTokenStore
 
     public function markRevoked(int $id, int $lastUsedAt): void;
 
+    /**
+     * Atomic compare-and-swap rotation claim: flip the row to revoked and
+     * stamp last_used_at ONLY if it is still live. Returns true for exactly
+     * one of any number of concurrent callers (conditional UPDATE, checked
+     * by affected-row count) — the winner mints the successor.
+     */
+    public function claimRotation(int $id, int $at): bool;
+
     public function revokeFamily(string $familyId): void;
 
     public function revokeAllForUser(int $idAuthy): void;
