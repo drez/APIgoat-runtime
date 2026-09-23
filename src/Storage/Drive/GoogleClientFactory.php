@@ -215,6 +215,20 @@ class GoogleClientFactory
     }
 
     /**
+     * GET returning the RAW response body (no JSON decode) — for media
+     * downloads (files/{id}?alt=media). Errors map to the same typed
+     * exceptions as the JSON verbs (a failed download's error body IS JSON).
+     *
+     * @param string[] $scopes
+     */
+    public function getRaw(string $url, array $scopes, ?string $subject = null): string
+    {
+        $token = $this->getAccessToken($scopes, $subject);
+        $res   = $this->curl('GET', $url, null, ['Authorization: Bearer ' . $token], $subject, true);
+        return (string) ($res['body'] ?? '');
+    }
+
+    /**
      * Raw multipart upload — used by GoogleDriveStorage for file payloads
      * where the body is binary, not JSON. Returns decoded JSON response.
      *
@@ -269,7 +283,7 @@ class GoogleClientFactory
      * @param string[] $headers
      * @return array<string,mixed>
      */
-    private function curl(string $method, string $url, ?string $body, array $headers, ?string $subject): array
+    private function curl(string $method, string $url, ?string $body, array $headers, ?string $subject, bool $raw = false): array
     {
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -295,6 +309,9 @@ class GoogleClientFactory
 
         $rawHeaders = substr((string) $result, 0, $headerSize);
         $rawBody    = substr((string) $result, $headerSize);
+        if ($raw && $httpCode >= 200 && $httpCode < 300) {
+            return ['body' => $rawBody];
+        }
         $data       = $rawBody === '' ? [] : (json_decode($rawBody, true) ?? []);
 
         if ($httpCode >= 200 && $httpCode < 300) {

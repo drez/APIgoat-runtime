@@ -21,6 +21,19 @@ final class PdfGenerator
      */
     public static function generate(object $record, array $entry, ?int $templateId = null, string $workspaceEmail = '', ?string $langOverride = null): array
     {
+        // One generation per document at a time (review-3 #15): two concurrent
+        // generations used to interleave their Drive delete/upload and could
+        // leave duplicates or trash each other's fresh copy.
+        $lock = self::lockDocument($entry, $record);
+        try {
+            return self::generateLocked($record, $entry, $templateId, $workspaceEmail, $langOverride);
+        } finally {
+            self::unlockDocument($lock);
+        }
+    }
+
+    private static function generateLocked(object $record, array $entry, ?int $templateId, string $workspaceEmail, ?string $langOverride): array
+    {
         $doc   = PresetRenderer::render($record, $entry, $templateId, $langOverride);
         $bytes = (new HtmlToPdf())->render($doc['html']);
         $name  = self::canonicalName($record, $entry);
@@ -33,13 +46,7 @@ final class PdfGenerator
         if (self::hasDrive($entry)) {
             try {
                 $drive = self::driveFor($workspaceEmail);
-                $scope = self::folderScope($record, $entry);
-                foreach (self::driveMatches($drive, $scope, $name) as $f) {
-                    if (($f['name'] ?? '') === $name && !empty($f['id'])) {
-                        $drive->delete((string) $f['id']);
-                    }
-                }
-                $up = $drive->upload($scope, $name, $bytes, 'application/pdf');
+                $up = self::replaceOnDrive($drive, self::folderScope($record, $entry), $name, $bytes);
                 if (!empty($up['webViewLink'])) {
                     $url = (string) $up['webViewLink']; // Drive link wins as pdf_url
                 }
@@ -56,6 +63,25 @@ final class PdfGenerator
         self::storeSaved($record, $entry, $url, $doc['lang']);
 
         return ['url' => $url, 'bytes' => $bytes, 'name' => $name, 'lang' => $doc['lang']];
+    }
+
+    /**
+     * Upload the new copy FIRST, then trash every other same-name copy in the
+     * folder — never delete-then-upload, which left a window where the
+     * document had no stored copy at all (a concurrent download then found
+     * nothing). Returns the upload's normalized metadata.
+     */
+    public static function replaceOnDrive(GoogleDriveStorage $drive, string $scope, string $name, string $bytes): array
+    {
+        $up    = $drive->upload($scope, $name, $bytes, 'application/pdf');
+        $newId = (string) ($up['id'] ?? '');
+        foreach (self::driveMatches($drive, $scope, $name) as $f) {
+            $id = (string) ($f['id'] ?? '');
+            if (($f['name'] ?? '') === $name && $id !== '' && $id !== $newId) {
+                $drive->delete($id);
+            }
+        }
+        return $up;
     }
 
     /**
@@ -76,14 +102,20 @@ final class PdfGenerator
             }
             return false;
         }
+        // Drive-only: a pdf_url alone proves nothing about the file still
+        // being there — callers that stream use storedBytes() (null = absent).
         return (string) $record->getPdfUrl() !== '';
     }
 
     /**
-     * Stream-ready bytes of the CURRENT copy; generates one when absent.
-     * @return array{bytes:string, name:string, generated:bool}
+     * Bytes of the STORED copy — never renders, never writes. Local store
+     * first (the child row's file on disk), then Drive: the newest exact-name
+     * PDF in the record's OWN folder (the id comes from that scoped listing,
+     * never from the request or the pdf_url column). Null when no copy exists.
+     *
+     * @return array{bytes:string, name:string, generated:bool}|null
      */
-    public static function currentBytes(object $record, array $entry, string $workspaceEmail = ''): array
+    public static function storedBytes(object $record, array $entry, string $workspaceEmail = ''): ?array
     {
         $name = self::canonicalName($record, $entry);
         if (self::hasLocal($entry)) {
@@ -96,7 +128,51 @@ final class PdfGenerator
                 }
             }
         }
-        // Drive-only (or missing local file): render fresh — always current.
+        if (self::hasDrive($entry) && $workspaceEmail !== '') {
+            $drive = self::driveFor($workspaceEmail);
+            $file  = self::driveCurrentFile($drive, self::folderScope($record, $entry), $name);
+            if ($file !== null) {
+                return ['bytes' => $drive->download((string) $file['id']), 'name' => $name, 'generated' => false];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The newest exact-name, non-folder item in $scope, or null.
+     * @return array|null normalized Drive item
+     */
+    public static function driveCurrentFile(GoogleDriveStorage $drive, string $scope, string $name): ?array
+    {
+        $best = null;
+        foreach (self::driveMatches($drive, $scope, $name) as $f) {
+            if (($f['name'] ?? '') !== $name || empty($f['id'])
+                || ($f['mimeType'] ?? '') === 'application/vnd.google-apps.folder') {
+                continue;
+            }
+            if ($best === null || (string) ($f['modifiedTime'] ?? '') > (string) ($best['modifiedTime'] ?? '')) {
+                $best = $f;
+            }
+        }
+        return $best;
+    }
+
+    /**
+     * Stream-ready bytes of the CURRENT copy; generates one when absent AND
+     * $mayGenerate (the caller holds the write right). A read-only caller
+     * passes false and gets null when nothing is stored.
+     *
+     * Before review-3 #15 a drive-only document was re-rendered — trashing
+     * and re-uploading the Drive copy — on EVERY call, read callers included.
+     *
+     * @return array{bytes:string, name:string, generated:bool}|null
+     */
+    public static function currentBytes(object $record, array $entry, string $workspaceEmail = '', bool $mayGenerate = true): ?array
+    {
+        $stored = self::storedBytes($record, $entry, $workspaceEmail);
+        if ($stored !== null || !$mayGenerate) {
+            return $stored;
+        }
         $res = self::generate($record, $entry, null, $workspaceEmail);
         return ['bytes' => $res['bytes'], 'name' => $res['name'], 'generated' => true];
     }
@@ -256,12 +332,23 @@ final class PdfGenerator
         return in_array('drive', (array) ($entry['storage'] ?? []), true);
     }
 
+    /** @var (\Closure(string):GoogleDriveStorage)|null test seam — see useDriveFactory() */
+    private static ?\Closure $driveFactory = null;
+
+    /** Test seam: build the Drive storage from $factory (null restores forUser()). */
+    public static function useDriveFactory(?\Closure $factory): void
+    {
+        self::$driveFactory = $factory;
+    }
+
     private static function driveFor(string $workspaceEmail): GoogleDriveStorage
     {
         if ($workspaceEmail === '') {
             throw new \RuntimeException('No Google Workspace email on the current user — Drive storage unavailable.');
         }
-        return GoogleDriveStorage::forUser($workspaceEmail);
+        return self::$driveFactory !== null
+            ? (self::$driveFactory)($workspaceEmail)
+            : GoogleDriveStorage::forUser($workspaceEmail);
     }
 
     /** @return array[] folder items whose name starts with $prefix ('' = all). */
@@ -288,6 +375,31 @@ final class PdfGenerator
             \Propel::getConnection()
                 ->prepare("UPDATE `{$table}` SET pdf_saved_at = date_modification WHERE `id_{$table}` = ?")
                 ->execute([(int) $record->$pkGetter()]);
+        }
+    }
+
+    // ── per-document lock ──────────────────────────────────────────────────
+
+    /** @return resource|null an flock()ed handle, or null when no lock file could be opened */
+    private static function lockDocument(array $entry, object $record)
+    {
+        $pkGetter = 'get' . ($entry['pk_php'] ?? '');
+        $pk  = method_exists($record, $pkGetter) ? (string) $record->$pkGetter() : spl_object_hash($record);
+        $dir = self::baseDir() !== '' && is_dir(self::baseDir() . 'tmp') ? self::baseDir() . 'tmp' : sys_get_temp_dir();
+        $fh  = @fopen(rtrim($dir, '/') . '/gc-pdf-' . md5((string) ($entry['table'] ?? '') . ':' . $pk) . '.lock', 'c');
+        if ($fh === false) {
+            return null;
+        }
+        flock($fh, LOCK_EX);
+        return $fh;
+    }
+
+    /** @param resource|null $fh */
+    private static function unlockDocument($fh): void
+    {
+        if (is_resource($fh)) {
+            flock($fh, LOCK_UN);
+            fclose($fh);
         }
     }
 

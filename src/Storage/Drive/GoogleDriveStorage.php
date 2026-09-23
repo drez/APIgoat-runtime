@@ -164,6 +164,32 @@ class GoogleDriveStorage implements FileStorageInterface
         return $this->normalize($resp, null);
     }
 
+    /**
+     * Bytes of the file with this id (files.get alt=media). Callers MUST have
+     * obtained $id from a scoped listing (list()) — a bare id from a request
+     * would read any file the impersonated user can reach. Refuses anything
+     * over $maxBytes (by metadata size, then by the body actually received).
+     */
+    public function download(string $id, int $maxBytes = 26214400): string
+    {
+        if ($id === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $id)) {
+            throw new \InvalidArgumentException('download: invalid Drive file id');
+        }
+        $meta = $this->get($id);
+        if ($maxBytes > 0 && isset($meta['size']) && (int) $meta['size'] > $maxBytes) {
+            throw new \RuntimeException("download: file {$id} exceeds {$maxBytes} bytes");
+        }
+        $bytes = $this->google->getRaw(
+            $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?alt=media'),
+            $this->scopes(),
+            $this->userEmail
+        );
+        if ($maxBytes > 0 && strlen($bytes) > $maxBytes) {
+            throw new \RuntimeException("download: file {$id} exceeds {$maxBytes} bytes");
+        }
+        return $bytes;
+    }
+
     public function upload(string $scope, string $name, string $bytes, string $mimeType): array
     {
         $folderId = $this->resolveScope($scope, /*create*/ true);
