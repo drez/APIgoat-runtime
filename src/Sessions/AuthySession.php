@@ -48,6 +48,10 @@ class AuthySession
     public $key = null;
     public $ip = null;
     public $sess_id = null;
+    # GUI session revalidation (AuthyMiddleware): last DB re-check time and the
+    # fingerprint of the rights/groups/root/tenant state the session was built from.
+    public $staleCheckTs = null;
+    public $rightsFingerprint = null;
 
 
     function __construct()
@@ -500,6 +504,9 @@ class AuthySession
             case 'id_tenant':
                 return $this->idTenant;
                 break;
+            case 'stale_check_ts':
+                return $this->staleCheckTs;
+                break;
         }
     }
 
@@ -551,6 +558,9 @@ class AuthySession
             case 'id_tenant':
                 $this->idTenant = $value;
                 break;
+            case 'stale_check_ts':
+                $this->staleCheckTs = $value;
+                break;
         }
     }
 
@@ -570,6 +580,11 @@ class AuthySession
         // second login in the same process (switch user, WS server, tests)
         // got no map and hasParentMenu(null) fataled.
         include _BASE_DIR . "config/permissions.php";
+        // Rebuild, never merge: $rights is always the user's complete grant
+        // set (All/Owner/Group), and a revalidation (AuthyMiddleware) calls
+        // this again on a live session — a revoked grant must disappear.
+        $this->accessControl = [];
+        $this->menuAccess = null;
         foreach ($rights as $group => $acls) {
             if (is_array($acls)) {
                 foreach ($acls as $model => $acl) {
@@ -618,38 +633,163 @@ class AuthySession
         }
     }
 
-    public function setGroups()
+    /**
+     * The session's group ids: every membership (authy_group_x) plus the
+     * primary group; any admin membership makes the session 'Admin'. Rebuilt
+     * from scratch on every call (a revalidation calls it on a live session —
+     * a removed membership must disappear). $memberGroups is the pre-loaded
+     * loadGroupState()['members'] ([[id, admin], ...]); null loads it.
+     */
+    public function setGroups(?array $memberGroups = null)
     {
-        // authy_group_x's relation to authy_group is named differently across
-        // project schema vintages: the bare 'AuthyGroup' (single membership FK)
-        // on older projects, or 'AuthyGroupRelatedByIdAuthyGroup' when
-        // add_tablestamp adds a second authy_group FK (id_group_creation). This
-        // runtime is shared across every project, so we must not hard-code
-        // either relation name — resolve the membership group by its id
-        // directly, which works regardless of how many FKs the table carries.
-        $rows = \App\AuthyGroupXQuery::create()
-            ->filterByIdAuthy($_SESSION[\_AUTH_VAR]->getIdAuthy())
-            ->find();
-
-        if ($rows) {
-            $memberIds = [];
-            foreach ($rows as $row) {
-                $memberIds[] = $row->getIdAuthyGroup();
+        if ($memberGroups === null) {
+            $memberGroups = self::loadMemberGroups((int) $this->getIdAuthy());
+        }
+        $this->Groups = [];
+        foreach ($memberGroups as [$id, $admin]) {
+            if ($admin === 'Yes') {
+                $this->group = 'Admin';
             }
-            if ($memberIds) {
-                $groups = \App\AuthyGroupQuery::create()
-                    ->filterByIdAuthyGroup($memberIds, \Criteria::IN)
-                    ->find();
-                foreach ($groups as $group) {
-                    if ($group->getAdmin() === 'Yes') {
-                        $this->group = 'Admin';
-                    }
-                    $this->Groups[] = $group->getIdAuthyGroup();
-                }
-            }
+            $this->Groups[] = $id;
         }
 
-        $this->Groups[] = $_SESSION[\_AUTH_VAR]->getIdPrimaryGroup();
+        $this->Groups[] = $this->getIdPrimaryGroup();
+    }
+
+    /**
+     * The groups a user is a member of, as [[id_authy_group, admin], ...].
+     *
+     * authy_group_x's relation to authy_group is named differently across
+     * project schema vintages (the bare 'AuthyGroup', or
+     * 'AuthyGroupRelatedByIdAuthyGroup' when add_tablestamp adds a second
+     * authy_group FK) — resolve the membership group by its id directly.
+     */
+    public static function loadMemberGroups(int $idAuthy): array
+    {
+        $rows = \App\AuthyGroupXQuery::create()
+            ->filterByIdAuthy($idAuthy)
+            ->find();
+        $memberIds = [];
+        foreach ($rows as $row) {
+            $memberIds[] = $row->getIdAuthyGroup();
+        }
+        if (!$memberIds) {
+            return [];
+        }
+        $out = [];
+        $groups = \App\AuthyGroupQuery::create()
+            ->filterByIdAuthyGroup($memberIds, \Criteria::IN)
+            ->find();
+        foreach ($groups as $group) {
+            $out[] = [$group->getIdAuthyGroup(), $group->getAdmin()];
+        }
+        return $out;
+    }
+
+    /**
+     * Everything the session's rights are built from, for revalidation:
+     * member groups ([[id, admin], ...]) and the primary group's admin flag.
+     *
+     * @return array{members: array, primary_admin: ?string}
+     */
+    public static function loadGroupState($Authy): array
+    {
+        $primaryAdmin = null;
+        $pg = $Authy->getIdAuthyGroup();
+        if ($pg) {
+            $g = \App\AuthyGroupQuery::create()->findPk($pg);
+            $primaryAdmin = $g ? (string) $g->getAdmin() : null;
+        }
+        return [
+            'members'       => self::loadMemberGroups((int) $Authy->getIdAuthy()),
+            'primary_admin' => $primaryAdmin,
+        ];
+    }
+
+    /**
+     * Hash of the authy state a session's rights derive from: rights_* JSON,
+     * is_root, tenant, primary group (+ admin flag) and every membership
+     * (+ admin flag). A change means the live session's grants are stale.
+     */
+    public static function rightsFingerprint($Authy, array $groupState): string
+    {
+        $members = [];
+        foreach ($groupState['members'] ?? [] as [$id, $admin]) {
+            $members[] = $id . ':' . $admin;
+        }
+        sort($members);
+        return hash('sha256', json_encode([
+            (string) $Authy->getRightsAll(),
+            (string) $Authy->getRightsOwner(),
+            (string) $Authy->getRightsGroup(),
+            (string) $Authy->getIsRoot(),
+            method_exists($Authy, 'getIdTenant') ? (string) $Authy->getIdTenant() : '',
+            (string) $Authy->getIdAuthyGroup(),
+            (string) ($groupState['primary_admin'] ?? ''),
+            $members,
+        ]));
+    }
+
+    /** Deactivated or past its expire date — the same rule login applies. */
+    public static function authyLockedOut($Authy): bool
+    {
+        if (method_exists($Authy, 'getDeactivate') && strcasecmp((string) $Authy->getDeactivate(), 'Yes') === 0) {
+            return true;
+        }
+        if (method_exists($Authy, 'getExpire')) {
+            $expire = $Authy->getExpire();
+            if ($expire instanceof \DateTimeInterface) {
+                $expire = $expire->format('Y-m-d');
+            }
+            if ($expire != null && (string) $expire <= date('Y-m-d')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Re-judge a live GUI session against its authy row (AuthyMiddleware,
+     * throttled): 'logout' when the user is deactivated / expired, 'refreshed'
+     * when the rights fingerprint changed (grants, groups, root, tenant are
+     * rebuilt in place — impersonation/csrf state in sessVar is kept), else
+     * 'ok'. A session with no fingerprint yet (built by a login before this
+     * existed) is rebuilt once.
+     */
+    public function revalidate($Authy, array $groupState): string
+    {
+        if (self::authyLockedOut($Authy)) {
+            return 'logout';
+        }
+        $fp = self::rightsFingerprint($Authy, $groupState);
+        if ($this->rightsFingerprint !== null && hash_equals($this->rightsFingerprint, $fp)) {
+            return 'ok';
+        }
+        $this->rebuildRightsFrom($Authy, $groupState);
+        $this->rightsFingerprint = $fp;
+        return 'refreshed';
+    }
+
+    /** setSession()'s rights half, applied to this live session. */
+    public function rebuildRightsFrom($Authy, array $groupState): void
+    {
+        $this->isRoot = ($Authy->getIsRoot() == 'Yes');
+        if (method_exists($Authy, 'getIdTenant')) {
+            $this->idTenant = $Authy->getIdTenant();
+        }
+        $rights = [];
+        foreach (['All' => 'RightsAll', 'Owner' => 'RightsOwner', 'Group' => 'RightsGroup'] as $group => $col) {
+            $rights[$group] = json_decode((string) ($Authy->{"get{$col}"}() ?? ''), true);
+        }
+        $this->setRights($rights);
+
+        $this->group = null;
+        $this->IdPrimaryGroup = null;
+        $pg = $Authy->getIdAuthyGroup();
+        if ($pg && ($groupState['primary_admin'] ?? null) !== null) {
+            $this->setPrimaryGroup((int) $pg, (string) $groupState['primary_admin']);
+        }
+        $this->setGroups($groupState['members'] ?? []);
     }
 
     public function resetRights()

@@ -58,27 +58,38 @@ class AuthyMiddleware implements MiddlewareInterface
             }
 
             // Stale-session guard: a session can outlive its user (DB reseed,
-            // deleted account). Such a ghost session would stamp a now-invalid
-            // id on every audit-stamped write and 500 on the authy FK. If the
-            // user row is definitively gone, clear the session so the redirect
-            // below sends them to re-login with a valid id. A DB error (query
-            // throws) must NOT log anyone out — only a successful "no such row".
-            // The SELECT only matters before a write (the FK stamp) — for reads a
-            // ghost session just renders a page. Run it on every state-changing
-            // request, but throttle it to one check per minute for GETs so page
-            // browsing doesn't pay a DB round-trip per request.
+            // deleted account) and its grants. Re-judge it against the authy
+            // row: gone, deactivated or expired → clear the session (the
+            // redirect below sends them to re-login); rights / groups / root /
+            // tenant changed (AuthySession::rightsFingerprint) → rebuild the
+            // grants in place, so a revoked right or a removed admin group
+            // stops applying without waiting for the session to expire. A DB
+            // error (query throws) must NOT log anyone out.
+            // Every state-changing request re-checks; GETs at most once a
+            // minute so page browsing doesn't pay the round-trips per request.
             $gcStaleRecheck = $request->getMethod() !== 'GET'
                 || (time() - (int) $_SESSION[_AUTH_VAR]->get('stale_check_ts')) > 60;
             if ($gcStaleRecheck && $_SESSION[_AUTH_VAR]->get('connected') == 'YES' && $_SESSION[_AUTH_VAR]->getIdAuthy()) {
+                $gcVerdict = 'ok';
                 try {
-                    if (\App\AuthyQuery::create()->findPk($_SESSION[_AUTH_VAR]->getIdAuthy()) === null) {
-                        unset($_SESSION[_AUTH_VAR]);
-                        $_SESSION[_AUTH_VAR] = new AuthySession();
-                        $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
-                    } else {
-                        $_SESSION[_AUTH_VAR]->set('stale_check_ts', time());
-                    }
+                    $gcAuthy = \App\AuthyQuery::create()->findPk($_SESSION[_AUTH_VAR]->getIdAuthy());
+                    $gcVerdict = $gcAuthy === null
+                        ? 'logout'
+                        : $_SESSION[_AUTH_VAR]->revalidate($gcAuthy, AuthySession::loadGroupState($gcAuthy));
                 } catch (\Exception $e) { /* DB transient: keep the session, don't lock out */ }
+                if ($gcVerdict === 'logout') {
+                    unset($_SESSION[_AUTH_VAR]);
+                    $_SESSION[_AUTH_VAR] = new AuthySession();
+                    $_SESSION[_AUTH_VAR]->set('isConnected', 'NO');
+                } else {
+                    $_SESSION[_AUTH_VAR]->set('stale_check_ts', time());
+                }
+                // $access was judged for the session as it was: a logged-out
+                // session must hit the login gate below, a rebuilt one its
+                // new grants.
+                if ($gcVerdict !== 'ok') {
+                    $access = $this->checkPrivileges($request);
+                }
             }
 
             if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES' && $access) {
