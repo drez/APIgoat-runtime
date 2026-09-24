@@ -79,4 +79,17 @@ final class WelcomeSettingsGateTest extends TestCase
         $this->assertStringContainsString("ag_secret_clear='1'", $src);
         $this->assertStringContainsString("__inp.setAttribute('data-gc-clear', '1');", $src);
     }
+
+    public function testClearButtonUsesTheAsyncConfirmCallback(): void
+    {
+        // window.confirm is the async gc modal: a boolean-style guard throws
+        // TypeError (template index.js), so Clear must pass a callback.
+        $src = (string) file_get_contents(__DIR__ . '/../../src/Views/WelcomeView.php');
+        $this->assertStringNotContainsString('window.confirm(', $src);
+        $this->assertDoesNotMatchRegularExpression('/if\s*\([^)]*!\s*(window\.)?confirm\(/', $src);
+        $this->assertMatchesRegularExpression(
+            '/confirm\(\'" \. addslashes\(_\(\'Clear this value\?\'\)\) \. "\', function \(\) \{\s*__inp\.value = \'\';/',
+            $src
+        );
+    }
 }

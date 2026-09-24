@@ -353,11 +353,14 @@ JS;
     document.querySelectorAll('[ag_secret_clear]').forEach(function (__btn) {
         __btn.addEventListener('click', function () {
             var __inp = this.parentElement.querySelector('[ag_secret]');
-            if (!__inp || !window.confirm('" . addslashes(_('Clear this value?')) . "')) { return; }
-            __inp.value = '';
-            __inp.setAttribute('data-gc-clear', '1');
-            __inp.dispatchEvent(new Event('change'));
-            __inp.removeAttribute('data-gc-clear');
+            if (!__inp) { return; }
+            // window.confirm is the async gc modal (callback form only).
+            confirm('" . addslashes(_('Clear this value?')) . "', function () {
+                __inp.value = '';
+                __inp.setAttribute('data-gc-clear', '1');
+                __inp.dispatchEvent(new Event('change'));
+                __inp.removeAttribute('data-gc-clear');
+            });
         });
     });
     document.querySelectorAll('[ag_save=Config]').forEach(function (__cfg) {
