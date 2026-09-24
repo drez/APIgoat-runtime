@@ -29,14 +29,17 @@ final class SessionDeferTest extends TestCase
         putenv('GC_SESSION_DEFER_ANON_API');
     }
 
-    public function testOffByDefault(): void
+    public function testOnByDefault(): void
     {
-        self::assertFalse(SessionLifetime::shouldDeferGuiSession(self::ANON_API, []));
+        // Default ON since 2026-09-23 (fleet scan: no GET under /api/ logs in).
+        self::assertTrue(SessionLifetime::shouldDeferGuiSession(self::ANON_API, []));
+        putenv('GC_SESSION_DEFER_ANON_API=');
+        self::assertTrue(SessionLifetime::shouldDeferGuiSession(self::ANON_API, []), 'empty = unset = default');
     }
 
-    public function testFalsyFlagValuesStayOff(): void
+    public function testFalsyFlagValuesOptOut(): void
     {
-        foreach (['0', 'false', 'no', 'off', ''] as $v) {
+        foreach (['0', 'false', 'no', 'off', 'OFF', ' No '] as $v) {
             putenv('GC_SESSION_DEFER_ANON_API=' . $v);
             self::assertFalse(SessionLifetime::shouldDeferGuiSession(self::ANON_API, []), "flag=$v");
         }
@@ -84,5 +87,16 @@ final class SessionDeferTest extends TestCase
         }
         // With and without the .admin prefix, any version.
         self::assertTrue(SessionLifetime::shouldDeferGuiSession(['REQUEST_URI' => '/api/v2/Thing'] + self::ANON_API, []));
+    }
+
+    public function testGuiSessionBootsInStrictMode(): void
+    {
+        $src = (string) file_get_contents(__DIR__ . '/../../src/Auth/SessionLifetime.php');
+        $strict = strpos($src, "ini_set('session.use_strict_mode', '1');");
+        $start  = strpos($src, 'session_start();');
+        self::assertNotFalse($strict);
+        self::assertLessThan($start, $strict, 'strict mode must be set before session_start()');
+        // The cookie name stays 'ApiGoat' (renaming it would sign everyone out).
+        self::assertSame('ApiGoat', SessionLifetime::GUI_COOKIE);
     }
 }

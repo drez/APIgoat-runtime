@@ -9,8 +9,11 @@ namespace ApiGoat\Utility;
  * page) over a process-shared TTL disk cache (so the menu's N distinct
  * model counts survive across requests instead of re-COUNTing every page).
  *
- * Counts are GLOBAL (unfiltered), so the shared cache is correct for all
- * users. Failures (missing class, no DB column, exception, unwritable
+ * Counts run through the model query, so the tenant scoping injected by
+ * the ORM behavior (basePreSelect) applies: the cache is keyed per
+ * TableVersion::tenantToken() ('all' for root/anonymous, 't<id>' per tenant,
+ * 'tnone' for a tenant-less non-root user) so one tenant never sees
+ * another's count. Failures (missing class, no DB column, exception, unwritable
  * cache dir) yield null/no-cache and the caller omits the chip. Never
  * fatal, never unbounded slow queries.
  */
@@ -34,13 +37,14 @@ class RowCount
         if (!is_string($Model) || $Model === '') {
             return null;
         }
-        if (array_key_exists($Model, self::$cache)) {
-            return self::$cache[$Model];
+        $key = self::cacheKey($Model);
+        if (array_key_exists($key, self::$cache)) {
+            return self::$cache[$key];
         }
 
         $disk = self::loadDisk();
-        if (isset($disk[$Model]) && (time() - $disk[$Model][1]) < self::TTL) {
-            return self::$cache[$Model] = $disk[$Model][0];
+        if (isset($disk[$key]) && (time() - $disk[$key][1]) < self::TTL) {
+            return self::$cache[$key] = $disk[$key][0];
         }
 
         $count = null;
@@ -53,9 +57,18 @@ class RowCount
             }
         }
 
-        self::$cache[$Model] = $count;
-        self::storeDisk($Model, $count);
+        self::$cache[$key] = $count;
+        self::storeDisk($key, $count);
         return $count;
+    }
+
+    /**
+     * Cache key for a model under the current tenant scope.
+     * Public for tests.
+     */
+    public static function cacheKey(string $Model): string
+    {
+        return $Model . '|' . TableVersion::tenantToken();
     }
 
     /** @return array<string, array{0:int|null,1:int}> */
@@ -79,14 +92,14 @@ class RowCount
         return self::$disk;
     }
 
-    private static function storeDisk($Model, $count)
+    private static function storeDisk($key, $count)
     {
         $file = self::cacheFile();
         if ($file === null) {
             return;
         }
         $map = self::loadDisk();
-        $map[$Model] = [$count, time()];
+        $map[$key] = [$count, time()];
         self::$disk = $map;
         try {
             $tmp = $file . '.' . getmypid() . '.tmp';

@@ -33,8 +33,11 @@ final class ReminderSweep
      *   recipient      callable(object $row): string[]
      *   compose        callable(object $row, int $offset): array{subject:string, html:string}
      *   filter         callable(object $query): void  (optional extra criteria)
+     *   send           callable(string $to, string $subject, string $html, array $opts): bool
+     *                  (optional; default Notify\Mailer::send)
      * @param bool $dryRun report what would be sent, send nothing
-     * @return array{scanned:int, sent:int, mails:int}
+     * @return array{scanned:int, sent:int, mails:int, locked?:bool}
+     *         locked=true: another run of the same sweep holds the claim; nothing was done.
      */
     public static function run(array $spec, ?\DateTimeInterface $today = null, bool $dryRun = false): array
     {
@@ -47,6 +50,39 @@ final class ReminderSweep
 
             return $stats;
         }
+
+        // Claim the sweep: two overlapping cron runs would both read "not yet
+        // sent" and both mail. A non-blocking exclusive lock per sweep makes
+        // the second run a no-op. A dry run sends nothing and needs no claim.
+        $lock = null;
+        if (!$dryRun) {
+            $lock = self::claim($spec);
+            if ($lock === false) {
+                $stats['locked'] = true;
+
+                return $stats;
+            }
+        }
+        try {
+            return self::sweep($spec, $queryClass, $today, $dryRun, $stats);
+        } finally {
+            if (\is_resource($lock)) {
+                @\flock($lock, LOCK_UN);
+                @\fclose($lock);
+            }
+        }
+    }
+
+    /**
+     * @param array<string,mixed> $spec
+     * @param array{scanned:int, sent:int, mails:int} $stats
+     * @return array{scanned:int, sent:int, mails:int}
+     */
+    private static function sweep(array $spec, string $queryClass, \DateTimeInterface $today, bool $dryRun, array $stats): array
+    {
+        $send = (isset($spec['send']) && \is_callable($spec['send']))
+            ? $spec['send']
+            : [Mailer::class, 'send'];
 
         $query = $queryClass::create();
         if (isset($spec['filter']) && \is_callable($spec['filter'])) {
@@ -85,24 +121,28 @@ final class ReminderSweep
 
             $anySent = false;
             foreach ($due as $offset) {
+                // Per offset: a success on an EARLIER offset must not log a
+                // later offset whose sends all failed as delivered.
+                $offsetSent = false;
                 $msg = ($spec['compose'])($row, $offset);
                 foreach ($recipients as $to) {
                     if ($dryRun) {
                         $stats['mails']++;
-                        $anySent = true;
+                        $offsetSent = true;
                         continue;
                     }
-                    if (Mailer::send($to, (string) $msg['subject'], (string) $msg['html'], $msg['opts'] ?? [])) {
+                    if ($send($to, (string) $msg['subject'], (string) $msg['html'], $msg['opts'] ?? [])) {
                         $stats['mails']++;
-                        $anySent = true;
+                        $offsetSent = true;
                     }
                 }
                 // Log the offset only when something actually went out, so a
                 // total send failure is retried on the next run instead of
                 // being recorded as delivered.
-                if ($anySent && !$dryRun) {
+                if ($offsetSent && !$dryRun) {
                     self::logOffset($spec, $row, $offset);
                 }
+                $anySent = $anySent || $offsetSent;
             }
 
             if ($anySent) {
@@ -140,6 +180,35 @@ final class ReminderSweep
     public static function logModelName(array $spec): string
     {
         return (string) ($spec['log_php'] ?? $spec['log_table'] ?? '');
+    }
+
+    /**
+     * Exclusive, non-blocking lock for one sweep (model + log/stamp target).
+     *
+     * @param array<string,mixed> $spec
+     * @return resource|false|null  resource = held; false = someone else holds
+     *         it; null = no lock dir/flock available (run unclaimed, as before)
+     */
+    private static function claim(array $spec)
+    {
+        $base = \defined('_BASE_DIR') ? \rtrim(\_BASE_DIR, '/\\') . DIRECTORY_SEPARATOR . 'tmp' : \sys_get_temp_dir();
+        if (!\is_dir($base) || !\is_writable($base)) {
+            $base = \sys_get_temp_dir();
+        }
+        $name = \preg_replace('/[^A-Za-z0-9_]/', '_', self::modelName($spec) . '_'
+            . self::logModelName($spec) . '_' . (string) ($spec['stamp_php'] ?? $spec['stamp_column'] ?? ''));
+        $path = $base . DIRECTORY_SEPARATOR . 'reminder-sweep-' . $name . '.lock';
+        $fh = @\fopen($path, 'c');
+        if ($fh === false) {
+            return null;
+        }
+        if (!@\flock($fh, LOCK_EX | LOCK_NB)) {
+            @\fclose($fh);
+
+            return false;
+        }
+
+        return $fh;
     }
 
     private static function isStamped(object $row, string $stampColumn): bool

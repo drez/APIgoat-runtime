@@ -119,12 +119,39 @@ abstract class AbstractCrmTool implements McpTool
         if ($ttl <= 0) {
             return $build();
         }
-        $key = 'gc:catalog:' . \md5(
-            $routesFile . ':' . (string) @\filemtime($routesFile)
+        $key = self::catalogCacheKey($session, $routesFile . ':' . (string) @\filemtime($routesFile));
+        return \ApiGoat\Utility\MicroCache::remember($key, $ttl, $build);
+    }
+
+    /**
+     * Cross-request catalog key. Besides the build stamp and the user id it
+     * hashes the session's CURRENT grants (accessControl, admin, root, tenant):
+     * a rights/group change on the same user (revalidation rebuilds the grants
+     * in place) must never be served the catalog of the old rights for the
+     * rest of the TTL.
+     */
+    public static function catalogCacheKey(AuthySession $session, string $buildStamp): string
+    {
+        $rights = \is_array($session->accessControl ?? null) ? $session->accessControl : [];
+        self::ksortDeep($rights);
+        return 'gc:catalog:' . \md5(
+            $buildStamp
             . ':u' . (int) ($session->get('id') ?? 0)
             . ':a' . (int) (bool) $session->isAdmin()
+            . ':r' . (int) (bool) $session->isRoot()
+            . ':t' . (string) ($session->get('id_tenant') ?? '')
+            . ':g' . \md5((string) \json_encode($rights))
         );
-        return \ApiGoat\Utility\MicroCache::remember($key, $ttl, $build);
+    }
+
+    private static function ksortDeep(array &$a): void
+    {
+        \ksort($a);
+        foreach ($a as &$v) {
+            if (\is_array($v)) {
+                self::ksortDeep($v);
+            }
+        }
     }
 
     /** GC_CATALOG_CACHE_TTL seconds; default 300; 0 disables. */

@@ -49,6 +49,12 @@ class GcIdentityUpdate implements \ApiGoat\Mcp\McpTool
 
     public function handle(array $args, AuthySession $session): array
     {
+        // The identity steers routing for EVERY user of this MCP server, so a
+        // project-wide write needs a project-wide right: an Owner/Group-scoped
+        // Config 'w' (enough to pass ToolRegistry::granted) is not sufficient.
+        if (!self::unscopedConfigWrite($session)) {
+            throw new ToolError('Not permitted: updating the MCP identity needs unrestricted write access to Config.', [], 'not_permitted');
+        }
         $built = McpIdentity::readBuilt();
         if ($built === null) {
             throw new ToolError('This project has no MCP identity (with_mcp is not declared) — nothing to update.', [], 'not_found');
@@ -92,5 +98,15 @@ class GcIdentityUpdate implements \ApiGoat\Mcp\McpTool
         $view['file']  = basename($file);
         $view['note']  = 'Takes effect at the next MCP initialize (new conversation). Promote into the schema with `gc mcp --setup`.';
         return ['content' => [['type' => 'text', 'text' => json_encode($view, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)]]];
+    }
+
+    /** Admin, root, or a Config 'w' grant at the 'All' level (hasRights === true). */
+    public static function unscopedConfigWrite(AuthySession $session): bool
+    {
+        if ((\method_exists($session, 'isAdmin') && $session->isAdmin())
+            || (\method_exists($session, 'isRoot') && $session->isRoot())) {
+            return true;
+        }
+        return $session->hasRights('Config', 'w') === true;
     }
 }

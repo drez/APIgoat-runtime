@@ -41,6 +41,70 @@ class GcTelemetrySummary implements \ApiGoat\Mcp\McpTool
     /** Session must be able to read ClientEvent; hides the tool otherwise. */
     public function requiredRight(): ?array { return ['ClientEvent', 'r']; }
 
+    /**
+     * Row scope for the raw rollup SQL, mirroring AuthySession::applyTenantScope
+     * + applyOwnerGroupScope (fail-closed when a needed scope column is absent).
+     * Pure over the session + the Peer's column constants; public for tests.
+     *
+     * @param class-string $peer
+     * @return array{0:list<string>,1:list<mixed>} [where fragments, params]
+     */
+    public static function scope(AuthySession $session, string $peer): array
+    {
+        if ($session->isRoot()) {
+            return [[], []];
+        }
+        $where = [];
+        $params = [];
+        $has = static fn (string $c): bool => \defined($peer . '::' . $c);
+
+        if ($has('ID_TENANT')) {
+            $tenant = $session->get('id_tenant');
+            if ($tenant) {
+                $where[]  = 'id_tenant = ?';
+                $params[] = $tenant;
+            } elseif ($session->get('connected') == 'YES') {
+                return [['1 = 0'], []];
+            }
+        }
+
+        $scope = $session->hasRights('ClientEvent', 'r');
+        if ($scope === true) {
+            return [$where, $params];
+        }
+        if (!\is_array($scope)) {
+            return [['1 = 0'], []];
+        }
+        $wantOwner = \in_array('Owner', $scope, true);
+        $wantGroup = \in_array('Group', $scope, true);
+        $groups = \array_values(\array_filter(\array_map('intval', (array) ($session->getGroups() ?? []))));
+        $groupSql = null;
+        if ($wantGroup && $has('ID_GROUP_CREATION') && $groups !== []) {
+            $groupSql = 'id_group_creation IN (' . \implode(',', \array_fill(0, \count($groups), '?')) . ')';
+        }
+        if ($wantOwner) {
+            if (!$has('ID_CREATION')) {
+                return [['1 = 0'], []];
+            }
+            if ($groupSql !== null) {
+                $where[] = '(id_creation = ? OR ' . $groupSql . ')';
+                $params  = \array_merge($params, [(int) $session->getIdAuthy()], $groups);
+            } else {
+                $where[]  = 'id_creation = ?';
+                $params[] = (int) $session->getIdAuthy();
+            }
+        } elseif ($wantGroup) {
+            if ($groupSql === null) {
+                return [['1 = 0'], []];
+            }
+            $where[] = $groupSql;
+            $params  = \array_merge($params, $groups);
+        } else {
+            return [['1 = 0'], []];
+        }
+        return [$where, $params];
+    }
+
     public function handle(array $args, AuthySession $session): array
     {
         $peer = '\\App\\ClientEventPeer';
@@ -77,6 +141,13 @@ class GcTelemetrySummary implements \ApiGoat\Mcp\McpTool
             }
             $params[] = $name;
         }
+        // Raw SQL bypasses the ORM tenant behavior and setAclFilter, so apply
+        // the same tenant partition + Owner/Group row scope here explicitly.
+        [$scopeWhere, $scopeParams] = self::scope($session, $peer);
+        foreach ($scopeWhere as $sw) {
+            $where[] = $sw;
+        }
+        $params = \array_merge($params, $scopeParams);
         $w = \implode(' AND ', $where);
 
         $con = \Propel::getConnection(\defined('_DATA_SRC') ? _DATA_SRC : null);

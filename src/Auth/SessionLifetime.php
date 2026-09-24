@@ -110,6 +110,11 @@ final class SessionLifetime
             }
         }
 
+        // Strict mode: never adopt a session id the server did not issue (a
+        // planted/unknown ApiGoat cookie gets a fresh id instead of creating
+        // a session file under the attacker's chosen id). The cookie NAME is
+        // unchanged on purpose — renaming it would sign every user out.
+        ini_set('session.use_strict_mode', '1');
         session_name(self::GUI_COOKIE);
         session_set_cookie_params([
             'lifetime' => $lifetime,
@@ -173,9 +178,12 @@ final class SessionLifetime
      *
      * Pure: takes $_SERVER / $_COOKIE as arguments so the truth table is
      * unit-testable without a session. True only when ALL of:
-     *   - GC_SESSION_DEFER_ANON_API is truthy (OPT-IN: a project could
-     *     legitimately log a user in from a GET — an email magic link, an
-     *     OAuth callback routed under /api/ — and that write must persist);
+     *   - GC_SESSION_DEFER_ANON_API is not switched off. DEFAULT ON since
+     *     2026-09-23 (was opt-in): a fleet scan found no GET under /api/ that
+     *     logs a user in or writes a session that must persist (the /api/
+     *     Authy/confirm GETs only activate the row; magic-link / OAuth
+     *     callbacks are not routed under /api/). A project that adds such a
+     *     route sets GC_SESSION_DEFER_ANON_API=0 (also false/no/off);
      *   - the method is GET or HEAD (a POST may be a login);
      *   - no `ApiGoat` session cookie (a returning user must be re-hydrated);
      *   - no Authorization / X-Authorization header (bearer flows may write
@@ -187,8 +195,7 @@ final class SessionLifetime
      */
     public static function shouldDeferGuiSession(array $server, array $cookies): bool
     {
-        $flag = \function_exists('env') ? env('GC_SESSION_DEFER_ANON_API') : getenv('GC_SESSION_DEFER_ANON_API');
-        if (!in_array(strtolower(trim((string) $flag)), ['1', 'true', 'yes'], true)) {
+        if (!self::deferAnonApiEnabled()) {
             return false;
         }
         $method = strtoupper((string) ($server['REQUEST_METHOD'] ?? ''));
@@ -203,6 +210,28 @@ final class SessionLifetime
         }
         $path = (string) parse_url((string) ($server['REQUEST_URI'] ?? ''), PHP_URL_PATH);
         return (bool) preg_match('#/api/v[0-9]+/#', $path);
+    }
+
+    /** GC_SESSION_DEFER_ANON_API: default ON; '0'/'false'/'no'/'off' opts out. */
+    public static function deferAnonApiEnabled(): bool
+    {
+        if (\function_exists('env')) {
+            // Ahc\Env\Retriever turns "true"/"false" into bools; unset = null.
+            $flag = env('GC_SESSION_DEFER_ANON_API');
+            if (is_bool($flag)) {
+                return $flag;
+            }
+        } else {
+            $flag = getenv('GC_SESSION_DEFER_ANON_API'); // unset = false
+            if ($flag === false) {
+                return true;
+            }
+        }
+        if ($flag === null) {
+            return true;
+        }
+        $v = strtolower(trim((string) $flag));
+        return !in_array($v, ['0', 'false', 'no', 'off'], true);
     }
 
     private static function envDays(string $key, int $max): ?int
