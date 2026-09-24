@@ -95,6 +95,50 @@ final class HtmlToPdfNeutraliseTest extends TestCase
         $this->assertStringContainsString('url(data:image/png;base64,AAAA)', $out);
     }
 
+    public function test_encoded_css_and_malformed_tags_are_refused(): void
+    {
+        $refused = [
+            '<p style="background:url&#40;http://169.254.169.254/x&#41;">a</p>',
+            '<p style="background:u\\72 l(http://169.254.169.254/x)">a</p>',
+            '<style>p{background:u\\rl(http://169.254.169.254/x)}</style>',
+            '<style>@\\69mport "http://169.254.169.254/x";</style>',
+            '<svg><rect fill="&#117;rl(http://169.254.169.254/)"/></svg>',
+            "<iframe src=http://169.254.169.254/latest/meta-data/ x=a'b>",
+            '<img alt=a"b src="http://169.254.169.254/">',
+            "<img src=http://169.254.169.254/ a=\"<\" b=c'>",
+            "<meta http-equiv=refresh content=0;url=file:///etc/passwd a=b'c>",
+        ];
+        foreach ($refused as $html) {
+            try {
+                self::clean($html);
+                $this->fail('not refused: ' . $html);
+            } catch (\RuntimeException $e) {
+                $this->assertStringStartsWith('PDF:', $e->getMessage(), $html);
+            }
+        }
+    }
+
+    public function test_every_meta_but_charset_is_removed_and_imports_without_space_are_checked(): void
+    {
+        foreach ([
+            '<meta content="0;url=file:///etc/passwd" x=">" http-equiv=refresh>',
+            '<meta http-equiv="&#114;efresh" content="0;url=http://169.254.169.254/">',
+        ] as $html) {
+            $this->assertSame('', self::clean($html), $html);
+        }
+        $this->assertSame('<meta charset="utf-8">', self::clean('<meta charset="utf-8">'));
+        foreach (['<style>@import"http://169.254.169.254/x";</style>', '<style>@import/**/"file:///etc/passwd";</style>'] as $html) {
+            $this->assertStringContainsString('about:blank', self::clean($html), $html);
+        }
+    }
+
+    public function test_legitimate_css_escapes_and_entities_still_pass(): void
+    {
+        $html = '<style>p:before{content:"\\201C"} a{color:#f00;font:12px Arial}</style>'
+            . '<p style="color:red;background:url(\'https://img.public.test/a.png?a=1&amp;b=2\')">Tom &amp; Jerry, 3<4. C:\\Temp</p>';
+        $this->assertSame($html, self::clean($html));
+    }
+
     public function test_a_large_data_uri_document_passes_through_unchanged(): void
     {
         $big = base64_encode(random_bytes(2 * 1024 * 1024));

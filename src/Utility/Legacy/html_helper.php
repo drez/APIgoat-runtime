@@ -32,8 +32,15 @@ function htmlLink($name, $link, $options = "", $title = "")
     // so collapse any javascript:… variant to a non-navigating '#'. Real
     // navigations pass an actual URL and are untouched. (index.js also
     // preventDefaults bare-'#' clicks so no placeholder link jumps to top.)
-    if (is_string($link) && preg_match('/^\s*javascript:/i', $link)) {
-        $link = '#';
+    // SECURITY: match what the browser sees — entities decoded (gc_attr does
+    // not double-encode "jav&#x61;script:") and control/whitespace removed —
+    // and collapse vbscript: and non-image data: the same way.
+    if (is_string($link)) {
+        $scheme = preg_replace('/[\x00-\x20\x7f]+/', '', html_entity_decode($link, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if (preg_match('/^(?:javascript|vbscript):/i', $scheme)
+            || (preg_match('/^data:/i', $scheme) && !preg_match('#^data:image/(?:png|gif|jpe?g|webp);#i', $scheme))) {
+            $link = '#';
+        }
     }
     if (!empty($title)) {
         if ($title === true) {
@@ -415,7 +422,7 @@ function selectboxCustomArray($name, $options, $defaultLabel = '', $attr = '', $
         $defaultLabel
         . $emptyLabel
         . $optionsList,
-        'class="scrollable select-element ' . $name . '" data-default-selected=\'' . json_encode($valuesList) . '\''
+        'class="scrollable select-element ' . $name . '" data-default-selected=\'' . json_encode($valuesList, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP) . '\''
     )
         . input('hidden', $name, $inputValue, 'class="selextbox-input NC' . str_replace('[]', '', $name) . '"  ' . $SearchTabs . ' s="d"');
 
@@ -602,6 +609,12 @@ function cleanString($str)
     return $str;
 }
 
+/** SECURITY: a PHP string as a JS string literal that cannot end the string or the <script>. */
+function gcJsStr($value)
+{
+    return json_encode((string) $value, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+}
+
 function getUrlParamsJSON($arrayParams = "", $asUrl = false)
 {
     $keys = array_keys($_REQUEST);
@@ -619,13 +632,13 @@ function getUrlParamsJSON($arrayParams = "", $asUrl = false)
     if ($arrayParams[0] != "") {
         foreach ($keys as $key) {
             if (in_array($key, $arrayParams)) {
-                $urlParams .= ",\"" . $key . "\":\"" . urlencode($_REQUEST[$key]) . "\"";
+                $urlParams .= "," . gcJsStr($key) . ":" . gcJsStr(urlencode($_REQUEST[$key]));
             }
         }
     } else {
         foreach ($keys as $key) {
             if ($key != "__utma" && $key != "__utmz" && $key != "PHPSESSID" && !strstr($key, "SESS") && $key != "dum") {
-                $urlParams .= ",'" . $key . "':'" . urlencode($_REQUEST[$key]) . "'";
+                $urlParams .= "," . gcJsStr($key) . ":" . gcJsStr(urlencode($_REQUEST[$key]));
             }
         }
     }
@@ -940,10 +953,10 @@ function handleNotOkResponse($msg, $ui = '', $print = false, $text_title = 'Mess
     }
 
     if ($print) {
-        $error['onReadyJs'] = scriptReady("alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');");
+        $error['onReadyJs'] = scriptReady("alertb(" . gcJsStr($text_title) . ", " . gcJsStr($msg) . ");");
     } else {
         $error['onReadyJs'] = "
-        alertb('" . str_replace("'", " ", $text_title) . "', '" . str_replace("'", " ", $msg) . "');";
+        alertb(" . gcJsStr($text_title) . ", " . gcJsStr($msg) . ");";
         $error['error'] = 'yes';
     }
 
@@ -968,7 +981,7 @@ function handleValidationError($objValidationFails, $ui = '', $text_title = 'Mes
     }
     $ui = (!empty($ui)) ? "#" . $ui : "";
     $error['onReadyJs'] .= "
-    document.querySelectorAll('" . $ui . " .error_field').forEach(function(el){ el.classList.remove('error_field'); });";
+    document.querySelectorAll(" . gcJsStr($ui . " .error_field") . ").forEach(function(el){ el.classList.remove('error_field'); });";
     foreach ($fields as $field) {
         if (!empty($field)) {
             if (strstr($field, '.')) {
@@ -976,18 +989,19 @@ function handleValidationError($objValidationFails, $ui = '', $text_title = 'Mes
                 $fieldName = $input[1];
             } else
                 $fieldName = $field;
+            $sel = $ui . " [v=" . strtoupper($fieldName) . "]";
             $error['onReadyJs'] .= "
-                if(document.querySelector('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span') !== null){
-                     document.querySelectorAll('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "] .select-label-span').forEach(function(el){ el.classList.add('error_field'); });
+                if(document.querySelector(" . gcJsStr($sel . " .select-label-span") . ") !== null){
+                     document.querySelectorAll(" . gcJsStr($sel . " .select-label-span") . ").forEach(function(el){ el.classList.add('error_field'); });
                 }else{
-                     document.querySelectorAll('" . $ui . " [v=" . addslashes(strtoupper($fieldName)) . "]').forEach(function(el){ el.classList.add('error_field'); });
+                     document.querySelectorAll(" . gcJsStr($sel) . ").forEach(function(el){ el.classList.add('error_field'); });
                 }
             ";
         }
     }
     $error['onReadyJs'] .= "
-    alertb('" . addslashes($text_title) . "', '" . addslashes($error['txt']) . "');
-    alert_close = function(){ var __ef = document.querySelector('" . $ui . " .error_field'); if(__ef){ __ef.focus(); } };
+    alertb(" . gcJsStr($text_title) . ", " . gcJsStr($error['txt']) . ");
+    alert_close = function(){ var __ef = document.querySelector(" . gcJsStr($ui . " .error_field") . "); if(__ef){ __ef.focus(); } };
     ";
 
     if ($_SESSION[_AUTH_VAR]->SessVar['content-type'] == 'JSON') {

@@ -207,11 +207,27 @@ final class MailHtml
 
     private static function cleanCss(string $css, bool $images = true): string
     {
-        $css = str_ireplace(self::BLOCKED_PREFIX, '', $css);
-        $css = preg_replace('/expression\s*\(/i', 'expression-blocked(', $css) ?? $css;
-        $css = preg_replace('/-moz-binding\s*:[^;}]*;?/i', '', $css) ?? $css;
-        $css = preg_replace('/behavior\s*:[^;}]*;?/i', '', $css) ?? $css;
-        $css = preg_replace('/@import[^;]*;?/i', '', $css) ?? $css;
+        // SECURITY: resolve escapes that spell a name (u\72 l(, @\69mport, \62 ehavior)
+        // so the filters below see what the browser's tokenizer sees. Only
+        // escapes decoding to a letter are rewritten: same meaning (a \31 0px class
+        // or a \" inside a string stays escaped).
+        $css = preg_replace_callback('/\\\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|([g-zG-Z]))/', static function (array $m): string {
+            if (($m[2] ?? '') !== '') {
+                return $m[2];
+            }
+            $c = hexdec($m[1]);
+            return $c < 0x80 && preg_match('/^[A-Za-z]$/', chr((int) $c)) ? chr((int) $c) : $m[0];
+        }, $css) ?? '';
+        // SECURITY: removals run to a fixpoint — "@imp@import;ort" (or a split
+        // BLOCKED_PREFIX) must not reassemble what was just removed.
+        do {
+            $before = $css;
+            $css = str_ireplace(self::BLOCKED_PREFIX, '', $css);
+            $css = preg_replace('/expression\s*\(/i', 'expression-blocked(', $css) ?? '';
+            $css = preg_replace('/-moz-binding\s*:[^;}]*;?/i', '', $css) ?? '';
+            $css = preg_replace('/behavior\s*:[^;}]*;?/i', '', $css) ?? '';
+            $css = preg_replace('/@import[^;]*;?/i', '', $css) ?? '';
+        } while ($css !== $before);
         // url(): keep http(s)/data, drop the rest (javascript:, vbscript:, file:)
         // Images blocked: a remote url() is parked (BLOCKED_PREFIX), not dropped,
         // so "Show images" restores backgrounds too.
@@ -224,7 +240,10 @@ final class MailHtml
                 return 'none';
             }
             return $images ? $m[0] : 'url(' . $m[1] . self::BLOCKED_PREFIX . trim($m[2]) . $m[1] . ')';
-        }, $css) ?? $css;
-        return $css;
+        }, $css) ?? '';
+        // SECURITY: libxml writes <style> text raw, so a "<" left in the CSS can
+        // close the element ("</style><img onerror=…>"). \3C is the same
+        // character to CSS and can never form a tag.
+        return str_replace('<', '\\3C ', $css);
     }
 }

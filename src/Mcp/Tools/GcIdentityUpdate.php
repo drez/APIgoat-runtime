@@ -115,7 +115,8 @@ class GcIdentityUpdate implements \ApiGoat\Mcp\McpTool
         if (\method_exists($session, 'isRoot') && $session->isRoot()) {
             return true;
         }
-        if ((string) $session->get('id_tenant') !== '') {
+        $tenant = \method_exists($session, 'get') ? $session->get('id_tenant') : ($session->idTenant ?? null);
+        if ((string) $tenant !== '') {
             return false;
         }
         if (\method_exists($session, 'isAdmin') && $session->isAdmin()) {

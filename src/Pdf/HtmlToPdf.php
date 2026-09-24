@@ -383,10 +383,29 @@ final class HtmlToPdf
             return $memo[$host] ??= (bool) ($urlRule($url)[0] ?? false);
         };
 
+        // SECURITY: CSS escapes and (in attributes / SVG) entities are decoded by the
+        // engine before it parses url() / @import / image-set(); the regexes below
+        // only see the raw text. Reject a document whose decoded form carries more
+        // of those constructs than its raw form (u\72 l(, url&#40;, @\69mport).
+        $construct = '#url\(|@import|image-set\(#i';
+        if (preg_match_all($construct, self::cssDecode(html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8')))
+            > preg_match_all($construct, $html)) {
+            throw new \RuntimeException('PDF: the document carries encoded CSS url()/@import');
+        }
+
         // Paired active elements with their content, then any stray open/close tag.
-        $html = self::pcre(preg_replace('#<(script|iframe|frameset|object|applet)\b[^>]*>.*?</\1\s*>#is', '', $html));
-        $html = self::pcre(preg_replace('#</?(?:script|iframe|frame|frameset|object|embed|applet|base)\b(?:[^>"\']|"[^"]*"|\'[^\']*\')*>#i', '', $html));
-        $html = self::pcre(preg_replace('#<meta\b(?=[^>]*http-equiv\s*=\s*["\']?\s*refresh)(?:[^>"\']|"[^"]*"|\'[^\']*\')*>#i', '', $html));
+        $html = self::pcre(preg_replace('#<(script|iframe|frameset|object|applet|portal|fencedframe)\b[^>]*>.*?</\1\s*>#is', '', $html));
+        $html = self::pcre(preg_replace('#</?(?:script|iframe|frame|frameset|object|embed|applet|base|portal|fencedframe)\b(?:[^>"\']|"[^"]*"|\'[^\']*\')*>#i', '', $html));
+        // SECURITY: every <meta> but a plain charset one goes (http-equiv can be
+        // entity-encoded or hidden behind a quoted ">"); withCsp() adds its own.
+        $html = self::pcre(preg_replace('#<meta\b(?!\s*charset\s*=\s*["\']?[\w-]+["\']?\s*/?>)(?:[^>"\']|"[^"]*"|\'[^\']*\')*>#i', '', $html));
+        // SECURITY: a tag with unbalanced quotes (x=a'b) evades the quote-aware
+        // regexes but is still a tag to the browser — refuse the document.
+        $rest = self::pcre(preg_replace('#</?[a-zA-Z](?:[^>"\']|"[^"]*"|\'[^\']*\')*>#', '', $html));
+        if (preg_match('#<[a-zA-Z][^>]*>#', $rest)
+            || preg_match('#<(?:script|iframe|frame|frameset|object|embed|applet|base|portal|fencedframe)\b|<meta\b(?!\s*charset\s*=\s*["\']?[\w-]+["\']?\s*/?>)#i', $html)) {
+            throw new \RuntimeException('PDF: the document carries a malformed or active tag');
+        }
 
         // Attributes, tag by tag (quote-aware, so a ">" inside a value does not end the tag).
         $html = self::pcre(preg_replace_callback(
@@ -431,12 +450,25 @@ final class HtmlToPdf
             $html
         ));
         $html = self::pcre(preg_replace_callback(
-            '#@import\s+("[^"]*"|\'[^\']*\')#i',
+            '#@import(?:\s|/\*.*?\*/)*("[^"]*"|\'[^\']*\')#is',
             static fn(array $m): string => $ok(trim($m[1], '"\'')) ? $m[0] : '@import "about:blank"',
             $html
         ));
         // image-set() takes bare strings as URLs; no document of ours uses it.
         return self::pcre(preg_replace('#(?:-webkit-)?image-set\s*\(#i', 'blocked-image-set(', $html));
+    }
+
+    /** CSS escapes resolved the way the engine's tokenizer does (\72 -> r, \r -> r, escaped newline dropped). */
+    private static function cssDecode(string $css): string
+    {
+        $css = (string) preg_replace('/\\\\(?:\r\n|[\n\r\f])/', '', $css);
+        return self::pcre(preg_replace_callback(
+            '/\\\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|(.))/s',
+            static fn(array $m): string => ($m[1] ?? '') !== ''
+                ? ((($c = hexdec($m[1])) > 0 && $c <= 0x10FFFF && ($ch = mb_chr((int) $c, 'UTF-8')) !== false) ? $ch : "\u{FFFD}")
+                : $m[2],
+            $css
+        ));
     }
 
     /** A PCRE failure (backtrack/JIT limit) must never pass for "sanitised to nothing". */
@@ -667,6 +699,11 @@ final class HtmlToPdf
      * resolves to a non-public address, blocking SSRF to internal services and
      * the cloud metadata endpoint. DNS is resolved so a public hostname pointing
      * at a private IP (DNS-rebinding style) is caught too.
+     *
+     * SECURITY: this is a check-then-fetch — the engine resolves the host again
+     * and follows redirects on its own, so a rebinding DNS answer or a 30x to an
+     * internal address is not caught here. Run the render engines on a host /
+     * network namespace with no route to internal services or the metadata IP.
      *
      * @return array{0: bool, 1: string}
      */

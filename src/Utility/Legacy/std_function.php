@@ -181,6 +181,19 @@ function sendHTMLemail($message, $from, $to, $subject, $reply = "", $attachment 
     if ($recipient === []) {
         return true;
     }
+    // SECURITY: these land in raw header lines — a CR/LF adds headers (extra
+    // Bcc:, a new body). Refuse the send; a bare single address must be valid.
+    foreach ([$from, $reply, $bcc, $subject, implode(';', $recipient)] as $h) {
+        if (preg_match('/[\r\n\0]/', (string) $h)) {
+            return false;
+        }
+    }
+    foreach ([$from, $reply, $bcc] as $h) {
+        $h = trim((string) $h);
+        if ($h !== '' && strpbrk($h, '<,') === false && !filter_var($h, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+    }
     /*if(!eregi("^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,4})$", $to)){
         return "Error: misformated recipient email value
 ";

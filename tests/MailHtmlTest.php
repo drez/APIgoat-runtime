@@ -102,4 +102,35 @@ final class MailHtmlTest extends TestCase
         $this->assertStringNotContainsStringIgnoringCase('javascript', MailHtml::withImages($out));
         $this->assertStringNotContainsString('data-gm-src', $out);
     }
+
+    public function test_css_cleaning_cannot_reassemble_a_closing_style_tag(): void
+    {
+        foreach ([
+            '<style>p{}<@import;/style><img src=x onerror=alert(1)></style>',
+            '<style>p{}<@imp@import;ort;/style><img src=x onerror=alert(1)></style>',
+            '<style>p{}<-moz-binding:x;/style><img src=x onerror=alert(1)></style>',
+            '<style>p{}<x-gm-blocked:/style><img src=x onerror=alert(1)></style>',
+        ] as $in) {
+            foreach ([false, true] as $images) {
+                $out = MailHtml::defuse($in, $images);
+                $this->assertStringNotContainsString('<img', $out, $in);
+                $this->assertSame(1, substr_count($out, '</style>') - substr_count($out, '<style>') + 1, $in);
+                $this->assertStringNotContainsString('<img', MailHtml::withImages($out), $in);
+            }
+        }
+    }
+
+    public function test_css_escapes_cannot_hide_url_import_or_behavior(): void
+    {
+        $out = MailHtml::defuse('<style>p{background:u\\72 l(https://t.example/px)} q{background:\\75 rl(javascript:alert(1))}'
+            . ' @\\69mport "https://e.x/a.css"; .\\31 0px{color:red} a:before{content:"\\201C"}</style>'
+            . '<p style="b\\65havior:url(x.htc);color:red">x</p>');
+        $this->assertStringContainsString('url(' . MailHtml::BLOCKED_PREFIX . 'https://t.example/px)', $out, 'escaped url() is parked like a plain one');
+        $this->assertStringNotContainsString('javascript', $out);
+        $this->assertStringNotContainsStringIgnoringCase('mport', $out);
+        $this->assertStringNotContainsString('havior', $out);
+        $this->assertStringContainsString('.\\31 0px{color:red}', $out, 'a digit-escaped class keeps its escape');
+        $this->assertStringContainsString('content:"\\201C"', $out);
+        $this->assertStringContainsString('style="color:red"', $out);
+    }
 }
