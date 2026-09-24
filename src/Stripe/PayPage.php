@@ -30,19 +30,38 @@ final class PayPage
             return self::html($response, 410, 'Payment link replaced', '<p>This payment link is no longer valid. Please use the most recent link you received.</p>');
         }
 
-        // Re-create a fresh Checkout Session if the stored one is expired/consumed.
+        // Re-create a fresh Checkout Session only if the stored one expired (or is gone).
         $gw      = StripeGateway::fromEnv();
         $url     = '';
         $session = null;
         if ($gw !== null && (string) $pay->getStripeCheckoutSessionId() !== '') {
             try {
                 $session = $gw->client()->checkout->sessions->retrieve((string) $pay->getStripeCheckoutSessionId());
-                if (($session->status ?? '') === 'open') {
-                    $url = (string) $session->url;
+            } catch (\Stripe\Exception\InvalidRequestException $e) {
+                // SECURITY: regenerate only when Stripe says the session no
+                // longer exists; any other failure could hide a completed one.
+                if ($e->getHttpStatus() !== 404 && $e->getStripeCode() !== 'resource_missing') {
+                    return self::html($response, 503, 'Payment unavailable', '<p>Payments are temporarily unavailable. Please contact us.</p>');
                 }
-            } catch (\Throwable $e) {
-                // fall through — regenerate below
                 $session = null;
+            } catch (\Throwable $e) {
+                return self::html($response, 503, 'Payment unavailable', '<p>Payments are temporarily unavailable. Please contact us.</p>');
+            }
+            $sstatus = $session !== null ? (string) ($session->status ?? '') : '';
+            if ($sstatus === 'open') {
+                $url = (string) $session->url;
+            } elseif ($sstatus === 'complete') {
+                // SECURITY: the payer already went through Checkout (paid, or an
+                // async SEPA/ACH debit still processing) and the webhook has not
+                // landed yet. Never overwrite the stored session id — the late
+                // checkout.session.completed must still find this row — and never
+                // hand out a second payable link (double charge).
+                return ($session->payment_status ?? '') === 'paid'
+                    ? self::html($response, 200, 'Payment received', '<p>This payment has already been completed. Thank you!</p>')
+                    : self::html($response, 200, 'Payment processing', '<p>Your payment is being processed. This page does not update automatically — you will receive a Stripe receipt by email once it completes.</p>');
+            } elseif ($session !== null && $sstatus !== 'expired') {
+                // Unknown state: refuse rather than risk replacing a live session.
+                return self::html($response, 503, 'Payment unavailable', '<p>Payments are temporarily unavailable. Please contact us.</p>');
             }
         }
         if ($url === '') {

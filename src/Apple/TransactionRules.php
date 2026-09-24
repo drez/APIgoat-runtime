@@ -46,6 +46,30 @@ final class TransactionRules
         }
     }
 
+    /**
+     * SECURITY: renewal info is Apple-signed but separately supplied — only
+     * trust it when it describes THIS transaction's subscription (same
+     * originalTransactionId, and same environment / bundleId when the renewal
+     * carries them). Anything else is treated as absent, so one account's
+     * grace-period renewal info cannot extend another's expired subscription.
+     */
+    public static function boundRenewal(array $tx, ?array $renewal): ?array
+    {
+        if ($renewal === null) {
+            return null;
+        }
+        $orig = (string) ($tx['originalTransactionId'] ?? '');
+        if ($orig === '' || (string) ($renewal['originalTransactionId'] ?? '') !== $orig) {
+            return null;
+        }
+        foreach (['environment', 'bundleId'] as $k) {
+            if (isset($renewal[$k]) && (string) $renewal[$k] !== (string) ($tx[$k] ?? '')) {
+                return null;
+            }
+        }
+        return $renewal;
+    }
+
     /** Subscription state from the latest verified transaction (+ renewal info when known). */
     public static function subscriptionStatus(array $tx, ?array $renewal, int $now): string
     {

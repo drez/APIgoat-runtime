@@ -139,6 +139,10 @@ class BackedQuery
     {
         $this->requireStorage();
         try {
+            // SECURITY: a by-id load must not escape the scope folder.
+            if (!self::inScope($this->storage, (string) $id, $this->scope)) {
+                return null;
+            }
             $row = $this->storage->get((string) $id);
         } catch (\Throwable $e) {
             return null;
@@ -216,6 +220,24 @@ class BackedQuery
             $out['limit'] = $this->limit;
         }
         return $out;
+    }
+
+    /**
+     * SECURITY: whether $id lives directly in $scope (the set list($scope)
+     * returns). Unscoped ('' scope) always passes; a backend that cannot
+     * answer (no inScope()) fails closed for scoped access.
+     *
+     * @internal shared with BackedEntity
+     */
+    public static function inScope(FileStorageInterface $storage, string $id, string $scope): bool
+    {
+        if (trim($scope, '/') === '') {
+            return true;
+        }
+        if ($id === '' || !method_exists($storage, 'inScope')) {
+            return false;
+        }
+        return (bool) $storage->inScope($id, $scope);
     }
 
     private function hydrate(array $row): BackedEntity

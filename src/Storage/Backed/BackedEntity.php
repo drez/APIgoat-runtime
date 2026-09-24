@@ -153,6 +153,11 @@ abstract class BackedEntity
         }
 
         // EXISTING entity → metadata patch.
+        // SECURITY: the id may come from the client (fromArray/setPrimaryKey
+        // mark the entity existing); never patch a file outside the scope.
+        if (!BackedQuery::inScope($this->storage, (string) $this->getPrimaryKey(), $this->scope)) {
+            throw new \RuntimeException(static::class . '::save(): item is not in the current scope');
+        }
         $patch = [];
         foreach ($map as $col => $storageKey) {
             if (array_key_exists($col, $this->data)) {
@@ -175,6 +180,11 @@ abstract class BackedEntity
         $pk = $this->getPrimaryKey();
         if (!$pk) {
             return true; // nothing to delete
+        }
+        // SECURITY: never trash a file outside the scope (client-supplied id);
+        // report it like an item that is not there.
+        if (!BackedQuery::inScope($this->storage, (string) $pk, $this->scope)) {
+            return false;
         }
         return $this->storage->delete((string) $pk);
     }
