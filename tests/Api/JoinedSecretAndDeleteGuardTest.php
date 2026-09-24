@@ -149,4 +149,24 @@ final class JoinedSecretAndDeleteGuardTest extends TestCase
             $this->assertFalse(Api::isJoinedSecretColumn($n), $n);
         }
     }
+
+    public function testSecretNameFloorCatchesRunTogetherAndPrefixedNames(): void
+    {
+        // Run-together names the segment floor missed (security re-check of 59d0d88).
+        foreach (['passwordhash', 'userpassword', 'apitoken', 'authtoken', 'accesstoken', 'refreshtoken',
+                  'totpsecret', 'password_last_changed', 'passwd', 'smtp_pwd', 'smtp_pass', 'db_passwd',
+                  'hmac_key', 'signing_key', 'encryption_key', 'aws_key', 'google_maps_key', 'SigningKey',
+                  'reset_token_hash', 'api_key_enc', 'id_token', 'sync_token', 'clientSecret'] as $n) {
+            $this->assertTrue(Api::isSecretName($n), $n);
+            $this->assertTrue(Api::isJoinedSecretColumn($n), $n);
+        }
+        // Quantities, metadata and foreign keys stay joinable (fleet schemas:
+        // cryptobboy balances, apichatbot/apigmail usage, apigTutor pass marks).
+        foreach (['token_count', 'monthly_token_limit', 'free_token', 'staked_token', 'total_token',
+                  'flexible_token', 'freeze_token', 'id_api_key', 'llm_api_key_fingerprint',
+                  'llm_api_key_rotated_at', 'reset_token_expires', 'assignment_pass_mark', 'last_pass_at',
+                  'secretary', 'bypass', 'compass', 'passenger', 'keynote', 'api_key_document'] as $n) {
+            $this->assertFalse(Api::isSecretName($n), $n);
+        }
+    }
 }

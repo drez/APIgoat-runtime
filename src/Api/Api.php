@@ -317,12 +317,35 @@ class Api
         return false;
     }
 
+    /** Qualifiers that make a `token` / `pass` segment a quantity, not a credential. */
+    private const SECRET_QUANTITY_SEGMENTS = ['count', 'counts', 'limit', 'limits', 'total', 'free', 'staked', 'locked',
+        'balance', 'amount', 'supply', 'used', 'usage', 'in', 'out', 'input', 'output', 'max', 'min', 'price', 'rate',
+        'qty', 'quantity', 'cost', 'budget', 'sum', 'num', 'nb', 'symbol', 'decimals', 'monthly', 'daily', 'flexible',
+        'freeze', 'frozen'];
+
+    /** Segments that may follow a credential segment and keep it a credential (token_hash, api_key_enc). */
+    private const SECRET_TAIL_SEGMENTS = ['hash', 'enc', 'encrypted', 'value', 'secret', 'key', 'plain'];
+
+    /** Prefixes that make a `key` (or run-together `…key`) a credential. */
+    private const SECRET_KEY_PREFIXES = ['api', 'access', 'refresh', 'secret', 'private', 'hmac', 'signing', 'sign',
+        'encryption', 'encrypt', 'crypt', 'aws', 'maps', 'master', 'client', 'webhook', 'jwt', 'session', 'license',
+        'licence', 'app', 'auth'];
+
+    /** Prefixes that make a run-together `…token` a credential (apitoken, authtoken). */
+    private const SECRET_TOKEN_PREFIXES = ['api', 'auth', 'access', 'refresh', 'bearer', 'session', 'reset', 'csrf',
+        'remember', 'id', 'jwt', 'oauth', 'push', 'device', 'verify', 'verification', 'confirm', 'confirmation',
+        'invite', 'magic', 'login', 'public', 'private', 'secret', 'app', 'fcm', 'apns'];
+
     /**
      * Name-based secret floor, segment-wise (snake_case and CamelCase split),
-     * mirroring goatcheese SecretColumns::kindOfName: a password / passwd /
-     * passphrase / secret / token / salt segment, a trailing `hash`
-     * (key_hash, password_hash), or an api / access / refresh / secret /
-     * private `key`. Whole segments only — `tokens_in`, `output_tokens` and
+     * following goatcheese SecretColumns::kindOfName: a `password`/`passwd`
+     * prefix; a password / passwd / passphrase / pwd / secret / salt segment
+     * (also run-together: userpassword, totpsecret); a trailing `token` or
+     * `pass` unless another segment makes it a quantity (free_token,
+     * monthly_token_limit); a credential-prefixed run-together token
+     * (apitoken, accesstoken); a trailing `hash`; a trailing api / access /
+     * hmac / signing / encryption / aws / maps … `key`. Whole segments only —
+     * `tokens_in`, `output_tokens`, `stripe_publishable_key` and
      * `seo_keywords` are ordinary columns.
      */
     public static function isSecretName(string $name): bool
@@ -332,12 +355,46 @@ class Api
         if ($seg === []) {
             return false;
         }
+        $flat = implode('', $seg);
+        if (strncmp($flat, 'password', 8) === 0 || strncmp($flat, 'passwd', 6) === 0) {
+            return true;
+        }
+        // id_api_key / id_token_type are foreign keys to a table, not values
+        // (a bare OIDC `id_token` still is).
+        if ($seg[0] === 'id' && count($seg) > 1 && $seg !== ['id', 'token']) {
+            return false;
+        }
+        $quantity = array_intersect($seg, self::SECRET_QUANTITY_SEGMENTS) !== [];
+        $last = count($seg) - 1;
+        // A credential segment names the value itself only when it ends the
+        // name (smtp_pass, sync_token) or is followed by a storage suffix
+        // (token_hash); llm_api_key_rotated_at / reset_token_expires /
+        // last_pass_at are metadata about it.
+        $terminal = static function (int $i) use ($seg, $last): bool {
+            return $i === $last || in_array($seg[$i + 1], self::SECRET_TAIL_SEGMENTS, true);
+        };
+        $credPrefix = static function (string $p, string $suffix, array $prefixes): bool {
+            if (substr($p, -strlen($suffix)) !== $suffix || strlen($p) === strlen($suffix)) {
+                return false;
+            }
+            return in_array(substr($p, 0, -strlen($suffix)), $prefixes, true);
+        };
         foreach ($seg as $i => $p) {
-            if (in_array($p, ['password', 'passwd', 'passphrase', 'secret', 'token', 'salt',
-                'apikey', 'accesskey', 'secretkey', 'privatekey'], true)) {
+            if (in_array($p, ['passphrase', 'pwd', 'salt'], true)
+                || strpos($p, 'password') !== false || strpos($p, 'passwd') !== false
+                || substr($p, -6) === 'secret') {
                 return true;
             }
-            if ($p === 'key' && $i > 0 && in_array($seg[$i - 1], ['api', 'access', 'refresh', 'secret', 'private'], true)) {
+            if (($p === 'token' || $p === 'pass') && !$quantity && $terminal($i)) {
+                return true;
+            }
+            if ($credPrefix($p, 'token', self::SECRET_TOKEN_PREFIXES) && $terminal($i)) {
+                return true;
+            }
+            if ($p === 'key' && $i > 0 && in_array($seg[$i - 1], self::SECRET_KEY_PREFIXES, true) && $terminal($i)) {
+                return true;
+            }
+            if ($credPrefix($p, 'key', self::SECRET_KEY_PREFIXES) && $terminal($i)) {
                 return true;
             }
         }

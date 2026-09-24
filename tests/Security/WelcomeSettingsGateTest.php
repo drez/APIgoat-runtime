@@ -53,11 +53,13 @@ final class WelcomeSettingsGateTest extends TestCase
     public function testSecretLikeConfigKeysAreMasked(): void
     {
         foreach (['openai_api_key', 'anthropic_api_key', 'stripe_secret', 'smtp_password', 'mail_passwd',
-                  'gdrive_token', 'API_KEY', 'webhookSecret', 'stripe_secret_key', 'jwt_private_key'] as $k) {
+                  'gdrive_token', 'API_KEY', 'webhookSecret', 'stripe_secret_key', 'jwt_private_key',
+                  'smtp_pwd', 'smtp_pass', 'google_maps_key', 'hmac_key', 'signing_key', 'encryption_key',
+                  'aws_key', 'apitoken', 'totpsecret'] as $k) {
             $this->assertTrue(WelcomeView::isSecretConfigKey($k), $k);
         }
         foreach (['app_status', 'api_ips', 'company_name', 'default_locale',
-                  'stripe_publishable_key', 'seo_keywords', 'google_maps_key'] as $k) {
+                  'stripe_publishable_key', 'seo_keywords', 'token_count', 'monthly_token_limit'] as $k) {
             $this->assertFalse(WelcomeView::isSecretConfigKey($k), $k);
         }
     }
