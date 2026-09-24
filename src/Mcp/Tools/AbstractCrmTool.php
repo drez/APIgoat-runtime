@@ -339,12 +339,17 @@ abstract class AbstractCrmTool implements McpTool
      * each row resolves its locale as $lang → the row's own lang column →
      * $fallbackLang → fr_CA, with empty values falling back to fr_CA like the
      * document renderers. Rows lacking the primary-key column (custom select
-     * projections, aggregates) are left untouched. Safe on ids the caller can
-     * see only: they came out of the ACL-filtered list query itself.
+     * projections, aggregates) are left untouched.
+     *
+     * SECURITY: the row's pk key is NOT proof the caller may read that id — a
+     * custom select can alias any column to it (select [["title","id_quote"]])
+     * and the i18n table carries no tenant/owner column of its own. With a
+     * $session the ids are re-checked through loadPksScoped() (tenant +
+     * Owner/Group, right 'r') before any translation row is read.
      *
      * @param mixed $data the envelope 'data' (numeric array of assoc rows expected)
      */
-    protected function mergeI18nColumnsIntoRows(string $entity, $data, ?string $lang, ?string $fallbackLang = null)
+    protected function mergeI18nColumnsIntoRows(string $entity, $data, ?string $lang, ?string $fallbackLang = null, ?AuthySession $session = null)
     {
         if (!is_array($data) || $data === [] || !isset($data[0]) || !is_array($data[0])) {
             return $data; // not a list of rows
@@ -364,9 +369,14 @@ abstract class AbstractCrmTool implements McpTool
             }
         }
         $ids = array_values(array_unique($ids));
+        if ($ids !== [] && $session !== null) {
+            $reachable = $session->loadPksScoped("\\App\\{$entity}Query", $ids, $entity, 'r');
+            $ids = array_values(array_filter($ids, static fn ($id) => isset($reachable[AuthySession::pkKey($id)])));
+        }
         if ($ids === []) {
             return $data;
         }
+        $mergeable = array_fill_keys(array_map('strval', $ids), true);
 
         // Only true i18n content columns: skip the bookkeeping pair AND any
         // column the MAIN table also has (tablestamps live on both; the row's
@@ -405,7 +415,8 @@ abstract class AbstractCrmTool implements McpTool
         }
 
         foreach ($data as &$row) {
-            if (!is_array($row) || !isset($row[$pkKey]) || $row[$pkKey] === '') {
+            if (!is_array($row) || !isset($row[$pkKey]) || $row[$pkKey] === ''
+                || !isset($mergeable[(string) $row[$pkKey]])) {
                 continue;
             }
             $locales = $byId[$row[$pkKey]] ?? [];

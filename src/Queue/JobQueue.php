@@ -237,15 +237,16 @@ class JobQueue
         $query    = static::queryClass();
         $stats    = ['processed' => 0, 'ok' => 0, 'failed' => 0, 'deferred' => 0];
         $this->reclaimStale();
+        $now  = date('Y-m-d H:i:s');
         $rows = $query::create()
             ->filterByState(static::STATE_PENDING)
-            ->filterByRunAfter(date('Y-m-d H:i:s'), \Criteria::LESS_EQUAL)
+            ->filterByRunAfter($now, \Criteria::LESS_EQUAL)
             ->{'orderBy' . static::pkPhpName()}()
             ->limit($limit)
             ->find();
         foreach ($rows as $job) {
-            if (!$this->claim((int) $job->getPrimaryKey())) {
-                continue; // another drainer won the race
+            if (!$this->claim((int) $job->getPrimaryKey(), (int) $job->getAttempts(), $now)) {
+                continue; // another drainer won the race (or ran/deferred it since our read)
             }
             $leaseAttempts = (int) $job->getAttempts();
             // Keep the in-memory object consistent with the row the claim just wrote,
@@ -306,21 +307,40 @@ class JobQueue
 
     // ---- claim / reclaim ----------------------------------------------
 
-    /** Atomic Pending→Running; false when another worker claimed it first. */
-    protected function claim(int $pk): bool
+    /**
+     * Atomic Pending→Running; false when another worker claimed it first.
+     *
+     * SECURITY: a compare-and-set on the row as this drainer READ it
+     * (attempts, still due at $now), not on state alone. Between the batch
+     * SELECT and this claim another drainer may have run the job and put it
+     * back to Pending with a backoff; a state-only claim re-ran it at once,
+     * then the stale attempts fence dropped the outcome and a later reclaim
+     * ran it a third time — duplicate side effects (charges, pushes).
+     */
+    protected function claim(int $pk, ?int $attempts = null, ?string $now = null): bool
     {
         // state is TINYINT (valueSet index) — bind the translated indexes, not labels.
         $token = \bin2hex(\random_bytes(8));
+        $where  = static::pkColumn() . ' = ? AND state = ?';
+        $params = [$pk, static::stateIndex(static::STATE_PENDING)];
+        if ($attempts !== null) {
+            $where   .= ' AND attempts = ?';
+            $params[] = $attempts;
+        }
+        if ($now !== null) {
+            $where   .= ' AND run_after <= ?';
+            $params[] = $now;
+        }
         if (static::hasColumn('claimed_by')) {
             $st = $this->connection()->prepare(
-                'UPDATE ' . static::tableName() . ' SET state = ?, claimed_at = NOW(), claimed_by = ? WHERE ' . static::pkColumn() . ' = ? AND state = ?'
+                'UPDATE ' . static::tableName() . ' SET state = ?, claimed_at = NOW(), claimed_by = ? WHERE ' . $where
             );
-            $st->execute([static::stateIndex(static::STATE_RUNNING), $token, $pk, static::stateIndex(static::STATE_PENDING)]);
+            $st->execute(array_merge([static::stateIndex(static::STATE_RUNNING), $token], $params));
         } else {
             $st = $this->connection()->prepare(
-                'UPDATE ' . static::tableName() . ' SET state = ?, claimed_at = NOW() WHERE ' . static::pkColumn() . ' = ? AND state = ?'
+                'UPDATE ' . static::tableName() . ' SET state = ?, claimed_at = NOW() WHERE ' . $where
             );
-            $st->execute([static::stateIndex(static::STATE_RUNNING), $pk, static::stateIndex(static::STATE_PENDING)]);
+            $st->execute(array_merge([static::stateIndex(static::STATE_RUNNING)], $params));
         }
         if ($st->rowCount() !== 1) {
             return false;

@@ -79,9 +79,11 @@ namespace ApiGoat\Tests\Mcp {
 
         public function testIdentityUpdateNeedsUnscopedConfigWrite(): void
         {
-            self::assertTrue(GcIdentityUpdate::unscopedConfigWrite($this->session(['Config' => ['All' => 'rw']])));
-            self::assertFalse(GcIdentityUpdate::unscopedConfigWrite($this->session(['Config' => ['Owner' => 'rw']])));
-            self::assertFalse(GcIdentityUpdate::unscopedConfigWrite($this->session(['Config' => ['All' => 'r']])));
+            self::assertTrue(GcIdentityUpdate::unscopedConfigWrite($this->session(['Config' => ['All' => 'rw']], null)));
+            self::assertFalse(GcIdentityUpdate::unscopedConfigWrite($this->session(['Config' => ['Owner' => 'rw']], null)));
+            self::assertFalse(GcIdentityUpdate::unscopedConfigWrite($this->session(['Config' => ['All' => 'r']], null)));
+            // The identity file is host-wide: a tenant-bound user never writes it.
+            self::assertFalse(GcIdentityUpdate::unscopedConfigWrite($this->session(['Config' => ['All' => 'rw']], 5)));
             self::assertTrue(GcIdentityUpdate::unscopedConfigWrite($this->session([], null, true)));
         }
     }

@@ -171,8 +171,16 @@ final class AiProfile
                 ? $fromManifest
                 : (($p->provider === 'ollama' && !$fallback) ? -1 : null);
         }
+        // SECURITY: the operator's cloud key (env / config row) only ever rides
+        // to that provider's own endpoint. A resolver row naming openai /
+        // anthropic with its own base_url but no api_key gets NO key — else a
+        // tenant-editable endpoint (https://evil/v1) received the operator's
+        // bearer on the first request.
+        $ownEndpoint = $p->provider === 'ollama'
+            || self::str($spec['base_url'] ?? null) === null
+            || \rtrim($p->baseUrl, '/') === \rtrim(self::defaultBaseUrl($p->provider), '/');
         $p->apiKey = self::str($spec['api_key'] ?? null)
-            ?? ($fallback ? '' : self::defaultApiKey($p->provider));
+            ?? (($fallback || !$ownEndpoint) ? '' : self::defaultApiKey($p->provider));
         $p->auth = \in_array($spec['auth'] ?? null, ['bearer', 'x-api-key', 'none'], true)
             ? (string) $spec['auth']
             : ($p->provider === 'anthropic' ? 'x-api-key' : 'bearer');

@@ -100,11 +100,25 @@ class GcIdentityUpdate implements \ApiGoat\Mcp\McpTool
         return ['content' => [['type' => 'text', 'text' => json_encode($view, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)]]];
     }
 
-    /** Admin, root, or a Config 'w' grant at the 'All' level (hasRights === true). */
+    /**
+     * Root; or, for a session bound to NO tenant, Admin or a Config 'w' grant
+     * at the 'All' level (hasRights === true).
+     *
+     * SECURITY: the identity file is host-wide — its text is injected into
+     * the MCP instructions of EVERY user on the host. On a multi-tenant host a
+     * tenant's own Admin must not be able to rewrite what other tenants'
+     * assistants are told (cross-tenant prompt injection), so any
+     * tenant-bound non-root session is refused.
+     */
     public static function unscopedConfigWrite(AuthySession $session): bool
     {
-        if ((\method_exists($session, 'isAdmin') && $session->isAdmin())
-            || (\method_exists($session, 'isRoot') && $session->isRoot())) {
+        if (\method_exists($session, 'isRoot') && $session->isRoot()) {
+            return true;
+        }
+        if ((string) $session->get('id_tenant') !== '') {
+            return false;
+        }
+        if (\method_exists($session, 'isAdmin') && $session->isAdmin()) {
             return true;
         }
         return $session->hasRights('Config', 'w') === true;

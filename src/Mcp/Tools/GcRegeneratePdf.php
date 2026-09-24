@@ -55,10 +55,16 @@ class GcRegeneratePdf extends AbstractPdfTool
         try {
             $templateId = isset($args['template']) ? (int) $args['template'] : null;
             $res = PdfGenerator::generate($record, $entry, $templateId, $email, $lang);
+        } catch (\PDOException $e) {
+            // SECURITY: a PDOException IS a RuntimeException — never echo SQL
+            // / driver text to the MCP client; log it server-side.
+            \error_log('[mcp] gc_regenerate_pdf: ' . $e->getMessage());
+            throw new ToolError('Generate failed (see server log).', [], 'internal');
         } catch (\RuntimeException $e) {
             throw new ToolError($e->getMessage(), [], 'bad_request');
         } catch (\Throwable $e) {
-            throw new ToolError('Generate failed: ' . $e->getMessage(), [], 'internal');
+            \error_log('[mcp] gc_regenerate_pdf: ' . $e->getMessage());
+            throw new ToolError('Generate failed (see server log).', [], 'internal');
         }
 
         return $this->ok([

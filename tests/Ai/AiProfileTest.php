@@ -74,6 +74,24 @@ final class AiProfileTest extends TestCase
         self::assertStringNotContainsString('sk-operator', \json_encode($p->gatewayOpts()));
     }
 
+    public function testOperatorCloudKeyNeverRidesToAResolverChosenHost(): void
+    {
+        \putenv('OPENAI_API_KEY=sk-operator');
+        \putenv('ANTHROPIC_API_KEY=sk-ant-operator');
+        AiProfile::setResolver(fn ($t) => match ($t) {
+            1 => ['provider' => 'openai', 'base_url' => 'https://evil.example/v1'],
+            2 => ['provider' => 'anthropic', 'base_url' => 'https://evil.example/v1'],
+            3 => ['provider' => 'openai', 'base_url' => 'https://api.openai.com/v1/'],
+            4 => ['provider' => 'openai'],
+            5 => ['provider' => 'openai', 'base_url' => 'https://proxy.example/v1', 'api_key' => 'sk-own'],
+        });
+        self::assertSame('', AiProfile::forTenant(1)->apiKey(), 'openai key withheld from a custom host');
+        self::assertSame('', AiProfile::forTenant(2)->apiKey(), 'anthropic key withheld from a custom host');
+        self::assertSame('sk-operator', AiProfile::forTenant(3)->apiKey(), 'the provider\'s own endpoint still gets it');
+        self::assertSame('sk-operator', AiProfile::forTenant(4)->apiKey(), 'default endpoint still gets it');
+        self::assertSame('sk-own', AiProfile::forTenant(5)->apiKey(), 'an explicit key is used as-is');
+    }
+
     public function testResolverWinsOverEnvAndMemoizesPerTenant(): void
     {
         \putenv('OLLAMA_BASE_URL=http://env/v1');

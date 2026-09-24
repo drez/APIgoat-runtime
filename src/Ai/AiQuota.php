@@ -62,10 +62,15 @@ final class AiQuota
 
         $now = \time();
         try {
-            if (!self::withinLimit(self::countRecent($subject, $event, $now, $window), $max)) {
+            // SECURITY: record FIRST, then count including our own row. A
+            // count-then-insert let N parallel requests all read the same
+            // below-cap count and all pass (quota × concurrency). Each request
+            // now sees every row inserted before its count, so at most $max
+            // pass per window. A throttled attempt stays counted.
+            self::record($subject, $event, $now);
+            if (!self::withinLimit(self::countRecent($subject, $event, $now, $window) - 1, $max)) {
                 return false;
             }
-            self::record($subject, $event, $now);
         } catch (\Throwable $e) {
             \error_log('AiQuota failed (failing open): ' . $e->getMessage());
 
