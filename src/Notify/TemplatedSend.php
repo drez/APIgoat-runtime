@@ -79,6 +79,12 @@ final class TemplatedSend
      */
     public static function send(int $idTemplate, string|array $to, array $objects, array $opts = []): bool
     {
+        // `.invalid` placeholders (accounts without an email) are skipped for
+        // every transport, the project's own included; all-placeholder = no-op.
+        $to = \ApiGoat\Auth\EmailPlaceholder::realRecipients($to, 'TemplatedSend');
+        if ($to === []) {
+            return true;
+        }
         $msg = self::fromTemplate($idTemplate, $objects);
         if ($msg === null) {
             \error_log('TemplatedSend: template ' . $idTemplate . ' not found');

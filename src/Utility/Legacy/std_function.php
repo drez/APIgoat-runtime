@@ -173,6 +173,14 @@ function transliterateString($txt)
 
 function sendHTMLemail($message, $from, $to, $subject, $reply = "", $attachment = array(), $bcc = "")
 {
+    // `.invalid` placeholders (accounts without an email) are never mailed;
+    // an all-placeholder send is a successful no-op, not a failure.
+    $recipient = class_exists('\\ApiGoat\\Auth\\EmailPlaceholder')
+        ? \ApiGoat\Auth\EmailPlaceholder::realRecipients(explode(";", (string) $to), 'sendHTMLemail')
+        : explode(";", (string) $to);
+    if ($recipient === []) {
+        return true;
+    }
     /*if(!eregi("^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,4})$", $to)){
         return "Error: misformated recipient email value
 ";
@@ -233,13 +241,9 @@ Content-Disposition: attachment" . $eol . $eol;
     if ($from && filter_var($from, FILTER_VALIDATE_EMAIL) && !preg_match('/\s/', $from)) {
         $add_header = "-f" . $from;
     }
-    if (strstr($to, ";")) {
-        $recipient = explode(";", $to);
-        foreach ($recipient as $to) {
-            $return = mail($to, $subject, $multipartEmail, $additional_headers, $add_header);
-        }
-    } else {
-        $return =  mail($to, $subject, $multipartEmail, $additional_headers, $add_header);
+    $return = false;
+    foreach ($recipient as $to) {
+        $return = mail($to, $subject, $multipartEmail, $additional_headers, $add_header);
     }
 
     if ($return)

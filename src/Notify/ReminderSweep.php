@@ -227,7 +227,8 @@ final class ReminderSweep
         $out = [];
         foreach ((array) ($spec['recipient'])($row) as $addr) {
             $addr = \strtolower(\trim((string) $addr));
-            if ($addr !== '' && \filter_var($addr, FILTER_VALIDATE_EMAIL)) {
+            if ($addr !== '' && \filter_var($addr, FILTER_VALIDATE_EMAIL)
+                && !\ApiGoat\Auth\EmailPlaceholder::is($addr)) {   // `.invalid` = no email
                 $out[$addr] = $addr;   // dedupe: a contact address and a
                                        // per-user reminder address are often
                                        // the same person

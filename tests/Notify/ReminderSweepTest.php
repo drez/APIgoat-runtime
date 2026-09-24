@@ -101,6 +101,23 @@ namespace ApiGoat\Tests\Notify {
             self::assertSame([[1, 0], [1, 7]], \App\RsTestLog::$saved);
         }
 
+        public function testPlaceholderRecipientsAreSkippedNotFailed(): void
+        {
+            $sent = [];
+            $spec = $this->spec(function ($to) use (&$sent) { $sent[] = $to; return true; });
+            $spec['recipient'] = fn($row) => ['noemail-5@apigtutor.invalid', 'deleted-3@deleted.invalid', 'a@example.com'];
+            $stats = ReminderSweep::run($spec, new \DateTimeImmutable('2026-09-20'));
+            self::assertSame(['a@example.com', 'a@example.com'], $sent);
+            self::assertSame(2, $stats['mails']);
+
+            // only placeholders: no recipients, nothing logged (not a failure either)
+            \App\RsTestLog::$saved = [];
+            $spec['recipient'] = fn($row) => ['noemail-5@apigtutor.invalid'];
+            $stats = ReminderSweep::run($spec, new \DateTimeImmutable('2026-09-20'));
+            self::assertSame(0, $stats['mails']);
+            self::assertSame([], \App\RsTestLog::$saved);
+        }
+
         public function testConcurrentRunIsANoOp(): void
         {
             $inner = null;

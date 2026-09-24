@@ -77,6 +77,19 @@ final class Mailer
      */
     public static function send(string|array $to, string $subject, string $html, array $opts = []): bool
     {
+        // Accounts without an email carry a `.invalid` placeholder
+        // (Auth\EmailPlaceholder): never mail it. Skipping is not a failure —
+        // a send whose every recipient is a placeholder is a successful no-op.
+        $to = \ApiGoat\Auth\EmailPlaceholder::realRecipients($to, 'Notify\Mailer');
+        foreach (['cc', 'bcc'] as $k) {
+            if (isset($opts[$k])) {
+                $opts[$k] = \ApiGoat\Auth\EmailPlaceholder::realRecipients($opts[$k], 'Notify\Mailer');
+            }
+        }
+        if ($to === [] && empty($opts['cc']) && empty($opts['bcc'])) {
+            return true;
+        }
+
         $cfg = self::config();
         $m = new PHPMailer(true);
         try {
