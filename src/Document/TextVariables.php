@@ -53,9 +53,11 @@ final class TextVariables
         // in those attributes are resolved first and the resulting URL must pass
         // the same scheme allowlist as HtmlSanitizer, else it becomes '#' / ''.
         // Every URL-bearing attribute, not just href/src: xlink:href, srcset,
-        // poster, formaction, action and background take a URL too.
+        // poster, formaction, action, background and <object data> take a URL
+        // too, and a style's url(...) is one. `<a/href=` separates the
+        // attribute with a slash, not whitespace.
         $html = (string) preg_replace_callback(
-            '/(\s(href|xlink:href|src|srcset|poster|formaction|action|background)\s*=\s*)("[^"]*"|\'[^\']*\'|[^\s"\'>]+)/i',
+            '/([\s\/](href|xlink:href|src|srcset|poster|formaction|action|background|data|style)\s*=\s*)("[^"]*"|\'[^\']*\'|[^\s"\'>]+)/i',
             static function (array $a) use ($sub): string {
                 $quoted = $a[3][0] === '"' || $a[3][0] === "'";
                 $inner  = $quoted ? substr($a[3], 1, -1) : $a[3];
@@ -65,7 +67,22 @@ final class TextVariables
                 }
                 $url   = html_entity_decode($new, ENT_QUOTES | ENT_HTML5, 'UTF-8');
                 $attr  = strtolower($a[2]);
-                $isSrc = in_array($attr, ['src', 'srcset', 'poster', 'background'], true);
+                $isSrc = in_array($attr, ['src', 'srcset', 'poster', 'background', 'data'], true);
+                if ($attr === 'style') {
+                    // A token made this style: no escapes, expressions, imports or
+                    // script schemes, and every url(...) must be a safe image source.
+                    $ok = !preg_match('/\\\\|expression\s*\(|@import|javascript\s*:|behavior\s*:|-moz-binding/i', $url);
+                    if ($ok && preg_match_all('/url\(\s*([\'"]?)(.*?)\1\s*\)/is', $url, $mm)) {
+                        foreach ($mm[2] as $u) {
+                            $ok = $ok && HtmlSanitizer::isSafeImageSrc(trim($u));
+                        }
+                    }
+                    if ($ok && preg_match('/image-set\s*\(|image\s*\(|cross-fade\s*\(/i', $url)) {
+                        $ok = false;
+                    }
+                    $q = $quoted ? $a[3][0] : '"';
+                    return $a[1] . $q . ($ok ? $new : '') . $q;
+                }
                 if ($attr === 'srcset') {
                     // "url 1x, url 2x": every candidate URL must be a safe image source.
                     $ok = true;

@@ -40,5 +40,19 @@ same('srcset with a bad candidate', TextVariables::substitute('<img srcset="{Img
 same('srcset all safe', TextVariables::substitute('<img srcset="{Img} 1x, {Img} 2x">', $vals),
     '<img srcset="https://ex.test/logo.png 1x, https://ex.test/logo.png 2x">');
 
+// <object data>, `<a/href` and a style's url(...) (security re-check of 59d0d88).
+same('object data js', TextVariables::substitute('<object data="{Website}"></object>', $vals), '<object data=""></object>');
+same('object data text/html', TextVariables::substitute('<object data="{Logo}"></object>', $vals), '<object data=""></object>');
+same('object data image kept', TextVariables::substitute('<object data="{Img}"></object>', $vals), '<object data="https://ex.test/logo.png"></object>');
+same('slash-separated href', TextVariables::substitute('<a/href="{Website}">w</a>', $vals), '<a/href="#">w</a>');
+same('style url js', TextVariables::substitute('<td style="background:url({Website})">x</td>', $vals), '<td style="">x</td>');
+same('style url text/html', TextVariables::substitute("<td style=\"background:url('{Logo}')\">x</td>", $vals), '<td style="">x</td>');
+same('style url image kept', TextVariables::substitute('<td style="background:url({Img})">x</td>', $vals),
+    '<td style="background:url(https://ex.test/logo.png)">x</td>');
+same('style token escape', TextVariables::substitute('<td style="color:{Esc}">x</td>', $vals + ['Esc' => 'red;background:u\\72l(http://e/x)']), '<td style="">x</td>');
+same('style plain token kept', TextVariables::substitute('<td style="color:{Col}">x</td>', $vals + ['Col' => '#336699']), '<td style="color:#336699">x</td>');
+same('style without token untouched', TextVariables::substitute('<td style="background:url(x.png)">{Col}</td>', $vals + ['Col' => 'c']),
+    '<td style="background:url(x.png)">c</td>');
+
 echo $fail ? "\nFAILED ($fail)\n" : "\nOK\n";
 exit($fail ? 1 : 0);
