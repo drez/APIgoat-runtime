@@ -74,4 +74,25 @@ final class ClientIpTest extends TestCase
         ClientIp::normalize($s, '10.0.0.1');
         self::assertSame('9.9.9.9', $s['REMOTE_ADDR'], 'default: X-Forwarded-For');
     }
+
+    public function testHeaderIsChosenPerTrustedProxyForCdnPlusSsr(): void
+    {
+        // vidifye-style: SSR tier (10.0.0.5) forwards X-Client-Ip, the CDN edge
+        // (10.0.0.1) sets CF-Connecting-IP.
+        $spec    = 'X-Client-Ip@10.0.0.5, CF-Connecting-IP';
+        $trusted = ['10.0.0.1', '10.0.0.5'];
+        $ssr = ['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_CLIENT_IP' => '203.0.113.9', 'HTTP_CF_CONNECTING_IP' => '6.6.6.6'];
+        self::assertSame('203.0.113.9', ClientIp::resolve($ssr, $trusted, $spec));
+        // Through the CDN a client-sent X-Client-Ip is ignored — the CDN path
+        // reads CF-Connecting-IP only, and never falls through when it's empty.
+        $cdn = ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_CLIENT_IP' => '1.2.3.4', 'HTTP_CF_CONNECTING_IP' => '198.51.100.4'];
+        self::assertSame('198.51.100.4', ClientIp::resolve($cdn, $trusted, $spec));
+        unset($cdn['HTTP_CF_CONNECTING_IP']);
+        self::assertNull(ClientIp::resolve($cdn, $trusted, $spec));
+        // A single header still works as before; scoped-only spec with no match
+        // falls back to the X-Forwarded-For default.
+        self::assertSame('X-Client-Ip', ClientIp::headerFor('X-Client-Ip', '10.0.0.9'));
+        self::assertSame('', ClientIp::headerFor('X-Client-Ip@10.0.0.5', '10.0.0.9'));
+        self::assertSame('X-Client-Ip', ClientIp::headerFor('X-Client-Ip@10.0.0.4|10.0.0.5', '10.0.0.5'));
+    }
 }

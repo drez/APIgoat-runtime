@@ -211,7 +211,13 @@ final class MailHtml
         // so the filters below see what the browser's tokenizer sees. Only
         // escapes decoding to a letter are rewritten: same meaning (a \31 0px class
         // or a \" inside a string stays escaped).
-        $css = preg_replace_callback('/\\\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|([g-zG-Z]))/', static function (array $m): string {
+        // Any other escaped character (\\, \", an escaped newline) is consumed
+        // as a unit and kept: "u\\72 l(" is a literal backslash, and must not
+        // decode to "u\rl(" (= url( to the browser).
+        $css = preg_replace_callback('/\\\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|([g-zG-Z])|(.))/s', static function (array $m): string {
+            if (($m[3] ?? '') !== '') {
+                return $m[0];
+            }
             if (($m[2] ?? '') !== '') {
                 return $m[2];
             }

@@ -135,4 +135,18 @@ final class JoinedSecretAndDeleteGuardTest extends TestCase
         $this->assertSame('success', $ret['status']);
         $this->assertTrue($row->deleted);
     }
+
+    public function testSecretNameFloorIsSegmentBased(): void
+    {
+        // Secrets the old substring floor missed (review: apichatbot key_hash).
+        foreach (['key_hash', 'KeyHash', 'password_hash', 'access_key', 'refresh_key', 'secret_key', 'private_key',
+                  'api_key', 'ApiKey', 'apikey', 'public_token', 'PublicToken', 'webhook_secret', 'passphrase', 'salt'] as $n) {
+            $this->assertTrue(Api::isJoinedSecretColumn($n), $n);
+        }
+        // Ordinary columns the substring floor refused (usage counters etc.).
+        foreach (['tokens', 'tokens_in', 'tokens_out', 'output_tokens', 'OutputTokens', 'seo_keywords',
+                  'stripe_publishable_key', 'hash', 'monkey', 'keyword', 'title'] as $n) {
+            $this->assertFalse(Api::isJoinedSecretColumn($n), $n);
+        }
+    }
 }

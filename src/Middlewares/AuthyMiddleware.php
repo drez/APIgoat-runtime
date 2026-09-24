@@ -697,11 +697,21 @@ class AuthyMiddleware implements MiddlewareInterface
      */
     private function effectiveAction($request): string
     {
-        $action = (string) ($this->args['action'] ?? '');
-        if (! empty($this->args['is_api'])) {
+        return self::effectiveActionFor(is_array($this->args) ? $this->args : [], $request);
+    }
+
+    /**
+     * effectiveAction() over RouteParser's parsed_args — shared with
+     * OAuthResourceMiddleware so the OAuth write-scope check judges the same
+     * action the privilege check (and the service) does.
+     */
+    public static function effectiveActionFor(array $args, $request): string
+    {
+        $action = (string) ($args['action'] ?? '');
+        if (! empty($args['is_api'])) {
             return $action;
         }
-        $segments = explode('/', trim((string) ($this->args['route'] ?? ''), '/'));
+        $segments = explode('/', trim((string) ($args['route'] ?? ''), '/'));
         if (isset($segments[1]) && $segments[1] !== '') {
             return $action; // path-pinned {a}: RouteHelper reasserts it
         }

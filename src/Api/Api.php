@@ -306,8 +306,7 @@ class Api
         if ($n === '') {
             return false;
         }
-        if (in_array($n, self::CREDENTIAL_COLUMNS, true)
-            || preg_match('/secret|token|passw|apikey|privatekey/', $n)) {
+        if (in_array($n, self::CREDENTIAL_COLUMNS, true) || self::isSecretName($column)) {
             return true;
         }
         foreach (self::$secretRegistry as $cols) {
@@ -316,6 +315,33 @@ class Api
             }
         }
         return false;
+    }
+
+    /**
+     * Name-based secret floor, segment-wise (snake_case and CamelCase split),
+     * mirroring goatcheese SecretColumns::kindOfName: a password / passwd /
+     * passphrase / secret / token / salt segment, a trailing `hash`
+     * (key_hash, password_hash), or an api / access / refresh / secret /
+     * private `key`. Whole segments only — `tokens_in`, `output_tokens` and
+     * `seo_keywords` are ordinary columns.
+     */
+    public static function isSecretName(string $name): bool
+    {
+        $snake = strtolower((string) preg_replace('/(?<=[a-z0-9])(?=[A-Z])/', '_', $name));
+        $seg = preg_split('/[^a-z0-9]+/', $snake, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if ($seg === []) {
+            return false;
+        }
+        foreach ($seg as $i => $p) {
+            if (in_array($p, ['password', 'passwd', 'passphrase', 'secret', 'token', 'salt',
+                'apikey', 'accesskey', 'secretkey', 'privatekey'], true)) {
+                return true;
+            }
+            if ($p === 'key' && $i > 0 && in_array($seg[$i - 1], ['api', 'access', 'refresh', 'secret', 'private'], true)) {
+                return true;
+            }
+        }
+        return end($seg) === 'hash' && count($seg) > 1;
     }
 
     /** Does a dotted-ref prefix name this Api's own (base) model? */

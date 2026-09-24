@@ -16,8 +16,8 @@ namespace ApiGoat\Http;
  * deny the entire service. Normalising REMOTE_ADDR once, at the entry point,
  * repairs every call site without touching any of them.
  *
- * Spoofing: ONE forwarded header (GC_CLIENT_IP_HEADER, default
- * X-Forwarded-For read right-most-untrusted) is honoured, and ONLY when the
+ * Spoofing: ONE forwarded header per trusted proxy (GC_CLIENT_IP_HEADER,
+ * see headerFor(); default X-Forwarded-For read right-most-untrusted) is honoured, and ONLY when the
  * connection itself comes from an address in the configured trust list. Anyone connecting
  * directly keeps their real REMOTE_ADDR, so the header can never be used to
  * dodge a limit. With no trust list configured this class does nothing.
@@ -42,6 +42,39 @@ final class ClientIp
             return self::DEFAULT_HEADER;
         }
         return strncmp($header, 'HTTP_', 5) === 0 ? $header : 'HTTP_' . $header;
+    }
+
+    /**
+     * The ONE header to read for a request from trusted proxy $remote.
+     *
+     * $spec (GC_CLIENT_IP_HEADER) is a single header, or a comma list of
+     * `Header@addr1|addr2` entries plus at most one bare `Header` default —
+     * e.g. "X-Client-Ip@10.0.0.5,CF-Connecting-IP": the SSR tier at 10.0.0.5
+     * hands off in X-Client-Ip, everything else comes through the CDN.
+     * SECURITY: the header is chosen by WHICH proxy connected, never by which
+     * headers are present — the first entry scoped to $remote (else the bare
+     * default) decides, with no fall-through when it is empty, so a client
+     * can't pick the header its own path does not overwrite.
+     */
+    public static function headerFor(?string $spec, string $remote): string
+    {
+        $default = null;
+        foreach (explode(',', (string) $spec) as $entry) {
+            $entry = trim($entry);
+            if ($entry === '') {
+                continue;
+            }
+            $at = strpos($entry, '@');
+            if ($at === false) {
+                $default ??= $entry;
+                continue;
+            }
+            $addrs = preg_split('/[|\s]+/', substr($entry, $at + 1), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            if (in_array($remote, $addrs, true)) {
+                return substr($entry, 0, $at);
+            }
+        }
+        return $default ?? '';
     }
 
     /** Parse a comma/space separated trust list into exact addresses. */
@@ -74,7 +107,7 @@ final class ClientIp
             return null;
         }
 
-        $raw = (string) ($server[self::serverKey($header)] ?? '');
+        $raw = (string) ($server[self::serverKey(self::headerFor($header, $remote))] ?? '');
         if ($raw === '') {
             return null; // never fall through to another client-settable header
         }

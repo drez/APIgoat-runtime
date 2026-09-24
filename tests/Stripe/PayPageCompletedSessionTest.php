@@ -113,6 +113,22 @@ final class PayPageCompletedSessionTest extends TestCase
         $this->assertCount(1, $fake->calls);
     }
 
+    public function testCompletedSessionWhoseDebitFailedIsRegenerated(): void
+    {
+        // SEPA/ACH: session complete + unpaid, then payment_intent.payment_failed
+        // marked the row 'failed'. The payer must get a retry, not "processing".
+        $this->row()->d['Status'] = 'failed';
+        $this->fake([
+            [200, ['id' => 'cs_old', 'object' => 'checkout.session', 'status' => 'complete', 'payment_status' => 'unpaid']],
+        ]);
+        [$code, $body] = $this->render();
+        $this->assertStringNotContainsString('Payment processing', $body);
+        $this->assertStringNotContainsString('Payment received', $body);
+        // The fixture has no payable record, so refreshSessionFor() — reached
+        // only on the regenerate path — fails and the page answers 503.
+        $this->assertSame(503, $code, 'went down the regenerate path');
+    }
+
     public function testTransientRetrieveFailureDoesNotRegenerate(): void
     {
         $fake = $this->fake([[500, ['error' => ['message' => 'boom', 'type' => 'api_error']]]]);

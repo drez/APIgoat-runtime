@@ -133,4 +133,16 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('content:"\\201C"', $out);
         $this->assertStringContainsString('style="color:red"', $out);
     }
+
+    public function test_an_escaped_backslash_is_not_the_start_of_a_new_escape(): void
+    {
+        // "u\\72 l(" is u + a literal backslash + "72 l(" — inert. Decoding the
+        // second backslash alone produced "u\rl(", which browsers read as url(.
+        foreach ([false, true] as $images) {
+            $out = MailHtml::defuse('<style>p{background:u\\\\72 l(http://evil.example/px.png)} @\\\\69mport "http://evil.example/x.css";</style>', $images);
+            $this->assertStringNotContainsString('u\\rl(', $out);
+            $this->assertStringNotContainsString('@\\import', $out);
+            $this->assertStringContainsString('u\\\\72 l(', $out, 'the escaped backslash is kept as written');
+        }
+    }
 }

@@ -31,5 +31,14 @@ same('text only', TextVariables::substitute('<p>{website}</p>', $vals), '<p>java
 same('data-href untouched by the url check', TextVariables::substitute('<p data-href="{Website}">x</p>', $vals),
     '<p data-href="javascript:alert(1)">x</p>');
 
+// Every URL-bearing attribute gets the scheme check, not just href/src.
+same('xlink:href', TextVariables::substitute('<svg><a xlink:href="{Website}">x</a></svg>', $vals), '<svg><a xlink:href="#">x</a></svg>');
+same('formaction', TextVariables::substitute('<button formaction="{Website}">x</button>', $vals), '<button formaction="#">x</button>');
+same('poster', TextVariables::substitute('<video poster="{Website}"></video>', $vals), '<video poster=""></video>');
+same('background', TextVariables::substitute('<td background="{Logo}">x</td>', $vals), '<td background="">x</td>');
+same('srcset with a bad candidate', TextVariables::substitute('<img srcset="{Img} 1x, {Website} 2x">', $vals), '<img srcset="">');
+same('srcset all safe', TextVariables::substitute('<img srcset="{Img} 1x, {Img} 2x">', $vals),
+    '<img srcset="https://ex.test/logo.png 1x, https://ex.test/logo.png 2x">');
+
 echo $fail ? "\nFAILED ($fail)\n" : "\nOK\n";
 exit($fail ? 1 : 0);

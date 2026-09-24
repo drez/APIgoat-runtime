@@ -52,8 +52,10 @@ final class TextVariables
         // "javascript:alert(1)" for href="{Website}" is still a script URL. Tokens
         // in those attributes are resolved first and the resulting URL must pass
         // the same scheme allowlist as HtmlSanitizer, else it becomes '#' / ''.
+        // Every URL-bearing attribute, not just href/src: xlink:href, srcset,
+        // poster, formaction, action and background take a URL too.
         $html = (string) preg_replace_callback(
-            '/(\s(href|src)\s*=\s*)("[^"]*"|\'[^\']*\'|[^\s"\'>]+)/i',
+            '/(\s(href|xlink:href|src|srcset|poster|formaction|action|background)\s*=\s*)("[^"]*"|\'[^\']*\'|[^\s"\'>]+)/i',
             static function (array $a) use ($sub): string {
                 $quoted = $a[3][0] === '"' || $a[3][0] === "'";
                 $inner  = $quoted ? substr($a[3], 1, -1) : $a[3];
@@ -62,8 +64,19 @@ final class TextVariables
                     return $a[0];
                 }
                 $url   = html_entity_decode($new, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-                $isSrc = strtolower($a[2]) === 'src';
-                if (!($isSrc ? HtmlSanitizer::isSafeImageSrc($url) : HtmlSanitizer::isSafeHref($url))) {
+                $attr  = strtolower($a[2]);
+                $isSrc = in_array($attr, ['src', 'srcset', 'poster', 'background'], true);
+                if ($attr === 'srcset') {
+                    // "url 1x, url 2x": every candidate URL must be a safe image source.
+                    $ok = true;
+                    foreach (explode(',', $url) as $cand) {
+                        $u = preg_split('/\s+/', trim($cand), 2)[0] ?? '';
+                        $ok = $ok && ($u === '' || HtmlSanitizer::isSafeImageSrc($u));
+                    }
+                } else {
+                    $ok = $isSrc ? HtmlSanitizer::isSafeImageSrc($url) : HtmlSanitizer::isSafeHref($url);
+                }
+                if (!$ok) {
                     $new = $isSrc ? '' : '#';
                 }
                 $q = $quoted ? $a[3][0] : '"';

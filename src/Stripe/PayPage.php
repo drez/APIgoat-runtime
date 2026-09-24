@@ -50,6 +50,12 @@ final class PayPage
             $sstatus = $session !== null ? (string) ($session->status ?? '') : '';
             if ($sstatus === 'open') {
                 $url = (string) $session->url;
+            } elseif ($sstatus === 'complete' && ($session->payment_status ?? '') !== 'paid'
+                && (string) $pay->getStatus() === 'failed') {
+                // The async debit (SEPA/ACH) behind this completed session bounced
+                // and payment_intent.payment_failed already marked the row: no
+                // late webhook is left to protect, so fall through and give the
+                // payer a fresh session to retry.
             } elseif ($sstatus === 'complete') {
                 // SECURITY: the payer already went through Checkout (paid, or an
                 // async SEPA/ACH debit still processing) and the webhook has not

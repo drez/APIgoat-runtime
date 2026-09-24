@@ -194,7 +194,8 @@ class WelcomeView
                 // input stays empty (placeholder) and is flagged so the change
                 // handler below never submits an empty value for it (= unchanged).
                 if (self::isSecretConfigKey((string) $Config->getConfig())) {
-                    $valueInput = input('password', 'Value', '', "config='" . $cfgName . "' ag_save='Config' ag_secret='1' autocomplete='new-password' placeholder='" . htmlspecialchars(_('•••• (unchanged)'), ENT_QUOTES, 'UTF-8') . "'");
+                    $valueInput = input('password', 'Value', '', "config='" . $cfgName . "' ag_save='Config' ag_secret='1' autocomplete='new-password' placeholder='" . htmlspecialchars(_('•••• (unchanged)'), ENT_QUOTES, 'UTF-8') . "'")
+                        . "<button type='button' class='gc-secret-clear' ag_secret_clear='1'>" . htmlspecialchars(_('Clear'), ENT_QUOTES, 'UTF-8') . "</button>";
                 } else {
                     $valueInput = input('text', 'Value', htmlentities((string) $Config->getValue()), "config='" . $cfgName . "' ag_save='Config'");
                 }
@@ -349,11 +350,22 @@ JS;
         ) . "<script" . gcNonceAttr() . ">" . $tabScript . "</script>";
 
         $return['onReadyJs'] = "
+    document.querySelectorAll('[ag_secret_clear]').forEach(function (__btn) {
+        __btn.addEventListener('click', function () {
+            var __inp = this.parentElement.querySelector('[ag_secret]');
+            if (!__inp || !window.confirm('" . addslashes(_('Clear this value?')) . "')) { return; }
+            __inp.value = '';
+            __inp.setAttribute('data-gc-clear', '1');
+            __inp.dispatchEvent(new Event('change'));
+            __inp.removeAttribute('data-gc-clear');
+        });
+    });
     document.querySelectorAll('[ag_save=Config]').forEach(function (__cfg) {
         __cfg.addEventListener('change', function () {
             var config = this.getAttribute('config');
-            // Masked secret: an empty field means \"unchanged\" — never blank it.
-            if (this.getAttribute('ag_secret') && this.value === '') { return; }
+            // Masked secret: an empty field means \"unchanged\" — never blank it,
+            // unless the admin pressed its Clear button (data-gc-clear).
+            if (this.getAttribute('ag_secret') && this.value === '' && !this.getAttribute('data-gc-clear')) { return; }
             var value = 'dev';
             if (config == 'app_status') {
                 if (this.checked) {
@@ -448,10 +460,15 @@ JS;
         return method_exists($auth, 'hasRights') && $auth->hasRights('Config', 'r') === true;
     }
 
-    /** Config rows whose value is a credential and must never be rendered. */
+    /**
+     * Config rows whose value is a credential and must never be rendered:
+     * Api::isSecretName()'s segment rule (openai_api_key, smtp_password,
+     * stripe_secret_key — not stripe_publishable_key or seo_keywords) plus
+     * the AI key row.
+     */
     public static function isSecretConfigKey(string $name): bool
     {
-        if (preg_match('/key|secret|token|password|passwd|api_key/i', $name)) {
+        if (\ApiGoat\Api\Api::isSecretName($name)) {
             return true;
         }
         if (class_exists('\\ApiGoat\\Ai\\AiManifest')) {

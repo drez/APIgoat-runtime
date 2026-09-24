@@ -159,7 +159,13 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         // (requiresWriteScope) needs crm:write, anything else crm:read or
         // crm:write.
         $gcMissingScope = $status === BearerSessionAuthenticator::AUTHENTICATED
-            ? self::missingScope($request->getMethod(), $action, $isLegacyBearerAction)
+            ? self::missingScope(
+                $request->getMethod(),
+                // the action the service will dispatch (body/query `a` on an
+                // unpinned GUI route), as AuthyMiddleware's privilege check sees it
+                AuthyMiddleware::effectiveActionFor(is_array($parsed) ? $parsed : [], $request),
+                $isLegacyBearerAction
+            )
             : null;
         if ($gcMissingScope !== null) {
             $response = new Response();
