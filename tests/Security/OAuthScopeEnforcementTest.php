@@ -180,5 +180,28 @@ final class OAuthScopeEnforcementTest extends TestCase
         TokenScopes::set(null);
         $this->assertNull(OAuthResourceMiddleware::missingScope('DELETE'), 'non-bearer untouched');
     }
+
+    public function test_mutating_actions_over_get_need_write(): void
+    {
+        // Legacy bearer actions write over GET: mass, upload, project ones.
+        TokenScopes::set(['crm:read']);
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('GET', 'mass', true));
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('GET', 'scanAndCreateClient', true));
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('GET', 'delete'));
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'file', true));
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'open', true));
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'list'));
+        TokenScopes::set(['crm:write']);
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'mass', true));
+        $this->assertTrue(OAuthResourceMiddleware::requiresWriteScope('POST', 'file', true));
+    }
+
+    public function test_bearer_extraction_matches_detection(): void
+    {
+        $this->assertSame('abc.def', OAuthResourceMiddleware::bearerToken('Bearer abc.def'));
+        $this->assertSame('abc.def', OAuthResourceMiddleware::bearerToken("bearer\t abc.def "));
+        $this->assertNull(OAuthResourceMiddleware::bearerToken('Bearer '));
+        $this->assertNull(OAuthResourceMiddleware::bearerToken('Basic dXNlcjpwYXNz'));
+    }
 }
 }

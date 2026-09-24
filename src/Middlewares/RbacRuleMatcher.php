@@ -16,6 +16,9 @@ namespace ApiGoat\Middlewares;
  *    NULL / empty / non-JSON fails every JSON clause (SQL NULL), so it is
  *    excluded whenever at least one clause exists — and matches trivially
  *    when none do.
+ *  - A rule restricting query.select never matches a request without a
+ *    select (ruleRestrictsSelect); an undecodable filter string matches no
+ *    rule ('never' clause / SQL '0').
  *  - JSON_CONTAINS is SUBSET-based and order-insensitive: candidate array
  *    elements each need only be contained in SOME target element, so the
  *    filter triple ["col","val"] matches a stored ["col","val","ne"].
@@ -69,6 +72,7 @@ final class RbacRuleMatcher
     public static function bestMatch(array $rules, string $model, string $action, string $method, $data): ?array
     {
         $clauses = self::buildClauses($data);
+        $sendsSelect = self::requestSendsSelect($data);
 
         $best = null;
         $bestScore = -1;
@@ -77,7 +81,13 @@ final class RbacRuleMatcher
                 continue;
             }
             $body = \json_decode((string) ($row['body'] ?? ''), true);
-            $score = self::scoreRow(\is_array($body) ? $body : null, $clauses);
+            $body = \is_array($body) ? $body : null;
+            // SECURITY: a rule that restricts query.select must not match a
+            // request with no select — QueryBuilder then returns every column.
+            if (!$sendsSelect && $body !== null && self::ruleRestrictsSelect($body)) {
+                continue;
+            }
+            $score = self::scoreRow($body, $clauses);
             if ($score === null) {
                 continue;
             }
@@ -114,6 +124,10 @@ final class RbacRuleMatcher
                             foreach ($filters as $f) {
                                 $clauses[] = ['path' => 'query.filter.' . $fModel, 'kind' => 'filter', 'value' => $f];
                             }
+                        } elseif (\is_string($filters)) {
+                            // SECURITY: a filter string normalizeFilter() could not
+                            // decode matches no rule (it used to add no clause).
+                            $clauses[] = ['path' => '', 'kind' => 'never', 'value' => null];
                         }
                     }
                 }
@@ -171,6 +185,26 @@ final class RbacRuleMatcher
         return $out;
     }
 
+    /** Does the (normalized) request name a non-empty query.select? */
+    public static function requestSendsSelect($data): bool
+    {
+        return \is_array($data) && \is_array($data['query'] ?? null) && !empty($data['query']['select']);
+    }
+
+    /**
+     * Does the rule body restrict query.select? Unrestricted: no select (or
+     * JSON null), '*', an empty list, or a whole-query '*'. Mirrored in SQL by
+     * RbacMiddleware::findBestMatch().
+     */
+    public static function ruleRestrictsSelect(array $body): bool
+    {
+        $sel = self::valueAtPath($body, 'query.select');
+        if ($sel === null || $sel === '*' || $sel === []) {
+            return false;
+        }
+        return true;
+    }
+
     /** @return int|null exact-match count, or null when the WHERE fails */
     private static function scoreRow(?array $body, array $clauses): ?int
     {
@@ -182,6 +216,9 @@ final class RbacRuleMatcher
             $exact = false;
             $pass  = false;
             $target = self::valueAtPath($body, $c['path']);
+            if ($c['kind'] === 'never') {
+                return null;
+            }
             if ($c['kind'] === 'select') {
                 $exact = self::jsonContains($target, $c['value']);
                 $pass  = $exact || self::scalarAtPath($body, $c['path']) === '*';

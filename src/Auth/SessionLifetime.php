@@ -76,7 +76,7 @@ final class SessionLifetime
         // that then authenticated on its own — outliving a 15-minute or
         // revoked token. $_SESSION stays a plain in-process array, exactly
         // like the deferred anonymous path above.
-        if (self::isBearerRequest($_SERVER)) {
+        if (self::isBearerRequest($_SERVER, $_COOKIE)) {
             return;
         }
         // The API credential exchange (POST api/vN/Authy/auth|refresh) answers
@@ -132,17 +132,36 @@ final class SessionLifetime
      * True when the request carries a Bearer credential (Authorization or
      * X-Authorization, however the web server exposed it).
      *
+     * SECURITY: the same test JimTools JwtAuthentication applies
+     * (/Bearer\s+(.*)$/i, so any whitespace, not just "Bearer "), plus its
+     * `token` cookie on /api/v* routes — a JWT delivered either way used to
+     * mint a 30-day cookie session.
+     *
      * @param array<string,mixed> $server $_SERVER
+     * @param array<string,mixed> $cookies $_COOKIE
      */
-    public static function isBearerRequest(array $server): bool
+    public static function isBearerRequest(array $server, array $cookies = []): bool
     {
         foreach (['HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION', 'HTTP_X_AUTHORIZATION'] as $k) {
-            if (stripos(ltrim((string) ($server[$k] ?? '')), 'Bearer ') === 0) {
+            if (self::hasBearerCredential((string) ($server[$k] ?? ''))) {
                 return true;
             }
         }
+        if (is_string($cookies['token'] ?? null) && trim($cookies['token']) !== '') {
+            $path = (string) parse_url((string) ($server['REQUEST_URI'] ?? ''), PHP_URL_PATH);
+            return (bool) preg_match('#/api/v[0-9]+/#', $path);
+        }
         return false;
     }
+
+    /** Header value carries a bearer token — JwtAuthentication's own pattern. */
+    public static function hasBearerCredential(string $header): bool
+    {
+        return (bool) preg_match(self::BEARER_PATTERN, $header);
+    }
+
+    /** JimTools JwtAuthentication's default `regexp`, with a non-empty token. */
+    public const BEARER_PATTERN = '/Bearer\s+(\S.*)$/i';
 
     /**
      * POST to the API credential exchange (api/vN/Authy/auth or /refresh):

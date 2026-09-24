@@ -19,6 +19,7 @@ namespace Psr\Http\Server {
 namespace {
 
 require __DIR__ . '/../src/Middlewares/RbacMiddleware.php';
+require __DIR__ . '/../src/Api/QueryBuilder.php';
 
 use ApiGoat\Middlewares\RbacMiddleware;
 
@@ -70,6 +71,19 @@ check('numeric-keyed filter normalizes under the request model',
 // Existing behavior: model-keyed filters kept verbatim.
 $out = runNormalize(['model' => 'Client', 'data' => ['query' => ['filter' => ['Other' => [['a', 'b']]]]]]);
 check('model-keyed filter kept', $out['data']['query']['filter'], ['Other' => [['a', 'b']]]);
+
+// SECURITY: string select / filter[Model] are decoded like QueryBuilder does,
+// so the matchers see what will actually run.
+$out = runNormalize(['model' => 'Client', 'data' => ['query' => ['filter' => ['Client' => '[["name","x"]]']]]]);
+check('string filter[Model] decoded', $out['data']['query']['filter'], ['Client' => [['name', 'x']]]);
+$out = runNormalize(['model' => 'Client', 'data' => ['query' => ['filter' => ['Client' => '["name","x"]']]]]);
+check('string single-triple filter wrapped', $out['data']['query']['filter'], ['Client' => [['name', 'x']]]);
+$out = runNormalize(['model' => 'Client', 'data' => ['query' => ['filter' => ['Client' => 'garbage']]]]);
+check('undecodable filter string kept (matches no rule)', $out['data']['query']['filter'], ['Client' => 'garbage']);
+$out = runNormalize(['model' => 'Client', 'data' => ['query' => ['select' => '["name"]']]]);
+check('string select decoded', $out['data']['query']['select'], ['name']);
+$out = runNormalize(['model' => 'Client', 'data' => ['query' => ['select' => 'name', 'limit' => 5]]]);
+check('undecodable select dropped (QueryBuilder ignores it too)', $out['data']['query'], ['limit' => 5]);
 
 if ($fail) {
     fwrite(STDERR, "\n$fail failure(s)\n");
