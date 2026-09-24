@@ -57,7 +57,7 @@ OpenSwoole\Coroutine::run(function () use ($port, $check) {
     $root = new OpenSwoole\Coroutine\Http\Client('127.0.0.1', $port);
     $root->set(['timeout' => 5]);
     $check('valid ticket completes the handshake',
-        (bool) $root->upgrade('/?ticket=' . urlencode(Ticket::mint(1, 'all'))));
+        (bool) $root->upgrade('/?ticket=' . urlencode(Ticket::mint(1, 'all', ['*']))));
     $f = $root->recv(2);
     $check('server greets with {op:ready}', $f && str_contains($f->data, '"ready"'));
 
@@ -80,7 +80,7 @@ OpenSwoole\Coroutine::run(function () use ($port, $check) {
     // --- tenant filtering ---------------------------------------------------
     $tenant = new OpenSwoole\Coroutine\Http\Client('127.0.0.1', $port);
     $tenant->set(['timeout' => 5]);
-    $tenant->upgrade('/?ticket=' . urlencode(Ticket::mint(2, 't9')));
+    $tenant->upgrade('/?ticket=' . urlencode(Ticket::mint(2, 't9', ['*'])));
     $tenant->recv(2);
     $tenant->push((string) json_encode(['op' => 'sub', 'tables' => ['client']]));
     OpenSwoole\Coroutine::sleep(0.2);
@@ -92,7 +92,7 @@ OpenSwoole\Coroutine::run(function () use ($port, $check) {
     $check("root ('all') DOES see a tenant t5 write", $f && str_contains($f->data, '"change"'));
 
     // --- the handshake is the authorization boundary ------------------------
-    $good = Ticket::mint(1, 'all');
+    $good = Ticket::mint(1, 'all', ['*']);
     $bad = ['' => 'no ticket', 'garbage' => 'garbage ticket', substr($good, 0, -3) . 'zzz' => 'tampered ticket'];
     foreach ($bad as $ticket => $label) {
         $c = new OpenSwoole\Coroutine\Http\Client('127.0.0.1', $port);

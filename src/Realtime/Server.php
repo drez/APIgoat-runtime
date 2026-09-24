@@ -28,8 +28,16 @@ use OpenSwoole\WebSocket\Server as WsServer;
  */
 final class Server
 {
-    /** @var array<int,array{u:int,tn:string,tables:array<string,true>}> keyed by fd */
+    /** @var array<int,array{u:int,tn:string,tb:list<string>,tables:array<string,true>}> keyed by fd */
     private array $clients = [];
+
+    /** Default caps (overridable: GC_RT_MAX_CONN, GC_RT_MAX_CONN_PER_USER,
+     *  GC_RT_MAX_SUBS). A socket costs sidecar memory for its whole life, so
+     *  one ticket-holder must not be able to open unbounded sockets or
+     *  subscribe an unbounded table set. */
+    public const MAX_CONN          = 5000;
+    public const MAX_CONN_PER_USER = 20;
+    public const MAX_SUBS          = 100;
 
     /**
      * @param string $sockGroup group to own the signal socket. The sidecar runs
@@ -48,6 +56,10 @@ final class Server
 
     public function run(): void
     {
+        // Tickets minted by the pre-HKDF web code just before this restart
+        // still verify for 2*TTL; after that only purpose-key tickets do.
+        Ticket::openLegacyWindow();
+
         // A stale socket file from a crashed run makes bind() fail.
         if (\file_exists($this->sockPath)) {
             @\unlink($this->sockPath);
@@ -125,7 +137,16 @@ final class Server
             return;
         }
 
-        $this->clients[$req->fd] = ['u' => $claims['u'], 'tn' => $claims['tn'], 'tables' => []];
+        $refuse = self::connectionRefusal($this->clients, $claims['u'],
+            self::envInt('GC_RT_MAX_CONN', self::MAX_CONN),
+            self::envInt('GC_RT_MAX_CONN_PER_USER', self::MAX_CONN_PER_USER));
+        if ($refuse !== null) {
+            $this->log("reject fd={$req->fd} u={$claims['u']} ({$refuse})");
+            $srv->disconnect($req->fd, 4429, 'too many connections');
+            return;
+        }
+
+        $this->clients[$req->fd] = ['u' => $claims['u'], 'tn' => $claims['tn'], 'tb' => $claims['tb'], 'tables' => []];
         Hooks::call('onOpen', [$req->fd, $claims]);
         $srv->push($req->fd, (string) \json_encode(['op' => 'ready']));
     }
@@ -151,7 +172,11 @@ final class Server
 
         switch ($msg['op'] ?? '') {
             case 'sub':
+                $maxSubs = self::envInt('GC_RT_MAX_SUBS', self::MAX_SUBS);
                 foreach ($this->tableList($msg) as $t) {
+                    if (!self::maySubscribe($this->clients[$fd], $t, $maxSubs)) {
+                        continue;
+                    }
                     if (Hooks::call('allowSubscribe', [$t, $claims], true) === false) {
                         continue;
                     }
@@ -167,6 +192,55 @@ final class Server
                 $srv->push($fd, (string) \json_encode(['op' => 'pong']));
                 break;
         }
+    }
+
+    /**
+     * Why a new connection for $u must be refused, or null to accept.
+     * Pure (no OpenSwoole) so it is unit-testable.
+     *
+     * @param array<int,array{u:int}> $clients
+     */
+    public static function connectionRefusal(array $clients, int $u, int $maxTotal, int $maxPerUser): ?string
+    {
+        if ($maxTotal > 0 && \count($clients) >= $maxTotal) {
+            return 'global connection cap';
+        }
+        if ($maxPerUser > 0) {
+            $mine = 0;
+            foreach ($clients as $c) {
+                if (($c['u'] ?? null) === $u) {
+                    $mine++;
+                }
+            }
+            if ($mine >= $maxPerUser) {
+                return 'per-user connection cap';
+            }
+        }
+        return null;
+    }
+
+    /**
+     * May this client add $table? The ticket's readable-table list must cover
+     * it and the per-socket subscription cap must not be reached (a table
+     * already subscribed is always fine). Pure, unit-testable.
+     *
+     * @param array{tb?:list<string>,tables:array<string,true>} $client
+     */
+    public static function maySubscribe(array $client, string $table, int $maxSubs): bool
+    {
+        if (!Ticket::allowsTable(['tb' => $client['tb'] ?? []], $table)) {
+            return false;
+        }
+        if (isset($client['tables'][$table])) {
+            return true;
+        }
+        return $maxSubs <= 0 || \count($client['tables']) < $maxSubs;
+    }
+
+    private static function envInt(string $name, int $default): int
+    {
+        $v = \function_exists('env') ? env($name) : \getenv($name);
+        return (\is_numeric($v) && (int) $v >= 0) ? (int) $v : $default;
     }
 
     /** @return list<string> */
