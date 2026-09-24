@@ -258,10 +258,34 @@ final class JobQueueTest extends TestCase
             // reclaim counts an attempt and fails at maxAttempts (review-3 #20)
             ['sql' => 'UPDATE job_queue SET state = IF(attempts + 1 >= ?, ?, ?), last_error = ?, attempts = attempts + 1 WHERE state = ? AND claimed_at < (NOW() - INTERVAL 10 MINUTE)',
              'params' => [5, 3, 0, 'Reclaimed: lease expired after 10 minutes without a heartbeat', 1]],
-            ['sql' => 'UPDATE job_queue SET state = ?, claimed_at = NOW() WHERE id_job_queue = ? AND state = ?', 'params' => [1, 1, 0]],
+            // compare-and-set on the row as read: attempts + still due at the drain's clock
+            ['sql' => 'UPDATE job_queue SET state = ?, claimed_at = NOW() WHERE id_job_queue = ? AND state = ? AND attempts = ? AND run_after <= ?', 'params' => [1, 1, 0, 0, $this->conn->log[1]['params'][4] ?? null]],
             // lease fence before the outcome is written
             ['sql' => 'SELECT COUNT(*) FROM job_queue WHERE id_job_queue = ? AND state = ? AND attempts = ?', 'params' => [1, 1, 0]],
         ], $this->conn->log);
+        self::assertMatchesRegularExpression('/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/', (string) $this->conn->log[1]['params'][4]);
+    }
+
+    public function testStaleReadCannotReclaimAJobAnotherDrainerAlreadyRan(): void
+    {
+        // Drainer A read the row at attempts 0; meanwhile drainer B ran it,
+        // it failed and B requeued it as Pending with attempts 1 + backoff.
+        // A's claim must lose instead of re-running it at once.
+        JobQueue::enqueue('a', ['n' => 1]);
+        $ran = 0;
+        $q = new TestJobQueue();
+        $q->drain(10, ['a' => function () use (&$ran) { $ran++; }]); // B's run
+        self::assertSame(1, $ran);
+        $row = $this->row(\App\JobQueue::class, 1);
+        // B's requeue: Pending again, attempts moved on. A claims with the
+        // attempts value it read before B ran.
+        $row->setState('Pending');
+        $row->setAttempts(1);
+        $claim = (new \ReflectionMethod($q, 'claim'));
+        self::assertFalse($claim->invoke($q, 1, 0, date('Y-m-d H:i:s')), 'stale attempts must lose the claim');
+        self::assertSame('Pending', $row->getState());
+        self::assertTrue($claim->invoke($q, 1, 1, date('Y-m-d H:i:s')), 'current attempts wins the claim');
+        self::assertSame('Running', $row->getState());
     }
 
     public function testSyncQueueSqlTargetsAcctSyncJob(): void
@@ -273,7 +297,8 @@ final class JobQueueTest extends TestCase
             // reclaim counts an attempt and fails at maxAttempts (review-3 #20)
             ['sql' => 'UPDATE acct_sync_job SET state = IF(attempts + 1 >= ?, ?, ?), last_error = ?, attempts = attempts + 1 WHERE state = ? AND claimed_at < (NOW() - INTERVAL 10 MINUTE)',
              'params' => [5, 3, 0, 'Reclaimed: lease expired after 10 minutes without a heartbeat', 1]],
-            ['sql' => 'UPDATE acct_sync_job SET state = ?, claimed_at = NOW() WHERE id_acct_sync_job = ? AND state = ?', 'params' => [1, 1, 0]],
+            // compare-and-set on the row as read: attempts + still due at the drain's clock
+            ['sql' => 'UPDATE acct_sync_job SET state = ?, claimed_at = NOW() WHERE id_acct_sync_job = ? AND state = ? AND attempts = ? AND run_after <= ?', 'params' => [1, 1, 0, 0, $this->conn->log[1]['params'][4] ?? null]],
             // lease fence before the outcome is written
             ['sql' => 'SELECT COUNT(*) FROM acct_sync_job WHERE id_acct_sync_job = ? AND state = ? AND attempts = ?', 'params' => [1, 1, 0]],
         ], $this->conn->log);

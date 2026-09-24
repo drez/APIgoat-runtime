@@ -102,4 +102,63 @@ final class MailHtmlTest extends TestCase
         $this->assertStringNotContainsStringIgnoringCase('javascript', MailHtml::withImages($out));
         $this->assertStringNotContainsString('data-gm-src', $out);
     }
+
+    public function test_css_cleaning_cannot_reassemble_a_closing_style_tag(): void
+    {
+        foreach ([
+            '<style>p{}<@import;/style><img src=x onerror=alert(1)></style>',
+            '<style>p{}<@imp@import;ort;/style><img src=x onerror=alert(1)></style>',
+            '<style>p{}<-moz-binding:x;/style><img src=x onerror=alert(1)></style>',
+            '<style>p{}<x-gm-blocked:/style><img src=x onerror=alert(1)></style>',
+        ] as $in) {
+            foreach ([false, true] as $images) {
+                $out = MailHtml::defuse($in, $images);
+                $this->assertStringNotContainsString('<img', $out, $in);
+                $this->assertSame(1, substr_count($out, '</style>') - substr_count($out, '<style>') + 1, $in);
+                $this->assertStringNotContainsString('<img', MailHtml::withImages($out), $in);
+            }
+        }
+    }
+
+    public function test_css_escapes_cannot_hide_url_import_or_behavior(): void
+    {
+        $out = MailHtml::defuse('<style>p{background:u\\72 l(https://t.example/px)} q{background:\\75 rl(javascript:alert(1))}'
+            . ' @\\69mport "https://e.x/a.css"; .\\31 0px{color:red} a:before{content:"\\201C"}</style>'
+            . '<p style="b\\65havior:url(x.htc);color:red">x</p>');
+        $this->assertStringContainsString('url(' . MailHtml::BLOCKED_PREFIX . 'https://t.example/px)', $out, 'escaped url() is parked like a plain one');
+        $this->assertStringNotContainsString('javascript', $out);
+        $this->assertStringNotContainsStringIgnoringCase('mport', $out);
+        $this->assertStringNotContainsString('havior', $out);
+        $this->assertStringContainsString('.\\31 0px{color:red}', $out, 'a digit-escaped class keeps its escape');
+        $this->assertStringContainsString('content:"\\201C"', $out);
+        $this->assertStringContainsString('style="color:red"', $out);
+    }
+
+    public function test_an_escaped_backslash_is_not_the_start_of_a_new_escape(): void
+    {
+        // "u\\72 l(" is u + a literal backslash + "72 l(" — inert. Decoding the
+        // second backslash alone produced "u\rl(", which browsers read as url(.
+        foreach ([false, true] as $images) {
+            $out = MailHtml::defuse('<style>p{background:u\\\\72 l(http://evil.example/px.png)} @\\\\69mport "http://evil.example/x.css";</style>', $images);
+            $this->assertStringNotContainsString('u\\rl(', $out);
+            $this->assertStringNotContainsString('@\\import', $out);
+            $this->assertStringContainsString('u\\\\72 l(', $out, 'the escaped backslash is kept as written');
+        }
+    }
+
+    public function test_string_urls_in_image_functions_follow_the_url_policy(): void
+    {
+        // image-set("…" 1x) takes a plain string as an image URL (security re-check of 59d0d88).
+        $in = '<style>.a{background-image:image-set("http://t.example/px.gif" 1x, url(https://t.example/p2.gif) 2x)}'
+            . ' .b{background-image:-webkit-image-set(\'https://t.example/w.gif\' 1x)}'
+            . ' .c{background-image:image-set("javascript:alert(1)" 1x, "data:image/png;base64,AAAA" 2x)}</style>';
+        $out = MailHtml::defuse($in, false);
+        $this->assertStringContainsString('image-set("' . MailHtml::BLOCKED_PREFIX . 'http://t.example/px.gif" 1x', $out);
+        $this->assertStringContainsString("-webkit-image-set('" . MailHtml::BLOCKED_PREFIX . "https://t.example/w.gif' 1x)", $out);
+        $this->assertStringNotContainsString('javascript', $out);
+        $this->assertStringContainsString('"data:image/png;base64,AAAA" 2x', $out);
+        $this->assertStringContainsString('image-set("http://t.example/px.gif" 1x', MailHtml::withImages($out), 'Show images restores it');
+        $this->assertStringContainsString('image-set("http://t.example/px.gif" 1x', MailHtml::defuse($in, true), 'images on: kept as written');
+        $this->assertStringContainsString('content:"x"', MailHtml::defuse('<style>a:before{content:"x"}</style>', false), 'plain strings untouched');
+    }
 }

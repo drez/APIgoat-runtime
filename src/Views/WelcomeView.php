@@ -181,17 +181,31 @@ class WelcomeView
         // =========================================================
         // Settings pane — Config categories as stacked sub-sections
         // =========================================================
+        // SECURITY: the dashboard is reachable by every authenticated user, and
+        // Config holds credentials (AI provider keys, …). Only Admin/root or a
+        // user with an unrestricted Config right gets the Settings pane at all.
         $settings = '';
-        foreach ($categoryBuckets as $category => $rows) {
+        $canSettings = self::canSeeSettings($_SESSION[_AUTH_VAR] ?? null);
+        foreach ($canSettings ? $categoryBuckets : [] as $category => $rows) {
             $groupRows = '';
             foreach ($rows as $Config) {
+                $cfgName = htmlspecialchars((string) $Config->getConfig(), ENT_QUOTES, 'UTF-8');
+                // SECURITY: secret-like values are never sent to the browser. The
+                // input stays empty (placeholder) and is flagged so the change
+                // handler below never submits an empty value for it (= unchanged).
+                if (self::isSecretConfigKey((string) $Config->getConfig())) {
+                    $valueInput = input('password', 'Value', '', "config='" . $cfgName . "' ag_save='Config' ag_secret='1' autocomplete='new-password' placeholder='" . htmlspecialchars(_('•••• (unchanged)'), ENT_QUOTES, 'UTF-8') . "'")
+                        . "<button type='button' class='gc-secret-clear' ag_secret_clear='1'>" . htmlspecialchars(_('Clear'), ENT_QUOTES, 'UTF-8') . "</button>";
+                } else {
+                    $valueInput = input('text', 'Value', htmlentities((string) $Config->getValue()), "config='" . $cfgName . "' ag_save='Config'");
+                }
                 $groupRows .= div(
                     form(
-                        label($Config->getConfig())
-                            . input('text', 'Value', htmlentities($Config->getValue()), "config='" . $Config->getConfig() . "' ag_save='Config'")
+                        label($cfgName)
+                            . $valueInput
                             . input('hidden', 'IdConfig', $Config->getIdConfig(), "ag_save='Config'")
                             . div(htmlspecialchars($Config->getDescription() ?? ''), '', "class='explain'"),
-                        "id='form_" . $Config->getConfig() . "'"
+                        "id='form_" . $cfgName . "'"
                     ),
                     '', "class='form-row'"
                 );
@@ -221,8 +235,10 @@ class WelcomeView
         // --- Assemble the tabbed card. Overview is the default tab. ---
         $tabDefs = [
             [$slug('overview'), _('Overview'), $overview],
-            [$slug('settings'), _('Settings'), $settings],
         ];
+        if ($canSettings) {
+            $tabDefs[] = [$slug('settings'), _('Settings'), $settings];
+        }
         if ($hasAPI) {
             $tabDefs[] = [$slug('apisec'), _('API security'), $apisec];
         }
@@ -334,9 +350,25 @@ JS;
         ) . "<script" . gcNonceAttr() . ">" . $tabScript . "</script>";
 
         $return['onReadyJs'] = "
+    document.querySelectorAll('[ag_secret_clear]').forEach(function (__btn) {
+        __btn.addEventListener('click', function () {
+            var __inp = this.parentElement.querySelector('[ag_secret]');
+            if (!__inp) { return; }
+            // window.confirm is the async gc modal (callback form only).
+            confirm('" . addslashes(_('Clear this value?')) . "', function () {
+                __inp.value = '';
+                __inp.setAttribute('data-gc-clear', '1');
+                __inp.dispatchEvent(new Event('change'));
+                __inp.removeAttribute('data-gc-clear');
+            });
+        });
+    });
     document.querySelectorAll('[ag_save=Config]').forEach(function (__cfg) {
         __cfg.addEventListener('change', function () {
             var config = this.getAttribute('config');
+            // Masked secret: an empty field means \"unchanged\" — never blank it,
+            // unless the admin pressed its Clear button (data-gc-clear).
+            if (this.getAttribute('ag_secret') && this.value === '' && !this.getAttribute('data-gc-clear')) { return; }
             var value = 'dev';
             if (config == 'app_status') {
                 if (this.checked) {
@@ -412,5 +444,43 @@ JS;
     });
         ";
         return $return;
+    }
+
+    /**
+     * Settings (Config) pane visibility: Admin, root, or an UNRESTRICTED Config
+     * read right. An Owner/Group-scoped right (array) is not enough — Config
+     * rows carry no owner, so a scoped grant must not expose all of them.
+     */
+    public static function canSeeSettings($auth): bool
+    {
+        if (!is_object($auth)) {
+            return false;
+        }
+        if ((method_exists($auth, 'isAdmin') && $auth->isAdmin() === true)
+            || (method_exists($auth, 'isRoot') && $auth->isRoot() === true)) {
+            return true;
+        }
+        return method_exists($auth, 'hasRights') && $auth->hasRights('Config', 'r') === true;
+    }
+
+    /**
+     * Config rows whose value is a credential and must never be rendered:
+     * Api::isSecretName()'s segment rule (openai_api_key, smtp_password,
+     * stripe_secret_key — not stripe_publishable_key or seo_keywords) plus
+     * the AI key row.
+     */
+    public static function isSecretConfigKey(string $name): bool
+    {
+        if (\ApiGoat\Api\Api::isSecretName($name)) {
+            return true;
+        }
+        if (class_exists('\\ApiGoat\\Ai\\AiManifest')) {
+            try {
+                return strcasecmp($name, \ApiGoat\Ai\AiManifest::keyConfigRow()) === 0;
+            } catch (\Throwable $e) {
+                return false;
+            }
+        }
+        return false;
     }
 }

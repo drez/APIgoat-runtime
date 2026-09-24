@@ -89,10 +89,40 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         return !in_array(strtoupper($method), ['GET', 'HEAD', 'OPTIONS'], true);
     }
 
-    /** The scope the CURRENT bearer token lacks for $method, or null (TokenScopes). */
-    public static function missingScope(string $method): ?string
+    /** Legacy bearer actions that only read (file download / open). */
+    private const LEGACY_READ_ACTIONS = ['file', 'open'];
+
+    /**
+     * Does this request need the write scope? SECURITY: not the HTTP method
+     * alone — legacy actions (mass, upload, project bearer_legacy_actions such
+     * as scanAndCreateClient) and any Service::isMutatingAction() name write
+     * over GET too, so a crm:read token could mass-update. Pure; unit-tested.
+     */
+    public static function requiresWriteScope(string $method, string $action = '', bool $isLegacyBearerAction = false): bool
     {
-        return \ApiGoat\OAuth\TokenScopes::missingFor(self::isWriteMethod($method));
+        if (self::isWriteMethod($method)) {
+            return true;
+        }
+        if ($isLegacyBearerAction && !in_array(strtolower($action), self::LEGACY_READ_ACTIONS, true)) {
+            return true;
+        }
+        return \ApiGoat\Services\Service::isMutatingAction($action);
+    }
+
+    /** The scope the CURRENT bearer token lacks for this request, or null (TokenScopes). */
+    public static function missingScope(string $method, string $action = '', bool $isLegacyBearerAction = false): ?string
+    {
+        return \ApiGoat\OAuth\TokenScopes::missingFor(self::requiresWriteScope($method, $action, $isLegacyBearerAction));
+    }
+
+    /**
+     * The bearer token in a header value, or null. The same pattern as
+     * JimTools JwtAuthentication (and SessionLifetime::isBearerRequest), so
+     * detection and extraction can never disagree.
+     */
+    public static function bearerToken(string $header): ?string
+    {
+        return preg_match('/Bearer\s+(\S.*)$/i', $header, $m) ? trim($m[1]) : null;
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -108,19 +138,34 @@ class OAuthResourceMiddleware implements MiddlewareInterface
         if ($authLine === '') {
             $authLine = $request->getHeaderLine('X-Authorization');
         }
-        $hasBearer = (bool) preg_match('/Bearer\s+\S/i', $authLine);
+        $bearer = self::bearerToken($authLine);
+        $hasBearer = $bearer !== null;
 
         if (!self::shouldAttempt($isApi, $connected, $hasBearer, $isLegacyBearerAction)) {
             return $handler->handle($request);
+        }
+        // SECURITY: hand the authenticator the token detection found. It reads
+        // only a literal "Authorization: Bearer <t>", so an X-Authorization or
+        // odd-whitespace RS256 token skipped OAuth (and its scope floor) and
+        // fell through to JwtAuthentication.
+        if ($request->getHeaderLine('Authorization') !== 'Bearer ' . $bearer) {
+            $request = $request->withHeader('Authorization', 'Bearer ' . $bearer);
         }
 
         $status = BearerSessionAuthenticator::authenticate($request);
 
         // OAuth scope: the one authorization decision made here (default
-        // deny, see TokenScopes): a non-safe method needs crm:write, anything
-        // else crm:read or crm:write.
+        // deny, see TokenScopes): a non-safe method or a mutating action
+        // (requiresWriteScope) needs crm:write, anything else crm:read or
+        // crm:write.
         $gcMissingScope = $status === BearerSessionAuthenticator::AUTHENTICATED
-            ? self::missingScope($request->getMethod())
+            ? self::missingScope(
+                $request->getMethod(),
+                // the action the service will dispatch (body/query `a` on an
+                // unpinned GUI route), as AuthyMiddleware's privilege check sees it
+                AuthyMiddleware::effectiveActionFor(is_array($parsed) ? $parsed : [], $request),
+                $isLegacyBearerAction
+            )
             : null;
         if ($gcMissingScope !== null) {
             $response = new Response();

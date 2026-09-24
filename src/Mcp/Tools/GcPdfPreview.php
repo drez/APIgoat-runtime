@@ -57,7 +57,9 @@ class GcPdfPreview extends AbstractPdfTool
         try {
             $doc = PresetRenderer::render($record, $entry, $templateId, $lang);
         } catch (\Throwable $e) {
-            throw new ToolError('Preview failed: ' . $e->getMessage(), [], 'internal');
+            // SECURITY: internal exception text (paths, SQL) stays in the server log.
+            \error_log('[mcp] gc_pdf_preview: ' . $e->getMessage());
+            throw new ToolError('Preview failed (see server log).', [], 'internal');
         }
 
         $html = (string) $doc['html'];

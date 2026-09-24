@@ -33,6 +33,8 @@ final class NotificationHandler
         }
         $tx = $this->verifier->verify((string) $data['signedTransactionInfo']);
         $renewal = !empty($data['signedRenewalInfo']) ? $this->verifier->verify((string) $data['signedRenewalInfo']) : null;
+        // SECURITY: only renewal info bound to this transaction's subscription counts.
+        $renewal = TransactionRules::boundRenewal($tx, $renewal);
 
         if (($tx['type'] ?? '') === TransactionRules::SUBSCRIPTION
             && (\in_array($type, self::SUBSCRIPTION_STATE, true) || $type === 'REFUND' || $type === 'REVOKE')) {

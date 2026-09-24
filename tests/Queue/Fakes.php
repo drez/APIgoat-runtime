@@ -43,11 +43,12 @@ namespace ApiGoat\Tests\Queue {
         public function execute(array $params): bool
         {
             $this->conn->log[] = ['sql' => $this->sql, 'params' => $params];
-            if (!preg_match('/^UPDATE (\w+) SET state = \?, claimed_at = NOW\(\) WHERE (\w+) = \? AND state = \?$/', $this->sql, $m)) {
+            if (!preg_match('/^UPDATE (\w+) SET state = \?, claimed_at = NOW\(\) WHERE (\w+) = \? AND state = \?( AND attempts = \?)?( AND run_after <= \?)?$/', $this->sql, $m)) {
                 return true; // reclaim: nothing stale in the fake store
             }
             [$table, $pkCol] = [$m[1], $m[2]];
             [$to, $pk, $from] = $params;
+            $attempts = !empty($m[3]) ? (int) $params[3] : null;
             if (in_array((int) $pk, $this->conn->loseClaimFor, true)) {
                 return true;
             }
@@ -58,7 +59,8 @@ namespace ApiGoat\Tests\Queue {
                 }
                 $row = $rows[(int) $pk] ?? null;
                 $set = $peer::getValueSet($peer::STATE);
-                if ($row && $row->getState() === $set[$from]) {
+                if ($row && $row->getState() === $set[$from]
+                    && ($attempts === null || $row->getAttempts() === $attempts)) {
                     $row->setState($set[$to]);
                     $this->rowCount = 1;
                 }

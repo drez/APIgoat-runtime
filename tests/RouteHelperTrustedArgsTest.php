@@ -163,5 +163,40 @@ $out  = makeHelper('GET', 'api/Product', $args, $req)->getArgs();
 
 check('path a=edit survives merged ?a=delete (non-empty pre-merge a locked)', $out['a'], 'edit');
 
+// -------------------------------------------------------------------------
+// 6. is_api / normalized_query are route-derived (RouteParser path flag, RBAC
+//    middleware attribute). A cookie-auth GUI GET with ?is_api=1 must NOT flip
+//    the flag (it skipped Service::mutatingGetRefusal's GET-CSRF guard), and a
+//    client ?normalized_query[...] must not replace the middleware's value.
+$nq   = ['select' => ['Name']];
+$req  = new FakeRequest(['is_api' => '1', 'normalized_query' => ['select' => ['Secret']]], [], ['rbac_public' => null], '/Invoice/approve/4');
+$args = ['a' => 'approve', 'method' => 'GET', 'data' => [], 'is_api' => false, 'normalized_query' => $nq];
+$out  = makeHelper('GET', 'Invoice', $args, $req)->getArgs();
+
+check('GUI route is_api=false survives merged ?is_api=1', $out['is_api'], false);
+check('normalized_query survives merged ?normalized_query', $out['normalized_query'], $nq);
+
+// Same over POST body.
+$req  = new FakeRequest([], ['is_api' => '1', 'normalized_query' => 'x'], ['rbac_public' => null], '/Invoice/update/4');
+$args = ['a' => 'update', 'method' => 'POST', 'data' => [], 'params' => '4', 'is_api' => false, 'normalized_query' => null];
+$out  = makeHelper('POST', 'Invoice', $args, $req)->getArgs();
+
+check('POST body is_api=1 discarded', $out['is_api'], false);
+check('POST body normalized_query discarded (null restored)', $out['normalized_query'], null);
+
+// A key absent before the merge is removed, never taken from the client.
+$req  = new FakeRequest(['is_api' => '1'], [], ['rbac_public' => null], '/Invoice');
+$args = ['a' => '', 'method' => 'GET', 'data' => []];
+$out  = makeHelper('GET', 'Invoice', $args, $req)->getArgs();
+
+check('absent pre-merge is_api is not client-settable', array_key_exists('is_api', $out), false);
+
+// The real API flag still passes through.
+$req  = new FakeRequest(['is_api' => '0'], [], ['rbac_public' => null], '/api/v1/Invoice');
+$args = ['a' => '', 'method' => 'GET', 'data' => [], 'is_api' => true];
+$out  = makeHelper('GET', 'api/Invoice', $args, $req)->getArgs();
+
+check('api route is_api=true survives merged ?is_api=0', $out['is_api'], true);
+
 echo $fail === 0 ? "PASS: RouteHelper trusted-arg preservation OK\n" : "FAILED: {$fail}\n";
 exit($fail === 0 ? 0 : 1);

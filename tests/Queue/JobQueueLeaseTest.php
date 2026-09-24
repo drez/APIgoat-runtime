@@ -48,11 +48,16 @@ final class LeaseStatement
         $st = $this->c->states();
         $rows = $this->c->rows();
 
-        if (preg_match('/^UPDATE \w+ SET state = \?, claimed_at = NOW\(\)(, claimed_by = \?)? WHERE \w+ = \? AND state = \?$/', $this->sql, $m)) {
+        if (preg_match('/^UPDATE \w+ SET state = \?, claimed_at = NOW\(\)(, claimed_by = \?)? WHERE \w+ = \? AND state = \?( AND attempts = \?)?( AND run_after <= \?)?$/', $this->sql, $m)) {
             $withBy = !empty($m[1]);
-            [$to, $by, $pk, $from] = $withBy ? $p : [$p[0], null, $p[1], $p[2]];
+            if (!$withBy) {
+                array_splice($p, 1, 0, [null]);
+            }
+            [$to, $by, $pk, $from] = $p;
+            $attempts = !empty($m[2]) ? (int) $p[4] : null;
             $row = $rows[(int) $pk] ?? null;
-            if ($row && $row->getState() === $st[$from]) {
+            if ($row && $row->getState() === $st[$from]
+                && ($attempts === null || $row->data['attempts'] === $attempts)) {
                 $row->setState($st[$to]);
                 $row->data['claimed_by'] = $by;
                 $this->rowCount = 1;

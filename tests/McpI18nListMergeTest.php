@@ -5,7 +5,26 @@
 // query for the page, per-row locale resolution (lang → row lang → user
 // fallback → fr_CA), empty-value fr_CA fallback, snake keys, guard paths.
 
-namespace ApiGoat\Sessions { if (!class_exists(AuthySession::class)) { class AuthySession {} } }
+namespace ApiGoat\Sessions {
+    if (!class_exists(AuthySession::class)) {
+        class AuthySession
+        {
+            /** @var array<int, true> ids loadPksScoped() lets through */
+            public array $reachable = [];
+            public array $lastScoped = [];
+            public function loadPksScoped($queryClass, array $pks, $model = '', $right = 'r')
+            {
+                $this->lastScoped = [$queryClass, $pks, $model, $right];
+                $out = [];
+                foreach ($pks as $pk) {
+                    if (isset($this->reachable[(int) $pk])) { $out[self::pkKey($pk)] = new \stdClass(); }
+                }
+                return $out;
+            }
+            public static function pkKey($pk) { return is_array($pk) ? (string) json_encode($pk) : (string) $pk; }
+        }
+    }
+}
 
 namespace {
     if (!class_exists('Criteria')) { class Criteria { const IN = 'IN'; } }
@@ -67,9 +86,9 @@ namespace {
         public function description(): string { return ''; }
         public function inputSchema(): array { return []; }
         public function handle(array $args, \ApiGoat\Sessions\AuthySession $session): array { return []; }
-        public function merge(string $entity, $data, ?string $lang, ?string $fallback = null)
+        public function merge(string $entity, $data, ?string $lang, ?string $fallback = null, ?\ApiGoat\Sessions\AuthySession $session = null)
         {
-            return $this->mergeI18nColumnsIntoRows($entity, $data, $lang, $fallback);
+            return $this->mergeI18nColumnsIntoRows($entity, $data, $lang, $fallback, $session);
         }
     };
 
@@ -122,6 +141,23 @@ namespace {
     $single = ['id_quote' => 1, 'x' => 'single assoc row (crm_get shape)'];
     assertEq($tool->merge('Quote', $single, 'en_US'), $single, 'single row untouched (crm_get path owns it)');
     assertEq($tool->merge('Nope', [['id_nope' => 1]], 'en_US'), [['id_nope' => 1]], 'entity without i18n classes untouched');
+
+    // SECURITY: a custom select can alias any column onto the pk key
+    // (select [["title","id_quote"]]) — the pk value in a row is NOT proof of
+    // access. With a session, only ids loadPksScoped() returns are merged.
+    $session = new \ApiGoat\Sessions\AuthySession();
+    $session->reachable = [1 => true];
+    $rows = $tool->merge('Quote', [
+        ['id_quote' => 1],
+        ['id_quote' => 2], // spoofed: another tenant's quote
+    ], 'fr_CA', null, $session);
+    assertEq($session->lastScoped, ['\\App\\QuoteQuery', [1, 2], 'Quote', 'r'], 'ids re-checked with the read right');
+    assertEq($rows[0]['terms'], 'Net 30 jours', 'reachable id still merged');
+    assertEq(array_key_exists('terms', $rows[1]), false, 'unreachable (spoofed) id gets no translation');
+    assertEq(QuoteI18nQuery::$lastFilter[1], [1], 'i18n query never asked for the unreachable id');
+    $session->reachable = [];
+    $spoof = [['id_quote' => 2]];
+    assertEq($tool->merge('Quote', $spoof, 'fr_CA', null, $session), $spoof, 'nothing reachable: rows untouched');
 
     echo "PASS: MCP i18n list merge OK\n";
     exit(0);

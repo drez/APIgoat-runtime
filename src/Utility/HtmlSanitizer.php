@@ -218,10 +218,14 @@ final class HtmlSanitizer
                 if (!self::isSafeImageSrc($el->getAttribute($name))) {
                     $el->removeAttribute($name);
                 }
-            } elseif ($lname === 'target') {
-                // A target="_blank" without rel is a reverse-tabnabbing vector.
-                $el->setAttribute('rel', 'noopener noreferrer');
             }
+        }
+
+        // SECURITY: set after the loop — an input rel="opener" listed after
+        // target would otherwise be dropped (rel is not allowlisted) together
+        // with the rel set here. target without rel is reverse-tabnabbing.
+        if ($el->hasAttribute('target')) {
+            $el->setAttribute('rel', 'noopener noreferrer');
         }
 
         // A link whose href was rejected is a bare, misleading anchor — drop target/rel noise.
@@ -231,7 +235,8 @@ final class HtmlSanitizer
         }
     }
 
-    private static function isSafeHref(string $url): bool
+    /** Also used by TextVariables for {Token} values landing in an href. */
+    public static function isSafeHref(string $url): bool
     {
         $url = trim($url);
         if ($url === '') {
@@ -249,7 +254,7 @@ final class HtmlSanitizer
         return !self::hasControlChars($url);
     }
 
-    private static function isSafeImageSrc(string $url): bool
+    public static function isSafeImageSrc(string $url): bool
     {
         $url = trim($url);
         if ($url === '') {

@@ -83,6 +83,8 @@ final class PurchaseService
             throw new \RuntimeException('unknown-product');
         }
         $renewal = $renewalJws !== null && $renewalJws !== '' ? $this->verifier->verify($renewalJws) : null;
+        // SECURITY: client-supplied renewal info must describe THIS subscription.
+        $renewal = TransactionRules::boundRenewal($tx, $renewal);
 
         $sub = $this->subscriptionRow((string) $tx['originalTransactionId']);
         if ($sub !== null && ((string) $sub->getClientTable() !== \strtolower($clientTable) || (int) $sub->getClientId() !== $clientId)) {
@@ -100,6 +102,8 @@ final class PurchaseService
      */
     public function applySubscription(array $tx, ?array $renewal, string $clientTable, int $clientId, ?object $sub = null): object
     {
+        // SECURITY: ignore renewal info that belongs to another subscription.
+        $renewal = TransactionRules::boundRenewal($tx, $renewal);
         if ($sub === null) {
             $model = AppleIap::model('AppleSubscription');
             $sub = new $model();

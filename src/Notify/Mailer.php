@@ -55,6 +55,12 @@ final class Mailer
         self::$configMemo = null;
     }
 
+    /** STARTTLS auto-upgrade stays on unless config sets smtp_autotls to false. */
+    public static function autoTls(array $cfg): bool
+    {
+        return ($cfg['smtp_autotls'] ?? true) !== false;
+    }
+
     /**
      * Should TLS peer verification be relaxed?
      *
@@ -96,7 +102,10 @@ final class Mailer
             if (!empty($cfg['host'])) {
                 $m->isSMTP();
                 $m->SMTPAuth    = true;
-                $m->SMTPAutoTLS = false;
+                // SECURITY: keep PHPMailer's opportunistic STARTTLS (default on)
+                // so AUTH credentials never go out in cleartext when the server
+                // offers TLS; only an explicit email.smtp_autotls=false opts out.
+                $m->SMTPAutoTLS = self::autoTls($cfg);
                 $m->Host        = $cfg['host'];
                 $m->Port        = $cfg['port'] ?? 587;
                 $m->SMTPSecure  = $cfg['smtp_secure'] ?? '';

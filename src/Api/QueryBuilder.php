@@ -477,8 +477,9 @@ class QueryBuilder
      * Api::getJson() authorizes the BASE entity only, so any caller holding
      * `r` on any one entity could join AuthyRelatedByIdCreation and read — or
      * LIKE-probe — another table through it. The related model is held to the
-     * rule the base entity is: Admin passes, otherwise hasRights(model,'r')
-     * must not be false. A Public+Allow pass on the BASE route no longer
+     * rule the base entity is: Admin/root passes, otherwise hasRights(model,'r')
+     * must be true (All) — an Owner/Group-scoped right is not enough, since no
+     * row scope is applied to the joined model. A Public+Allow pass on the BASE route no longer
      * waives the related read by itself (review-3 Wave 3): the related model
      * must be public in its own right — it has a Public+Allow `list` rule in
      * api_rbac (public content lists that join each other keep working) —
@@ -502,10 +503,14 @@ class QueryBuilder
         if (!\is_object($session)) {
             return false;
         }
-        if ($session->isAdmin()) {
+        if ($session->isAdmin() || (\method_exists($session, 'isRoot') && $session->isRoot() === true)) {
             return true;
         }
-        return $session->hasRights($target[0], 'r') !== false;
+        // SECURITY: only an UNRESTRICTED read right. An Owner/Group grant comes
+        // back as an array of scopes, and a join / use<Rel>Query() applies no
+        // row scope to the related model — counting it as a pass exposed every
+        // related row, not just the caller's own.
+        return $session->hasRights($target[0], 'r') === true;
     }
 
     /** Test seam: fn(string $model): bool replacing the api_rbac lookup. */

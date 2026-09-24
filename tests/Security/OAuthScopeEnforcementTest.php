@@ -180,5 +180,43 @@ final class OAuthScopeEnforcementTest extends TestCase
         TokenScopes::set(null);
         $this->assertNull(OAuthResourceMiddleware::missingScope('DELETE'), 'non-bearer untouched');
     }
+
+    public function test_mutating_actions_over_get_need_write(): void
+    {
+        // Legacy bearer actions write over GET: mass, upload, project ones.
+        TokenScopes::set(['crm:read']);
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('GET', 'mass', true));
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('GET', 'scanAndCreateClient', true));
+        $this->assertSame('crm:write', OAuthResourceMiddleware::missingScope('GET', 'delete'));
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'file', true));
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'open', true));
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'list'));
+        TokenScopes::set(['crm:write']);
+        $this->assertNull(OAuthResourceMiddleware::missingScope('GET', 'mass', true));
+        $this->assertTrue(OAuthResourceMiddleware::requiresWriteScope('POST', 'file', true));
+    }
+
+    public function test_scope_is_judged_on_the_effective_action(): void
+    {
+        // Unpinned GUI route: the service dispatches the query/body `a`, so the
+        // write-scope check must see it (same helper AuthyMiddleware uses).
+        $args = ['route' => 'Client', 'action' => 'list', 'is_api' => false];
+        $get  = (new \Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('GET', '/Client?a=delete')
+            ->withQueryParams(['a' => 'delete']);
+        $act  = \ApiGoat\Middlewares\AuthyMiddleware::effectiveActionFor($args, $get);
+        $this->assertSame('delete', $act);
+        $this->assertTrue(OAuthResourceMiddleware::requiresWriteScope('GET', $act, false));
+        // A path-pinned action and API routes keep the parsed action.
+        $this->assertSame('list', \ApiGoat\Middlewares\AuthyMiddleware::effectiveActionFor(['route' => 'Client/list', 'action' => 'list'], $get));
+        $this->assertSame('list', \ApiGoat\Middlewares\AuthyMiddleware::effectiveActionFor(['route' => 'Client', 'action' => 'list', 'is_api' => true], $get));
+    }
+
+    public function test_bearer_extraction_matches_detection(): void
+    {
+        $this->assertSame('abc.def', OAuthResourceMiddleware::bearerToken('Bearer abc.def'));
+        $this->assertSame('abc.def', OAuthResourceMiddleware::bearerToken("bearer\t abc.def "));
+        $this->assertNull(OAuthResourceMiddleware::bearerToken('Bearer '));
+        $this->assertNull(OAuthResourceMiddleware::bearerToken('Basic dXNlcjpwYXNz'));
+    }
 }
 }

@@ -27,6 +27,9 @@ namespace ApiGoat\Ai;
  */
 final class AiQuota
 {
+    /** authy_log.result of a refused attempt — excluded from the window count. */
+    private const THROTTLED = 'throttled';
+
     /**
      * Pure fixed-window predicate, extracted so the math is unit testable
      * without a DB: allowed while the count already seen in the window is
@@ -62,10 +65,18 @@ final class AiQuota
 
         $now = \time();
         try {
-            if (!self::withinLimit(self::countRecent($subject, $event, $now, $window), $max)) {
+            // SECURITY: record FIRST, then count including our own row. A
+            // count-then-insert let N parallel requests all read the same
+            // below-cap count and all pass (quota × concurrency). Each request
+            // now sees every row inserted before its count, so at most $max
+            // pass per window. A refused attempt is then marked 'throttled' and
+            // stops counting, so retries don't extend the lockout.
+            $row = self::record($subject, $event, $now);
+            if (!self::withinLimit(self::countRecent($subject, $event, $now, $window) - 1, $max)) {
+                $row->setResult(self::THROTTLED);
+                $row->save();
                 return false;
             }
-            self::record($subject, $event, $now);
         } catch (\Throwable $e) {
             \error_log('AiQuota failed (failing open): ' . $e->getMessage());
 
@@ -103,10 +114,11 @@ final class AiQuota
             ->filterByEvent($event)
             ->filterByIp(self::subjectKey($subject))
             ->filterByTimestamp($now - $window, \Criteria::GREATER_EQUAL)
+            ->filterByResult(self::THROTTLED, \Criteria::NOT_EQUAL)
             ->count();
     }
 
-    private static function record(string $subject, string $event, int $now): void
+    private static function record(string $subject, string $event, int $now): object
     {
         $row = new \App\AuthyLog();
         $row->setEvent($event);
@@ -120,6 +132,7 @@ final class AiQuota
         // and it stores a unix int, not a datetime string.
         $row->setTimestamp($now);
         $row->save();
+        return $row;
     }
 
     /**

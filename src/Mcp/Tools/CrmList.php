@@ -29,7 +29,7 @@ class CrmList extends AbstractCrmTool
         $lang = $this->assertValidLang($args);
         $env  = $this->dispatch($entity, $this->buildRequest($args));
         if (($env['status'] ?? '') === 'success' && isset($env['data'])) {
-            $env['data'] = $this->mergeI18nColumnsIntoRows($entity, $env['data'], $lang, $this->userLocale($session));
+            $env['data'] = $this->mergeI18nColumnsIntoRows($entity, $env['data'], $lang, $this->userLocale($session), $session);
         }
         return self::mapEnvelope(self::shapePaged($env));
     }

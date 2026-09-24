@@ -207,11 +207,33 @@ final class MailHtml
 
     private static function cleanCss(string $css, bool $images = true): string
     {
-        $css = str_ireplace(self::BLOCKED_PREFIX, '', $css);
-        $css = preg_replace('/expression\s*\(/i', 'expression-blocked(', $css) ?? $css;
-        $css = preg_replace('/-moz-binding\s*:[^;}]*;?/i', '', $css) ?? $css;
-        $css = preg_replace('/behavior\s*:[^;}]*;?/i', '', $css) ?? $css;
-        $css = preg_replace('/@import[^;]*;?/i', '', $css) ?? $css;
+        // SECURITY: resolve escapes that spell a name (u\72 l(, @\69mport, \62 ehavior)
+        // so the filters below see what the browser's tokenizer sees. Only
+        // escapes decoding to a letter are rewritten: same meaning (a \31 0px class
+        // or a \" inside a string stays escaped).
+        // Any other escaped character (\\, \", an escaped newline) is consumed
+        // as a unit and kept: "u\\72 l(" is a literal backslash, and must not
+        // decode to "u\rl(" (= url( to the browser).
+        $css = preg_replace_callback('/\\\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|([g-zG-Z])|(.))/s', static function (array $m): string {
+            if (($m[3] ?? '') !== '') {
+                return $m[0];
+            }
+            if (($m[2] ?? '') !== '') {
+                return $m[2];
+            }
+            $c = hexdec($m[1]);
+            return $c < 0x80 && preg_match('/^[A-Za-z]$/', chr((int) $c)) ? chr((int) $c) : $m[0];
+        }, $css) ?? '';
+        // SECURITY: removals run to a fixpoint — "@imp@import;ort" (or a split
+        // BLOCKED_PREFIX) must not reassemble what was just removed.
+        do {
+            $before = $css;
+            $css = str_ireplace(self::BLOCKED_PREFIX, '', $css);
+            $css = preg_replace('/expression\s*\(/i', 'expression-blocked(', $css) ?? '';
+            $css = preg_replace('/-moz-binding\s*:[^;}]*;?/i', '', $css) ?? '';
+            $css = preg_replace('/behavior\s*:[^;}]*;?/i', '', $css) ?? '';
+            $css = preg_replace('/@import[^;]*;?/i', '', $css) ?? '';
+        } while ($css !== $before);
         // url(): keep http(s)/data, drop the rest (javascript:, vbscript:, file:)
         // Images blocked: a remote url() is parked (BLOCKED_PREFIX), not dropped,
         // so "Show images" restores backgrounds too.
@@ -224,7 +246,27 @@ final class MailHtml
                 return 'none';
             }
             return $images ? $m[0] : 'url(' . $m[1] . self::BLOCKED_PREFIX . trim($m[2]) . $m[1] . ')';
-        }, $css) ?? $css;
-        return $css;
+        }, $css) ?? '';
+        // image-set() / cross-fade() / image() / src() also take a plain string
+        // as an image URL ("https://t/px.gif" 1x): same policy as url() — a
+        // string that is not http(s)/data:image goes, a remote one is parked
+        // while images are blocked.
+        $css = preg_replace_callback('/((?:-webkit-)?image-set|cross-fade|image|src)\s*(\((?:[^()]++|(?2))*\))/i', static function (array $m) use ($images): string {
+            $args = preg_replace_callback('/(["\'])(.*?)\1/s', static function (array $q) use ($images): string {
+                $u = strtolower(trim($q[2]));
+                if (str_starts_with($u, 'data:image/')) {
+                    return $q[0];
+                }
+                if (!str_starts_with($u, 'http') && !str_starts_with($u, '//')) {
+                    return $q[1] . $q[1];
+                }
+                return $images ? $q[0] : $q[1] . self::BLOCKED_PREFIX . trim($q[2]) . $q[1];
+            }, $m[2]) ?? '';
+            return $m[1] . $args;
+        }, $css) ?? '';
+        // SECURITY: libxml writes <style> text raw, so a "<" left in the CSS can
+        // close the element ("</style><img onerror=…>"). \3C is the same
+        // character to CSS and can never form a tag.
+        return str_replace('<', '\\3C ', $css);
     }
 }

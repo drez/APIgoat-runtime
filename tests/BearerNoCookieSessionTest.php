@@ -25,6 +25,19 @@ final class BearerNoCookieSessionTest extends TestCase
         }
     }
 
+    public function testEveryJwtDeliveryJimToolsAcceptsIsABearer(): void
+    {
+        // JwtAuthentication's /Bearer\s+(.*)$/i: any whitespace after Bearer.
+        self::assertTrue(SessionLifetime::isBearerRequest(['HTTP_AUTHORIZATION' => "Bearer\tabc"]));
+        self::assertTrue(SessionLifetime::isBearerRequest(['HTTP_AUTHORIZATION' => 'Bearer   abc']));
+        self::assertTrue(SessionLifetime::isBearerRequest(['HTTP_AUTHORIZATION' => '  bearer abc']));
+        self::assertFalse(SessionLifetime::isBearerRequest(['HTTP_AUTHORIZATION' => 'Bearer ']));
+        // ... and its `token` cookie on API routes.
+        self::assertTrue(SessionLifetime::isBearerRequest(['REQUEST_URI' => '/x/api/v1/Client?a=1'], ['token' => 'abc.def.ghi']));
+        self::assertFalse(SessionLifetime::isBearerRequest(['REQUEST_URI' => '/x/Client'], ['token' => 'abc']), 'GUI page keeps its session');
+        self::assertFalse(SessionLifetime::isBearerRequest(['REQUEST_URI' => '/x/api/v1/Client'], ['token' => '']));
+    }
+
     public function testNonBearerRequestsKeepTheirSession(): void
     {
         self::assertFalse(SessionLifetime::isBearerRequest([]));

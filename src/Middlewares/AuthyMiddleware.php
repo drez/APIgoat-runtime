@@ -65,8 +65,10 @@ class AuthyMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        // public API route
-        if ($request->getAttribute('rbac_public') == 'passed') {
+        // public API route. SECURITY: api_rbac only judges /api/v* routes —
+        // a GUI request carrying the pass (it once leaked via a '/api/v'
+        // substring match) still goes through the login gate.
+        if ($request->getAttribute('rbac_public') == 'passed' && ! empty($this->args['is_api'])) {
             $response = $handler->handle($request);
             return $response;
         }
@@ -630,7 +632,10 @@ class AuthyMiddleware implements MiddlewareInterface
         if (in_array(strtolower((string) $this->args['model']), ['account', 'oauth', '_meta', 'push'], true)) {
             return false;
         }
-        if (self::isProjectSelfServiceAction((string) $this->args['model'], (string) $this->args['action'])) {
+        // SECURITY: judge the action the service will dispatch, not the
+        // parsed one — see effectiveAction().
+        $action = $this->effectiveAction($request);
+        if (self::isProjectSelfServiceAction((string) $this->args['model'], $action)) {
             return false;
         }
 
@@ -643,11 +648,11 @@ class AuthyMiddleware implements MiddlewareInterface
         // 'YES' -> return true). Deliberately scoped to these two actions ONLY —
         // other ApiGoat/* routes (sendEmail, reset, account) keep their gates.
         if (strtolower((string) $this->args['model']) === 'apigoat'
-            && in_array(strtolower((string) $this->args['action']), ['geocode', 'reversegeocode'], true)) {
+            && in_array(strtolower($action), ['geocode', 'reversegeocode'], true)) {
             return false;
         }
 
-        $requiredPrivileges = $this->getRequiredPrivilege($this->args['action'], $this->args['model']);
+        $requiredPrivileges = $this->getRequiredPrivilege($action, (string) $this->args['model']);
         if ($requiredPrivileges === false) {
             // Custom (non-CRUD) action, not in the privilege map. Infer the
             // required right from the HTTP method (review R3): a mutating verb
@@ -661,7 +666,7 @@ class AuthyMiddleware implements MiddlewareInterface
             // locked them away from every user holding just 'r'.
             $model   = $this->args['model'];
             $reqMethod = strtoupper($request->getMethod());
-            $requiredPrivileges = self::inferredPrivilege($reqMethod, (string) $this->args['action']);
+            $requiredPrivileges = self::inferredPrivilege($reqMethod, $action);
         } else {
             $model = $this->args['model'];
         }
@@ -679,6 +684,45 @@ class AuthyMiddleware implements MiddlewareInterface
         } else {
             return new InvalidSessionRenderer($this->args['is_api'], "Missing privileges in the Privileges Map for the requested action");
         }
+    }
+
+    /**
+     * The action the emitted Service::getResponse() will dispatch on. A GUI
+     * route whose path pins no action segment keeps the client's `a`
+     * (RouteHelper: the query for GET, the parsed body otherwise) while
+     * RouteParser falls back to 'list' / 'create' — so POST /Invoice with
+     * a=approveInvoice used to be judged as a read. Mirrors RouteHelper's
+     * precedence; the JSON API (getApiResponse, no `a` dispatch) and pinned
+     * paths keep the parsed action.
+     */
+    private function effectiveAction($request): string
+    {
+        return self::effectiveActionFor(is_array($this->args) ? $this->args : [], $request);
+    }
+
+    /**
+     * effectiveAction() over RouteParser's parsed_args — shared with
+     * OAuthResourceMiddleware so the OAuth write-scope check judges the same
+     * action the privilege check (and the service) does.
+     */
+    public static function effectiveActionFor(array $args, $request): string
+    {
+        $action = (string) ($args['action'] ?? '');
+        if (! empty($args['is_api'])) {
+            return $action;
+        }
+        $segments = explode('/', trim((string) ($args['route'] ?? ''), '/'));
+        if (isset($segments[1]) && $segments[1] !== '') {
+            return $action; // path-pinned {a}: RouteHelper reasserts it
+        }
+        $method = strtoupper((string) $request->getMethod());
+        if ($method === 'GET' || $method === 'HEAD') {
+            $src = method_exists($request, 'getQueryParams') ? $request->getQueryParams() : [];
+        } else {
+            $src = method_exists($request, 'getParsedBody') ? $request->getParsedBody() : [];
+        }
+        $a = is_array($src) ? ($src['a'] ?? null) : null;
+        return (is_string($a) && $a !== '') ? $a : $action;
     }
 
     /**

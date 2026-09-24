@@ -106,7 +106,9 @@ class RbacMiddleware implements MiddlewareInterface
             $this->args['rbac_public'] = 'passed';
         } elseif ($isMeta || $isGeo || $isSelfService) {
             $request = $request->withAttribute('rbac_complete', 'yes');
-        } elseif (strstr($request->getUri()->getPath(), '/api/v') && $this->args['method'] != 'OPTIONS') {
+        } elseif (!empty($this->args['is_api']) && $this->args['method'] != 'OPTIONS') {
+            // SECURITY: RouteParser's anchored is_api flag, not a '/api/v'
+            // substring — /Product/list//api/v1 took the API public pass.
 
             // Self-service Account endpoint (`/api/v*/Account[/...]`): "Account"
             // is a URL path segment, NOT a real RBAC model (the model is
@@ -688,8 +690,35 @@ class RbacMiddleware implements MiddlewareInterface
         // normalize; downstream (excludeBody, findBestMatch's WHERE-1
         // branch, getBodyWildcarded) already handles them.
         if (!is_array($this->args['data'])
-            || !is_array($this->args['data']['query'] ?? null)
-            || !is_array($this->args['data']['query']['filter'] ?? null)) {
+            || !is_array($this->args['data']['query'] ?? null)) {
+            return;
+        }
+        // SECURITY: match on what QueryBuilder will actually run. A GET
+        // delivers select / filter[Model] as JSON text that QueryBuilder
+        // decodes; the matchers skipped strings, so they added no clause.
+        // An undecodable select is dropped (QueryBuilder ignores it too); an
+        // undecodable filter string is kept and matches no rule.
+        $query = &$this->args['data']['query'];
+        if (isset($query['select']) && !is_array($query['select'])) {
+            $sel = \ApiGoat\Api\QueryBuilder::decodeJsonParam($query['select']);
+            if (is_array($sel)) {
+                $query['select'] = $sel;
+            } else {
+                unset($query['select']);
+            }
+        }
+        if (is_array($query['filter'] ?? null)) {
+            foreach ($query['filter'] as $fModel => $fRows) {
+                if (is_string($fRows)) {
+                    $dec = \ApiGoat\Api\QueryBuilder::decodeJsonParam($fRows);
+                    if (is_array($dec)) {
+                        $query['filter'][$fModel] = is_array($dec[0] ?? null) ? $dec : [$dec];
+                    }
+                }
+            }
+        }
+        unset($query);
+        if (!is_array($this->args['data']['query']['filter'] ?? null)) {
             return;
         }
         if (is_array($this->args['data']['query']['filter'])) {
@@ -762,6 +791,11 @@ class RbacMiddleware implements MiddlewareInterface
                                     $fields[] = "m{$i}";
                                     $i++;
                                 }
+                            } elseif (is_string($filters)) {
+                                // SECURITY: undecodable filter string (see
+                                // normalizeFilter): no rule matches — parity
+                                // with RbacRuleMatcher's 'never' clause.
+                                $where[] = '0';
                             }
                         }
                     }
@@ -799,6 +833,19 @@ class RbacMiddleware implements MiddlewareInterface
             }
         } else {
             $where = ['1'];
+        }
+
+        // SECURITY: a rule restricting query.select must not match a request
+        // that sends no select (QueryBuilder would return every column).
+        // Mirrors RbacRuleMatcher::ruleRestrictsSelect(); CASE keeps the JSON
+        // functions away from NULL / non-JSON bodies.
+        if (!RbacRuleMatcher::requestSendsSelect($this->args['data'])) {
+            $where[] = "(CASE WHEN `body` IS NULL OR NOT JSON_VALID(`body`) THEN 1
+                WHEN JSON_EXTRACT(`body`, '$.query.select') IS NULL THEN 1
+                WHEN JSON_TYPE(JSON_EXTRACT(`body`, '$.query.select')) = 'NULL' THEN 1
+                WHEN JSON_VALUE(`body`, '$.query.select') = '*' THEN 1
+                WHEN JSON_LENGTH(`body`, '$.query.select') = 0 THEN 1
+                ELSE 0 END) = 1";
         }
 
         $selects = '';

@@ -177,6 +177,36 @@ check('GC_RBAC_LEGACY_BODY_MATCH=1 restores select/filter-only matching',
     matchedId(RbacRuleMatcher::bestMatch([rule(1, $selRule)], 'Client', 'list', 'GET', $withJoin)), 1);
 putenv('GC_RBAC_LEGACY_BODY_MATCH');
 
+// ---------------------------------------------------------------- select allowlist cannot be skipped
+
+// A Public+Allow rule restricting select must not match a request that sends
+// no select — QueryBuilder then returns every column (select bypass).
+$pubSel = json_encode(['query' => ['select' => ['Name', 'Price']]]);
+check('select rule: paging-only body does NOT match (was WHERE 1)',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $pubSel, 'Allow', 'Public')], 'Client', 'list', 'GET', ['query' => ['limit' => 500]])), null);
+check('select rule: non-array body does NOT match',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $pubSel, 'Allow', 'Public')], 'Client', 'list', 'GET', 'raw')), null);
+check('select rule: filter-only body does NOT match',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, json_encode(['query' => ['select' => ['Name'], 'filter' => ['Client' => [['name', '*']]]]]))], 'Client', 'list', 'GET',
+        ['query' => ['filter' => ['Client' => [['name', 'x']]]]])), null);
+check('select rule: contained select still matches',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $pubSel, 'Allow', 'Public')], 'Client', 'list', 'GET', ['query' => ['select' => ['Name'], 'limit' => 5]])), 1);
+check('select rule: select outside the allowlist does not match',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $pubSel, 'Allow', 'Public')], 'Client', 'list', 'GET', ['query' => ['select' => ['Name', 'Cost']]])), null);
+check('no-select request falls to an unrestricted rule instead',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $pubSel, 'Allow', 'Public'), rule(2, json_encode(['query' => ['limit' => '*']]), 'Allow', 'Private')], 'Client', 'list', 'GET', ['query' => ['limit' => 5]])), 2);
+foreach ([['select "*"', ['query' => ['select' => '*']]], ['query "*"', ['query' => '*']], ['empty select', ['query' => ['select' => []]]], ['null select', ['query' => ['select' => null]]]] as [$lbl, $b]) {
+    check("unrestricted rule ($lbl) still matches a no-select request",
+        matchedId(RbacRuleMatcher::bestMatch([rule(1, json_encode($b))], 'Client', 'list', 'GET', ['query' => ['limit' => 5]])), 1);
+}
+check('NULL-body rule still matches a clause-free request',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, null)], 'Client', 'list', 'GET', ['query' => ['limit' => 5]])), 1);
+
+// An undecodable filter[Model] string (normalizeFilter keeps it) matches no rule.
+check('undecodable string filter matches no rule',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, null), rule(2, json_encode(['query' => ['filter' => '*']]))], 'Client', 'list', 'GET',
+        ['query' => ['filter' => ['Client' => 'not json']]])), null);
+
 // ----------------------------------------------------------------
 
 if ($fail) {

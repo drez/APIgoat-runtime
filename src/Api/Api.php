@@ -201,7 +201,7 @@ class Api
      */
     protected function secretQueryRef($request): ?string
     {
-        if ($this->secretColumns === [] || !is_array($request)) {
+        if (!is_array($request)) {
             return null;
         }
         $queries = [];
@@ -249,13 +249,163 @@ class Api
             if (preg_match('/^(?:COUNT|SUM|AVG|MIN|MAX)\(\s*(?:DISTINCT\s+)?(.+?)\s*\)$/i', $c, $m)) {
                 $c = $m[1];
             }
-            foreach (explode('.', $c) as $segment) {
+            $segments = explode('.', $c);
+            foreach ($segments as $segment) {
                 if (in_array(preg_replace('/[^a-z0-9]/', '', strtolower($segment)), $this->secretColumns, true)) {
                     return $ref;
                 }
             }
+            // SECURITY: a dotted ref on ANOTHER model (join / relation / alias)
+            // is held to that model's secrets too — the base list alone let
+            // "Invoice.public_token" through from any joinable entity.
+            if (count($segments) > 1 && !$this->isBasePrefix($segments[0])) {
+                foreach (array_slice($segments, 1) as $segment) {
+                    if (self::isJoinedSecretColumn($segment)) {
+                        return $ref;
+                    }
+                }
+            }
         }
         return null;
+    }
+
+    /**
+     * Secret lists of every model an Api was built for in this process, plus
+     * anything registered through registerSecretColumns() — normalised.
+     *
+     * @var array<string, string[]>
+     */
+    private static $secretRegistry = [];
+
+    /**
+     * Declare $model's secret columns for join/dotted-ref enforcement from a
+     * service other than $model's own (bootstrap seam; the constructor
+     * registers its own list automatically).
+     */
+    public static function registerSecretColumns(string $model, array $columns): void
+    {
+        $key = self::normalizeColumn($model);
+        foreach ($columns as $f) {
+            $n = self::normalizeColumn($f);
+            if ($n !== '' && !in_array($n, self::$secretRegistry[$key] ?? [], true)) {
+                self::$secretRegistry[$key][] = $n;
+            }
+        }
+    }
+
+    /**
+     * Is $column a secret on a JOINED model? The joined model's emitted list is
+     * only known when its Api was built / registered this process, and a join
+     * prefix may be a relation name or an alias, so this tests every known
+     * list plus a name floor (secret / token / password / api key / private
+     * key) that covers the emitter's SecretColumns family when it is not.
+     */
+    public static function isJoinedSecretColumn(string $column): bool
+    {
+        $n = preg_replace('/[^a-z0-9]/', '', strtolower($column));
+        if ($n === '') {
+            return false;
+        }
+        if (in_array($n, self::CREDENTIAL_COLUMNS, true) || self::isSecretName($column)) {
+            return true;
+        }
+        foreach (self::$secretRegistry as $cols) {
+            if (in_array($n, $cols, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Qualifiers that make a `token` / `pass` segment a quantity, not a credential. */
+    private const SECRET_QUANTITY_SEGMENTS = ['count', 'counts', 'limit', 'limits', 'total', 'free', 'staked', 'locked',
+        'balance', 'amount', 'supply', 'used', 'usage', 'in', 'out', 'input', 'output', 'max', 'min', 'price', 'rate',
+        'qty', 'quantity', 'cost', 'budget', 'sum', 'num', 'nb', 'symbol', 'decimals', 'monthly', 'daily', 'flexible',
+        'freeze', 'frozen'];
+
+    /** Segments that may follow a credential segment and keep it a credential (token_hash, api_key_enc). */
+    private const SECRET_TAIL_SEGMENTS = ['hash', 'enc', 'encrypted', 'value', 'secret', 'key', 'plain'];
+
+    /** Prefixes that make a `key` (or run-together `…key`) a credential. */
+    private const SECRET_KEY_PREFIXES = ['api', 'access', 'refresh', 'secret', 'private', 'hmac', 'signing', 'sign',
+        'encryption', 'encrypt', 'crypt', 'aws', 'maps', 'master', 'client', 'webhook', 'jwt', 'session', 'license',
+        'licence', 'app', 'auth'];
+
+    /** Prefixes that make a run-together `…token` a credential (apitoken, authtoken). */
+    private const SECRET_TOKEN_PREFIXES = ['api', 'auth', 'access', 'refresh', 'bearer', 'session', 'reset', 'csrf',
+        'remember', 'id', 'jwt', 'oauth', 'push', 'device', 'verify', 'verification', 'confirm', 'confirmation',
+        'invite', 'magic', 'login', 'public', 'private', 'secret', 'app', 'fcm', 'apns'];
+
+    /**
+     * Name-based secret floor, segment-wise (snake_case and CamelCase split),
+     * following goatcheese SecretColumns::kindOfName: a `password`/`passwd`
+     * prefix; a password / passwd / passphrase / pwd / secret / salt segment
+     * (also run-together: userpassword, totpsecret); a trailing `token` or
+     * `pass` unless another segment makes it a quantity (free_token,
+     * monthly_token_limit); a credential-prefixed run-together token
+     * (apitoken, accesstoken); a trailing `hash`; a trailing api / access /
+     * hmac / signing / encryption / aws / maps … `key`. Whole segments only —
+     * `tokens_in`, `output_tokens`, `stripe_publishable_key` and
+     * `seo_keywords` are ordinary columns.
+     */
+    public static function isSecretName(string $name): bool
+    {
+        $snake = strtolower((string) preg_replace('/(?<=[a-z0-9])(?=[A-Z])/', '_', $name));
+        $seg = preg_split('/[^a-z0-9]+/', $snake, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if ($seg === []) {
+            return false;
+        }
+        $flat = implode('', $seg);
+        if (strncmp($flat, 'password', 8) === 0 || strncmp($flat, 'passwd', 6) === 0) {
+            return true;
+        }
+        // id_api_key / id_token_type are foreign keys to a table, not values
+        // (a bare OIDC `id_token` still is).
+        if ($seg[0] === 'id' && count($seg) > 1 && $seg !== ['id', 'token']) {
+            return false;
+        }
+        $quantity = array_intersect($seg, self::SECRET_QUANTITY_SEGMENTS) !== [];
+        $last = count($seg) - 1;
+        // A credential segment names the value itself only when it ends the
+        // name (smtp_pass, sync_token) or is followed by a storage suffix
+        // (token_hash); llm_api_key_rotated_at / reset_token_expires /
+        // last_pass_at are metadata about it.
+        $terminal = static function (int $i) use ($seg, $last): bool {
+            return $i === $last || in_array($seg[$i + 1], self::SECRET_TAIL_SEGMENTS, true);
+        };
+        $credPrefix = static function (string $p, string $suffix, array $prefixes): bool {
+            if (substr($p, -strlen($suffix)) !== $suffix || strlen($p) === strlen($suffix)) {
+                return false;
+            }
+            return in_array(substr($p, 0, -strlen($suffix)), $prefixes, true);
+        };
+        foreach ($seg as $i => $p) {
+            if (in_array($p, ['passphrase', 'pwd', 'salt'], true)
+                || strpos($p, 'password') !== false || strpos($p, 'passwd') !== false
+                || substr($p, -6) === 'secret') {
+                return true;
+            }
+            if (($p === 'token' || $p === 'pass') && !$quantity && $terminal($i)) {
+                return true;
+            }
+            if ($credPrefix($p, 'token', self::SECRET_TOKEN_PREFIXES) && $terminal($i)) {
+                return true;
+            }
+            if ($p === 'key' && $i > 0 && in_array($seg[$i - 1], self::SECRET_KEY_PREFIXES, true) && $terminal($i)) {
+                return true;
+            }
+            if ($credPrefix($p, 'key', self::SECRET_KEY_PREFIXES) && $terminal($i)) {
+                return true;
+            }
+        }
+        return end($seg) === 'hash' && count($seg) > 1;
+    }
+
+    /** Does a dotted-ref prefix name this Api's own (base) model? */
+    private function isBasePrefix(string $prefix): bool
+    {
+        $p = preg_replace('/[^a-z0-9]/', '', strtolower($prefix));
+        return $p === preg_replace('/[^a-z0-9]/', '', strtolower((string) $this->tablename));
     }
 
     /** Failure envelope for a query naming a secret column (null = none). */
@@ -283,7 +433,14 @@ class Api
                 continue;
             }
             foreach (array_keys($row) as $k) {
-                if (in_array(strtolower(str_replace('_', '', (string) $k)), $this->outputDenyColumns, true)) {
+                // SECURITY: a joined select comes back keyed "Rel.Col" / "alias.col";
+                // test the whole key AND its last segment (alias-free), and hold a
+                // non-base prefix to the joined model's secrets.
+                $parts = explode('.', (string) $k);
+                $last = (string) end($parts);
+                if (in_array(strtolower(str_replace('_', '', (string) $k)), $this->outputDenyColumns, true)
+                    || in_array(preg_replace('/[^a-z0-9]/', '', strtolower($last)), $this->outputDenyColumns, true)
+                    || (count($parts) > 1 && !$this->isBasePrefix($parts[0]) && self::isJoinedSecretColumn($last))) {
                     unset($list[$i][$k]);
                 }
             }
@@ -313,6 +470,9 @@ class Api
             $this->outputDenyColumns = array_values(array_unique(array_merge($this->outputDenyColumns, $this->secretColumns)));
         }
         $this->tablename = \camelize($tablename, true);
+        if ($this->secretColumns !== []) {
+            self::registerSecretColumns($this->tablename, $this->secretColumns);
+        }
         $this->queryObjName = "\App\\" . $this->tablename . "Query";
         if ($ServiceWrapper) {
             $this->ServiceWrapper = $ServiceWrapper;
@@ -892,10 +1052,14 @@ class Api
                 $ModelQuery = $this->setAclFilter($ModelQuery);
                 $QueryBuilder = new \ApiGoat\Api\QueryBuilder($ModelQuery, $data);
             }
-            $obj = $QueryBuilder->getDataObj();
+            // SECURITY: a QueryBuilder message means a filter/join was dropped or
+            // refused — the selection is then WIDER than the caller asked for.
+            // Delete nothing (mirrors setJson's "warnings are blocking").
             if ($QueryBuilder->getMessages()) {
-                $ret['error'] = $QueryBuilder->getMessages();
+                return ['status' => 'failure', 'error' => $QueryBuilder->getMessages(),
+                    'messages' => ['Query builder warning are blocking the delete']];
             }
+            $obj = $QueryBuilder->getDataObj();
 
 
             if (!$obj) {

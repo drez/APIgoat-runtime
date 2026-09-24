@@ -63,6 +63,11 @@ final class Translator
 
     private static function load(string $locale): array
     {
+        // SECURITY: $locale becomes part of a require path; refuse anything that
+        // is not a plain locale tag (no traversal / arbitrary file include).
+        if (!preg_match('/^[a-z]{2,3}(_[A-Z]{2})?$/', $locale)) {
+            return [];
+        }
         if (!isset(self::$cache[$locale])) {
             $merged = [];
             foreach (self::dirs() as $dir) {

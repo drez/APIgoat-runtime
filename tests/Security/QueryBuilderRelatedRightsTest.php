@@ -5,6 +5,19 @@
 // skipped the grammar gate its aliased form applies (SQL injection through
 // Propel's backticked column alias). Fakes only — no Propel, no database; the
 // query is built with `dontrun` and the recorded calls are inspected.
+namespace {
+    // Propel's Criteria constants are all QueryBuilder needs from Propel here;
+    // stub them when no Propel is autoloadable (this file used to error out).
+    if (!class_exists('Criteria')) {
+        class Criteria
+        {
+            const EQUAL = '='; const NOT_EQUAL = '<>'; const LIKE = ' LIKE '; const NOT_LIKE = ' NOT LIKE ';
+            const GREATER_THAN = '>'; const LESS_THAN = '<'; const GREATER_EQUAL = '>='; const LESS_EQUAL = '<=';
+            const IN = ' IN '; const NOT_IN = ' NOT IN '; const LEFT_JOIN = 'LEFT JOIN'; const RIGHT_JOIN = 'RIGHT JOIN';
+        }
+    }
+}
+
 namespace App {
     if (!class_exists(QbrMap::class, false)) {
         class QbrMap
@@ -115,9 +128,25 @@ final class QueryBuilderRelatedRightsTest extends TestCase
         $this->assertSame(['Join: Permission denied on (Nope)'], $msgs);
     }
 
+    public function test_owner_or_group_scoped_right_does_not_license_a_join(): void
+    {
+        // hasRights() returns the scope list for an Owner/Group grant; a join or
+        // dotted filter applies no row scope to the related model, so it would
+        // read EVERY related row. Only an unrestricted (true) right passes.
+        foreach ([['Owner'], ['Group'], ['Owner', 'Group']] as $scoped) {
+            $_SESSION[\_AUTH_VAR] = new QbrSession(false, ['QbrBase' => true, 'QbrTag' => $scoped]);
+            [$msgs, $calls] = $this->build(['join' => ['QbrTag']]);
+            $this->assertSame(['Join: Permission denied on (QbrTag)'], $msgs, json_encode($scoped));
+            $this->assertNotContains('leftJoin', $calls);
+            [$msgs, $calls] = $this->build(['filter' => ['QbrBase' => [['QbrTag.label', 'x']]]]);
+            $this->assertSame(['Filter: Permission denied on (QbrTag)'], $msgs, json_encode($scoped));
+            $this->assertNotContains('limit', $calls);
+        }
+    }
+
     public function test_legitimate_joins_still_work(): void
     {
-        $_SESSION[\_AUTH_VAR] = new QbrSession(false, ['QbrBase' => true, 'QbrTag' => ['Owner']]);
+        $_SESSION[\_AUTH_VAR] = new QbrSession(false, ['QbrBase' => true, 'QbrTag' => true]);
         [$msgs, $calls] = $this->build(['join' => ['qbr_tag'], 'select' => ['QbrTag.Label', 'Name']]);
         $this->assertSame([], $msgs);
         $this->assertContains('leftJoin', $calls);

@@ -220,7 +220,18 @@ class RouteHelper
             'method' => isset($this->args['method']) ? $this->args['method'] : $this->method,
             'a'      => array_key_exists('a', $this->args) ? $this->args['a'] : null,
         ];
+        // SECURITY: is_api (RouteParser's path-derived api/vN flag) and the
+        // RbacMiddleware-built normalized_query are route-layer values too — a
+        // ?is_api=1 used to skip Service::mutatingGetRefusal()'s GET-CSRF guard,
+        // and a ?normalized_query[...] replaced the QueryBuilder's input.
+        foreach (self::TRUSTED_MERGE_KEYS as $k) {
+            $this->preMergeTrusted['keys'][$k] = array_key_exists($k, $this->args)
+                ? [$this->args[$k]] : null;
+        }
     }
+
+    /** Route-derived args restored verbatim (or removed when absent) after the user merge. */
+    private const TRUSTED_MERGE_KEYS = ['is_api', 'normalized_query'];
 
     /**
      * Restore the middleware/route-derived args that the array_merge of raw
@@ -249,6 +260,14 @@ class RouteHelper
         $preA = array_key_exists('a', $this->preMergeTrusted) ? $this->preMergeTrusted['a'] : null;
         if ($preA !== null && $preA !== '') {
             $this->args['a'] = $preA;
+        }
+        foreach (self::TRUSTED_MERGE_KEYS as $k) {
+            $pre = $this->preMergeTrusted['keys'][$k] ?? null;
+            if ($pre === null) {
+                unset($this->args[$k]);
+            } else {
+                $this->args[$k] = $pre[0];
+            }
         }
         $this->args['rbac_public'] = $this->request->getAttribute('rbac_public');
         $this->args['routeName']   = $this->routeName;

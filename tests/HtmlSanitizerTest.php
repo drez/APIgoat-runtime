@@ -86,6 +86,8 @@ refuse('max-width fetch',  '<div style="max-width:url(javascript:1)">x</div>', '
 keep('table',            '<table><tr><td colspan="2">c</td></tr></table>', '<td colspan="2">');
 keep('unknown unwrapped text', '<foo>keep this</foo>',            'keep this');
 keep('target gets rel',  '<a href="https://x.com" target="_blank">x</a>', 'noopener');
+keep('target keeps rel when an input rel follows it', '<a href="https://x.com" target="_blank" rel="opener">x</a>', 'rel="noopener noreferrer"');
+refuse('input rel=opener dropped', '<a href="https://x.com" target="_blank" rel="opener">x</a>', 'rel="opener"');
 
 echo "-- edges --\n";
 same('empty string',   HtmlSanitizer::clean(''),      '');

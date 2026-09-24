@@ -95,8 +95,7 @@ final class PdfGenerator
         if (self::hasLocal($entry)) {
             $row = self::localCurrentRow($record, $entry, $name);
             if ($row !== null) {
-                $fileGetter = 'get' . $entry['files']['file_php'];
-                if (is_file(self::baseDir() . (string) $row->$fileGetter())) {
+                if (self::localFile($row, $entry) !== null) {
                     return true;
                 }
             }
@@ -121,9 +120,8 @@ final class PdfGenerator
         if (self::hasLocal($entry)) {
             $row = self::localCurrentRow($record, $entry, $name);
             if ($row !== null) {
-                $fileGetter = 'get' . $entry['files']['file_php'];
-                $path = self::baseDir() . (string) $row->$fileGetter();
-                if (is_file($path)) {
+                $path = self::localFile($row, $entry);
+                if ($path !== null) {
                     return ['bytes' => (string) file_get_contents($path), 'name' => $name, 'generated' => false];
                 }
             }
@@ -401,6 +399,25 @@ final class PdfGenerator
             flock($fh, LOCK_UN);
             fclose($fh);
         }
+    }
+
+    /**
+     * SECURITY: the child row's file column is data, not a trusted path — only
+     * a .pdf that really sits under public/file/<class_dir>/ is served (no
+     * "../../.env", no absolute path, no symlink out). Null otherwise, so the
+     * caller falls through to "no stored copy".
+     */
+    private static function localFile(object $row, array $entry): ?string
+    {
+        $fileGetter = 'get' . $entry['files']['file_php'];
+        $path = realpath(self::baseDir() . (string) $row->$fileGetter());
+        $dir  = realpath(self::baseDir() . 'public/file/' . $entry['files']['class_dir']);
+        if ($path === false || $dir === false || !is_file($path)
+            || strncmp($path, $dir . DIRECTORY_SEPARATOR, strlen($dir) + 1) !== 0
+            || strtolower(substr($path, -4)) !== '.pdf') {
+            return null;
+        }
+        return $path;
     }
 
     private static function baseDir(): string

@@ -36,12 +36,13 @@ final class ExceptionDetail
         if ($exception instanceof HttpNotFoundException) {
             $message = '404 Not Found<br>';
         }else{
-            $message = $exception->getMessage();
+            // SECURITY: message/trace can carry request-controlled text; escape for HTML.
+            $message = htmlspecialchars($exception->getMessage(), ENT_QUOTES, 'UTF-8');
         }
-        $code = $exception->getCode();
-        $file = $exception->getFile();
+        $code = htmlspecialchars((string) $exception->getCode(), ENT_QUOTES, 'UTF-8');
+        $file = htmlspecialchars($exception->getFile(), ENT_QUOTES, 'UTF-8');
         $line = $exception->getLine();
-        $trace = $exception->getTraceAsString();
+        $trace = htmlspecialchars($exception->getTraceAsString(), ENT_QUOTES, 'UTF-8');
         $error = sprintf('[%s] %s in %s on line %s.', $code, $message, $file, $line);
         $error .= sprintf("<br>Backtrace:<br>%s", str_replace("#", "<br>#", $trace));
         if ($maxLength > 0) {

@@ -96,13 +96,13 @@ class BuilderReturn
         $this->message(_('Item deleted'))
         . "
     document.body.style.cursor = 'auto';
-    var __row = document.querySelector('#" . $this->request['p'] . "Table tr[rid=\"" . $this->request['i'] . "\"]');
+    var __row = document.querySelector('#" . $this->js($this->request['p'] ?? '') . "Table tr[rid=\"" . $this->js($this->request['i'] ?? '') . "\"]');
     if (__row) { __row.remove(); }
-    var __countEl = document.querySelector('#" . $this->request['p'] . "ListForm .pagination-wrapper .count span');
+    var __countEl = document.querySelector('#" . $this->js($this->request['p'] ?? '') . "ListForm .pagination-wrapper .count span');
     var count = __countEl ? __countEl.textContent : 0;
     if (__countEl) { __countEl.textContent = (count - 1); }
     if((count-1) == 0){
-        var __tbl = document.querySelector('#" . $this->request['p'] . "Table');
+        var __tbl = document.querySelector('#" . $this->js($this->request['p'] ?? '') . "Table');
         if (__tbl) { __tbl.insertAdjacentHTML('beforeend', '<tr><td colspan=\"100%\"><p class=\"no-results\"><span>Nothing left</span></p></td></tr>'); }
     }
 "; // update paging
@@ -126,18 +126,18 @@ class BuilderReturn
 
         if ($this->request['action'] == 'create') {
             $alert_close = "
-    var __saveBtn = document.querySelector('#form" . $this->request['p'] . " #save" . $this->request['p'] . "');
+    var __saveBtn = document.querySelector('#form" . $this->js($this->request['p'] ?? '') . " #save" . $this->js($this->request['p'] ?? '') . "');
     if (__saveBtn) { __saveBtn.removeAttribute('disabled'); __saveBtn.classList.remove('unsaved'); __saveBtn.style.cursor = 'auto'; }
     document.body.style.cursor = 'auto';";
         } else {
             $alert_close = "
-    var __saveBtn = document.querySelector('#form" . $this->request['p'] . " #save" . $this->request['p'] . "');
+    var __saveBtn = document.querySelector('#form" . $this->js($this->request['p'] ?? '') . " #save" . $this->js($this->request['p'] ?? '') . "');
     if (__saveBtn) { __saveBtn.removeAttribute('disabled'); __saveBtn.classList.remove('unsaved'); __saveBtn.style.cursor = 'auto'; }
     document.body.style.cursor = 'auto';";
         }
 
         if ($this->request['action'] == 'list') {
-            $action_success = "document.location='" . _SITE_URL . $this->request['p'] . "'";
+            $action_success = "document.location='" . _SITE_URL . $this->js($this->request['p'] ?? '') . "'";
         } elseif (!empty($this->request['jet'])) {
             switch ($this->request['jet']) {
                 case 'refreshChild':
@@ -145,12 +145,12 @@ class BuilderReturn
                     $close_dialog = ($this->request['data']['no_close']) ?'': "if(window.gcScreens){gcScreens.popAfterSave(null);}";
                     $action_success =
                         "(function(){
-                            var __qs = new URLSearchParams({ ui: '{$this->request['data']['pc']}Table', pui:'{$this->request['ui']}', pc:'{$this->request['data']['pc']}'});
-                            fetch('" . _SITE_URL . "{$this->request['data']['pc']}/{$child}/{$this->request['data']['ip']}?' + __qs.toString(), {
+                            var __qs = new URLSearchParams({ ui: '" . $this->js($this->request['data']['pc'] ?? '') . "Table', pui:'" . $this->js($this->request['ui'] ?? '') . "', pc:'" . $this->js($this->request['data']['pc'] ?? '') . "'});
+                            fetch('" . _SITE_URL . "" . $this->js($this->request['data']['pc'] ?? '') . "/" . $this->js($child) . "/" . $this->js($this->request['data']['ip'] ?? '') . "?' + __qs.toString(), {
                                 credentials: 'same-origin',
                                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
                             }).then(function (r) { return r.text(); }).then(function (data) {
-                                var __cnt = document.getElementById('cnt{$this->request['pc']}Child');
+                                var __cnt = document.getElementById('cnt" . $this->js($this->request['pc'] ?? '') . "Child');
                                 if (__cnt) {
                                     // Mirror jQuery .html(data): replace markup AND execute any returned <script>.
                                     __cnt.innerHTML = '';
@@ -168,10 +168,10 @@ class BuilderReturn
                                         }
                                     }
                                 }
-                                document.querySelectorAll('[j=conglet_{$this->request['data']['pc']}]').forEach(function (__c) {
+                                document.querySelectorAll('[j=conglet_" . $this->js($this->request['data']['pc'] ?? '') . "]').forEach(function (__c) {
                                     if (__c.parentElement) { __c.parentElement.className = 'ui-corner-top ui-state-default'; }
                                 });
-                                document.querySelectorAll('[j=conglet_{$this->request['data']['pc']}][p={$this->request['data']['tp']}]').forEach(function (__c) {
+                                document.querySelectorAll('[j=conglet_" . $this->js($this->request['data']['pc'] ?? '') . "][p=" . $this->js($this->request['data']['tp'] ?? '') . "]').forEach(function (__c) {
                                     if (__c.parentElement) { __c.parentElement.classList.add('ui-state-active'); }
                                 });
                             });
@@ -182,7 +182,7 @@ class BuilderReturn
 
                     break;
                 case 'createReload':
-                    $action_success = "document.location='" . _SITE_URL . $this->request['p'] . "/edit/{$this->request['i']}'";
+                    $action_success = "document.location='" . _SITE_URL . $this->js($this->request['p'] ?? '') . "/edit/" . $this->js($this->request['i'] ?? '') . "'";
 
                     break;
                 case 'swWarn':
@@ -190,7 +190,7 @@ class BuilderReturn
             }
         } else {
             // save existing // reload
-            $action_success = "document.location='" . _SITE_URL . $this->request['p'] . "/edit/{$this->request['i']}';";
+            $action_success = "document.location='" . _SITE_URL . $this->js($this->request['p'] ?? '') . "/edit/" . $this->js($this->request['i'] ?? '') . "';";
         }
 
         $alert_close .= $action_success;
@@ -285,7 +285,7 @@ alert_close = function (){
         $this->return['messages'] = $messages;
         $this->return['onReadyJs'] =
             "alertb('" . addslashes(_('Alert')) . "', '" . addslashes($text) . "');
-    var __saveBtn = document.querySelector('#form" . $p . " #save" . $p . "');
+    var __saveBtn = document.querySelector('#form" . $this->js($p) . " #save" . $this->js($p) . "');
     if (__saveBtn) { __saveBtn.removeAttribute('disabled'); __saveBtn.style.cursor = 'auto'; }
     document.body.style.cursor = 'auto';";
     }
@@ -298,6 +298,18 @@ alert_close = function (){
     private function inError()
     {
         return ! empty($this->error);
+    }
+
+    /**
+     * SECURITY: request values spliced into the onReadyJs strings. json_encode
+     * with the HEX flags escapes quotes, backslashes, newlines and <>& as \uXXXX;
+     * the outer quotes are dropped so the value stays inside the surrounding
+     * '...' literal — same JS for ordinary ids/model names, no breakout.
+     */
+    private function js($value): string
+    {
+        $enc = json_encode((string) $value, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        return substr((string) $enc, 1, -1);
     }
 
     private function removeNl($string)

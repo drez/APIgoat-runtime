@@ -165,6 +165,42 @@ class GoogleDriveStorage implements FileStorageInterface
     }
 
     /**
+     * SECURITY: get/update/delete/share/download take a bare id and act on any
+     * file the impersonated user can reach. Callers holding an id from a
+     * request must first check it is a DIRECT child of the scope folder the
+     * user is limited to (the same set list($scope) returns). An empty scope
+     * means "unscoped" and always passes; a scope folder that does not exist
+     * contains nothing.
+     */
+    public function inScope(string $id, string $scope): bool
+    {
+        if (trim($scope, '/') === '') {
+            return true;
+        }
+        if ($id === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $id)) {
+            return false;
+        }
+        $folderId = $this->resolveScope($scope, /*create*/ false);
+        if ($folderId === null) {
+            return false;
+        }
+        try {
+            $meta = $this->google->get(
+                $this->withDriveParams(self::FILES_URL . '/' . rawurlencode($id) . '?fields=' . rawurlencode('id,parents,trashed')),
+                $this->scopes(),
+                $this->userEmail
+            );
+        } catch (Exceptions\TransientError $e) {
+            if ($e->httpCode === 404) {
+                return false;
+            }
+            throw $e;
+        }
+        return empty($meta['trashed'])
+            && in_array($folderId, (array) ($meta['parents'] ?? []), true);
+    }
+
+    /**
      * Bytes of the file with this id (files.get alt=media). Callers MUST have
      * obtained $id from a scoped listing (list()) — a bare id from a request
      * would read any file the impersonated user can reach. Refuses anything
