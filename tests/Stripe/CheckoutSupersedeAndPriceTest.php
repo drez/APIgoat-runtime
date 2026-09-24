@@ -144,7 +144,10 @@ final class CheckoutSupersedeAndPriceTest extends TestCase
     public function testPayPageRefusesASupersededLink(): void
     {
         $src = (string) \file_get_contents(__DIR__ . '/../../src/Stripe/PayPage.php');
-        $render = \substr($src, \strpos($src, 'public static function render('), 4000);
+        $start  = \strpos($src, 'public static function render(');
+        $next   = \strpos($src, "\n    public ", $start + 1);
+        $render = \substr($src, $start, $next === false ? null : $next - $start);
+        $this->assertNotFalse(\strpos($render, 'refreshSessionFor'), 'render() still regenerates expired sessions');
         $this->assertStringContainsString("(string) \$pay->getStatus() === 'canceled'", $render);
         $this->assertLessThan(\strpos($render, 'refreshSessionFor'), \strpos($render, "=== 'canceled'"),
             'a canceled row is refused before any session is regenerated');

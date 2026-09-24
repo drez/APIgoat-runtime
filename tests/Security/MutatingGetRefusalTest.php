@@ -168,5 +168,21 @@ check('a service with no declaration at all fails CLOSED',
 check('readOnlyCustomActionsOf on a non-object is empty',
     Service::readOnlyCustomActionsOf(null), []);
 
+// ── is_api must be the ROUTE-derived flag, not a client param ────────────
+/** Request stand-in that also carries RouteParser's parsed_args attribute. */
+class FakeAttrReq extends FakeReq
+{
+    private array $a;
+    public function __construct(array $attrs, array $h = []) { parent::__construct($h); $this->a = $attrs; }
+    public function getAttribute(string $n, $d = null) { return $this->a[$n] ?? $d; }
+}
+check('GUI GET delete with forged is_api=1 still refused (parsed_args says GUI)',
+    Service::mutatingGetRefusal($get('delete', ['is_api' => '1']), new FakeAttrReq(['parsed_args' => ['is_api' => false]])), true);
+check('custom action GET with forged is_api=1 still refused',
+    Service::customActionGetRefusal($bare, ['method' => 'GET', 'a' => 'approveInvoice', 'is_api' => '1'],
+        new FakeAttrReq(['parsed_args' => ['is_api' => false]])), true);
+check('real api/v1 route (parsed_args is_api=true) GET delete allowed',
+    Service::mutatingGetRefusal($get('delete'), new FakeAttrReq(['parsed_args' => ['is_api' => true]])), false);
+
 echo $fail ? "\n$fail FAILURES\n" : "\nALL PASS\n";
 exit($fail ? 1 : 0);

@@ -221,7 +221,7 @@ class Service
         }
         // api/v1 routes are bearer-authenticated (no ambient cookie authority),
         // and they dispatch through getApiResponse(), not getResponse().
-        if (! empty($args['is_api']) || ! empty($args['isApiCall'])) {
+        if (self::routeIsApi($args, $request) || ! empty($args['isApiCall'])) {
             return false;
         }
 
@@ -237,6 +237,24 @@ class Service
         }
 
         return self::isMutatingAction((string) ($args['a'] ?? ($args['action'] ?? '')));
+    }
+
+    /**
+     * SECURITY: the api/vN flag as the ROUTE layer derived it. When the PSR-7
+     * request is at hand, RouteParser's parsed_args (path-decoded, never merged
+     * with query/body) is authoritative, so a GUI GET carrying ?is_api=1 can't
+     * opt out of the GET-CSRF refusal. Without a request, $args['is_api'] is used
+     * (RouteHelper restores it after the user-param merge).
+     */
+    private static function routeIsApi(array $args, $request): bool
+    {
+        if (is_object($request) && method_exists($request, 'getAttribute')) {
+            $parsed = $request->getAttribute('parsed_args');
+            if (is_array($parsed)) {
+                return ! empty($parsed['is_api']);
+            }
+        }
+        return ! empty($args['is_api']);
     }
 
     /**

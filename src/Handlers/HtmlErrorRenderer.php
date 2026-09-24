@@ -52,7 +52,9 @@ class HtmlErrorRenderer implements ErrorRendererInterface
                 $errorMessage = $detailedErrorMessage;
             }
 
-            return scriptReady("alertb('Error', '{$errorMessage}');");
+            // SECURITY: JSON-encode (HTML-safe) instead of splicing into a JS string literal.
+            $jsMessage = json_encode($errorMessage, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+            return scriptReady("alertb('Error', {$jsMessage});");
         }
 
         if ($displayErrorDetails) {

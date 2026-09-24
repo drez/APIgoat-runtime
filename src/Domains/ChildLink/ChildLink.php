@@ -152,7 +152,9 @@ class ChildLink
         try {
             $row->save();
         } catch (\Exception $e) {
-            return ['status' => 'error', 'message' => $e->getMessage()];
+            // SECURITY: never echo raw DB/driver errors to the client.
+            error_log('ChildLink::link save failed: ' . $e->getMessage());
+            return ['status' => 'error', 'message' => 'save failed'];
         }
         return ['status' => 'success', 'message' => ''];
     }
@@ -189,7 +191,9 @@ class ChildLink
         try {
             $row->save();
         } catch (\Exception $e) {
-            return ['status' => 'error', 'message' => $e->getMessage()];
+            // SECURITY: never echo raw DB/driver errors to the client.
+            error_log('ChildLink::unlink save failed: ' . $e->getMessage());
+            return ['status' => 'error', 'message' => 'save failed'];
         }
         return ['status' => 'success', 'message' => ''];
     }
