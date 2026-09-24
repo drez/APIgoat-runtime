@@ -1200,7 +1200,9 @@ class Api
                 // add_i18n proxy columns are applied per-locale (and kept out
                 // of colsToValidate — they are not columns of the main map).
                 $i18nData = array_intersect_key($data, array_flip($this->i18nColumns()));
-                $this->setColumn($obj, array_diff_key($data, $i18nData));
+                if ($this->setColumn($obj, array_diff_key($data, $i18nData)) === false) {
+                    return false;
+                }
                 $this->applyI18n($obj, $i18nData);
 
                 // Posted FK values must stay in the caller's scope: the same
@@ -1327,7 +1329,7 @@ class Api
      * @param PropelCollection object classe $obj
      * @param array $columns
      * @param string $value
-     * @return void
+     * @return bool false when a setter rejected its value (response already set)
      */
     private function setColumn(&$obj, $columns, $value = '')
     {
@@ -1338,7 +1340,9 @@ class Api
             if (!method_exists($obj, $setStr))
                 $this->response['messages'][] = 'Unknown column ' . $columns;
             else {
-                $obj->$setStr($value);
+                if (!$this->applySetter($obj, $setStr, $columns, $value)) {
+                    return false;
+                }
                 $this->colsToValidate[] = $columns;
                 $ret['count']++;
             }
@@ -1354,7 +1358,9 @@ class Api
                     if (!method_exists($obj, $setStr)) {
                         $this->response['messages'][] = 'Unknown column ' . $key;
                     } else {
-                        $obj->$setStr($val);
+                        if (!$this->applySetter($obj, $setStr, $key, $val)) {
+                            return false;
+                        }
                         $this->colsToValidate[] = $key;
                         $this->response['status'] = 'success';
                     }
@@ -1362,6 +1368,30 @@ class Api
                     $this->response['messages'][] = 'Missing value for column';
                 }
             }
+        }
+        return true;
+    }
+
+    /**
+     * Run one generated setter. Propel setters throw PropelException on a
+     * value the column cannot hold — an ENUM setter on a bool / array /
+     * unknown label, a temporal setter on an unparsable date. That is the
+     * caller's bad input, not a server fault: answer a 400 naming the column
+     * (status 'failure' -> ApiResponse 'Unknown' -> 400) and log the detail,
+     * instead of letting it escape as a 500.
+     */
+    private function applySetter($obj, string $setStr, string $column, $value): bool
+    {
+        try {
+            $obj->$setStr($value);
+            return true;
+        } catch (\PropelException $x) {
+            error_log('ApiGoat Api ' . $this->tablename . ' ' . $setStr . ': ' . $x->getMessage());
+            $this->response['status'] = 'failure';
+            $this->response['error'] = 'Invalid value for column ' . $column;
+            $this->response['messages'][] = 'Invalid value for column ' . $column
+                . (is_scalar($value) && !is_bool($value) ? '' : ' (expected a scalar value)');
+            return false;
         }
     }
 

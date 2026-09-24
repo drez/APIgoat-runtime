@@ -1010,13 +1010,22 @@ class QueryBuilder
                         // the SAME relation as the previous one, which is what
                         // keeps consecutive dotted filters sharing one
                         // use<Rel>Query() instead of reopening it per filter.
-                        if ($useQuery && !$lastUseQuery) {
-                            $this->Query = $this->Query->$useQuery();
+                        // A generated filterBy<Col>() throws PropelException
+                        // on a value its column cannot take (an ENUM given a
+                        // bool / array member / unknown label). That is bad
+                        // caller input: refuse the request with a message
+                        // naming the column (-> 'failure' -> 400) instead of
+                        // a 500, and log the detail.
+                        try {
+                            if ($useQuery && !$lastUseQuery) {
+                                $this->Query = $this->Query->$useQuery();
+                                $lastUseQuery = $useQuery;
+                            }
                             $this->Query->$filterStr($filter[1], $criteria);
-                            $lastUseQuery = $useQuery;
-                        } else {
-                            $this->Query
-                                ->$filterStr($filter[1], $criteria);
+                        } catch (\PropelException $x) {
+                            error_log('ApiGoat QueryBuilder ' . $table . ' ' . $filterStr . ': ' . $x->getMessage());
+                            $this->messages[] = "Filter: invalid value for column ({$filter[0]}) on ({$table})";
+                            return $this->abortFilters($lastUseQuery);
                         }
 
                         if ($addOr) {

@@ -55,10 +55,8 @@ class GuiManager extends Service
         }
 
         if ($a == 'ixsamem') {
-            \App\AuthyQuery::create()
-                ->filterByIdAuthy($_SESSION[_AUTH_VAR]->get('id'))
-                ->update(array('Onglet' => serialize($_SESSION['mem'])));
-            $this->body['status'] = 'success';
+            // Persisting IS this action: report success only when it landed.
+            $this->body['status'] = $this->persistOnglet() ? 'success' : 'failure';
         }
         if ($a == 'ixiconel') {
             $_SESSION['mem']['onglet']['vl'] = $v;
@@ -113,8 +111,9 @@ class GuiManager extends Service
                 unset($_SESSION['mem']['search']);
             }
 
-            \App\AuthyQuery::create()
-                ->filterByIdAuthy($_SESSION[_AUTH_VAR]->get('id'))->update(array('Onglet' => serialize($_SESSION['mem'])));
+            // The session-side kill above is what the GUI needs; the DB copy
+            // is best-effort (a failure is logged by persistOnglet()).
+            $this->persistOnglet();
             $this->body['status'] = 'success';
         }
 
@@ -127,5 +126,32 @@ class GuiManager extends Service
             $this->body['status'] = 'success';
             $this->body['body'] = ['timezone' => $timezone];
         }
+    }
+
+    /**
+     * Save the tab memory ($_SESSION['mem']) onto the caller's own Authy row.
+     *
+     * The update goes through AuthyQuery, so the ORM's tenant / ACL scoping
+     * applies. A row scoped out of the caller's reach used to surface as an
+     * exception (older Propel BasePeer) and now as a 0-row UPDATE. MySQL also
+     * reports 0 affected rows when the stored value is unchanged, so a 0 is
+     * confirmed with a scoped count before being treated as a miss. Never
+     * throws: the tab state is a convenience, not worth a 500.
+     */
+    private function persistOnglet(): bool
+    {
+        $id = $_SESSION[_AUTH_VAR]->get('id');
+        try {
+            $n = \App\AuthyQuery::create()
+                ->filterByIdAuthy($id)
+                ->update(array('Onglet' => serialize($_SESSION['mem'] ?? [])));
+            if ($n > 0 || \App\AuthyQuery::create()->filterByIdAuthy($id)->count() > 0) {
+                return true;
+            }
+            error_log('ApiGoat GuiManager: tab memory not saved, Authy ' . (int) $id . ' is out of scope');
+        } catch (\Exception $x) {
+            error_log('ApiGoat GuiManager: tab memory not saved for Authy ' . (int) $id . ': ' . $x->getMessage());
+        }
+        return false;
     }
 }

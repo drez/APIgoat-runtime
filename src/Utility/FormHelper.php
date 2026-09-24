@@ -187,6 +187,15 @@ trait FormHelper
             if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,2}$/', $order['col'])) {
                 return $search['order'];
             }
+            // Never store a credential-column sort key (a sort oracle on the
+            // hash). Which relation keys a list may sort by is decided where
+            // the ordering is CONSUMED — the emitted getList() checks each key
+            // against the list's displayed sort headers and the caller's read
+            // right on the relation's model — so stale sessions and
+            // RecallMiddleware-restored orderings are held to it too.
+            if (\ApiGoat\Api\QueryBuilder::isCredentialColumnName($order['col'])) {
+                return $search['order'];
+            }
             $order['sens'] = strtolower((string) ($order['sens'] ?? ''));
             if (!in_array($order['sens'], ['', 'asc', 'desc'], true)) {
                 return $search['order'];

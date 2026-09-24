@@ -89,17 +89,17 @@ trait HandlesAutocomplete
                 $method = 'filterBy' . $field;
                 if (!method_exists($Model, $method)) { continue; }
                 if (is_array($val)) {
-                    $q->$method('%' . $val[0] . '%');
+                    $q->$method('%' . $val[0] . '%', \Criteria::LIKE);
                     if (($val[1] ?? null) === 'or') { $q->_or(); }
                 } else {
-                    $q->$method('%' . $val . '%');
+                    $q->$method('%' . $val . '%', \Criteria::LIKE);
                 }
             }
         } else {
             if (in_array($filter, $show, true)) {
                 $method = 'filterBy' . $filter;
                 if (method_exists($Model, $method)) {
-                    $q->$method('%' . $str . '%');
+                    $q->$method('%' . $str . '%', \Criteria::LIKE);
                 }
             }
         }

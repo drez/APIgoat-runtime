@@ -102,9 +102,9 @@ class IarcAutoc
 
         $like = '%' . $term . '%';
         $rows = \App\AuthyQuery::create()
-            ->filterByUsername($like)
-            ->_or()->filterByEmail($like)
-            ->_or()->filterByFullname($like)
+            ->filterByUsername($like, \Criteria::LIKE)
+            ->_or()->filterByEmail($like, \Criteria::LIKE)
+            ->_or()->filterByFullname($like, \Criteria::LIKE)
             ->limit($maxRows)
             ->orderByUsername()
             ->find();

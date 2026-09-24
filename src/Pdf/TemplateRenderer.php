@@ -161,7 +161,9 @@ final class TemplateRenderer
     {
         $q = \App\TemplateQuery::create();
         if (str_contains($name, '%')) {
-            $q->filterByName($name); // Propel translates % to LIKE
+            // Explicit LIKE: generated filterBy*() no longer infers LIKE
+            // from a %/* in the value.
+            $q->filterByName($name, \Criteria::LIKE);
         } else {
             $q->filterByName($name);
         }
@@ -169,7 +171,7 @@ final class TemplateRenderer
             // Explicit variant pick — honored only when it falls inside the
             // candidate set (never lets a caller pull an arbitrary row).
             $picked = \App\TemplateQuery::create()
-                ->filterByName($name)
+                ->filterByName($name, str_contains($name, '%') ? \Criteria::LIKE : \Criteria::EQUAL)
                 ->filterByIdTemplate($this->templateId)
                 ->findOne();
             if ($picked) {
