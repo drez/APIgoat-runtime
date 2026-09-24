@@ -141,6 +141,42 @@ check('mixed: more exact clauses outrank fewer',
         rule(2, json_encode(['who' => 'me', 'query' => ['filter' => ['Client' => [['name', 'acme']]]]])),
     ], 'Client', 'list', 'GET', $dataMixed)), 2);
 
+// ------------------------------------------- review-3 Wave 3: every query key covered
+$sel = ['query' => ['select' => [['name', 'n']], 'filter' => ['Client' => [['name', 'acme']]]]];
+$selRule = json_encode($sel);
+$withJoin = $sel;
+$withJoin['query']['join'] = ['AuthyRelatedByIdCreation'];
+check('a rule naming select+filter does NOT cover an extra join',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $selRule)], 'Client', 'list', 'GET', $withJoin)), null);
+$withOrder = $sel;
+$withOrder['query']['order'] = [['name', 'asc']];
+check('... nor an extra order',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $selRule)], 'Client', 'list', 'GET', $withOrder)), null);
+$withGroup = $sel;
+$withGroup['query']['groupby'] = ['name'];
+check('... nor an extra groupby',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $selRule)], 'Client', 'list', 'GET', $withGroup)), null);
+$paged = $sel;
+$paged['query'] += ['limit' => 50, 'page' => 2, 'max_page' => 10];
+check('paging keys (limit/page/max_page) need no coverage',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $selRule)], 'Client', 'list', 'GET', $paged)), 1);
+$ruleJoin = $sel;
+$ruleJoin['query']['join'] = ['Tag', 'AuthyRelatedByIdCreation'];
+check('a rule listing the join covers it (subset)',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, json_encode($ruleJoin))], 'Client', 'list', 'GET', $withJoin)), 1);
+$ruleStar = $sel;
+$ruleStar['query']['order'] = '*';
+check("query.order '*' covers any order",
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, json_encode($ruleStar))], 'Client', 'list', 'GET', $withOrder)), 1);
+check("query '*' covers any extra key",
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, json_encode(['query' => '*']))], 'Client', 'list', 'GET', ['query' => ['order' => [['name', 'asc']]]])), 1);
+check('a non-identifier query key is never covered',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, json_encode(['query' => '*']))], 'Client', 'list', 'GET', ['query' => ['a.b' => 1]])), null);
+putenv('GC_RBAC_LEGACY_BODY_MATCH=1');
+check('GC_RBAC_LEGACY_BODY_MATCH=1 restores select/filter-only matching',
+    matchedId(RbacRuleMatcher::bestMatch([rule(1, $selRule)], 'Client', 'list', 'GET', $withJoin)), 1);
+putenv('GC_RBAC_LEGACY_BODY_MATCH');
+
 // ----------------------------------------------------------------
 
 if ($fail) {

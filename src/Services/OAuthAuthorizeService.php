@@ -76,6 +76,22 @@ class OAuthAuthorizeService extends Service
     }
 
     /** Consent-page "Use a different account" POST. */
+    /**
+     * True when the session is a root impersonating another user (iarc switch).
+     * OAuth consent is refused there: the impersonator must not mint a
+     * long-lived token for the target's account. Signing in as a real user
+     * (the login form shown instead) replaces the session and lifts it.
+     */
+    public static function isImpersonating($session): bool
+    {
+        return \is_object($session) && \ApiGoat\Middlewares\AuthyMiddleware::impersonatorId($session) !== null;
+    }
+
+    private static function impersonationMessage(): string
+    {
+        return _('You are viewing the app as another user. Sign in as yourself to authorize this app.');
+    }
+
     public static function isSwitchAccount(array $body): bool
     {
         return (string) ($body['switch_account'] ?? '') === '1';
@@ -187,6 +203,15 @@ class OAuthAuthorizeService extends Service
                     return $this->renderLogin($authRequest, $params);
                 }
 
+                // Impersonating (a root switched into this user): never
+                // approve — the grant would be a long-lived token for the
+                // target account minted by someone who is not its owner.
+                if (self::isImpersonating($session)) {
+                    error_log('oauth consent refused: impersonated session authy#' . (int) $session->get('id')
+                        . ' (impersonator authy#' . (int) \ApiGoat\Middlewares\AuthyMiddleware::impersonatorId($session) . ')');
+                    return $this->renderLogin($authRequest, $params, self::impersonationMessage());
+                }
+
                 // --- Connected: treat the POST as a consent decision. ---
                 $decision = (string) ($body['consent'] ?? '');
                 if ($decision === '') {
@@ -209,6 +234,9 @@ class OAuthAuthorizeService extends Service
             // --- GET: never issues a code; only renders login or consent. ---
             if (!$connected) {
                 return $this->renderLogin($authRequest, $params);
+            }
+            if (self::isImpersonating($session)) {
+                return $this->renderLogin($authRequest, $params, self::impersonationMessage());
             }
             return $this->renderConsent($authRequest, $params);
         } catch (OAuthServerException $e) {
@@ -524,6 +552,11 @@ class OAuthAuthorizeService extends Service
             $s->set('id', '');
             $s->set('username', '');
             $s->set('fullname', '');
+        }
+        // A fresh sign-in ends any impersonation, else isImpersonating()
+        // would keep refusing the real owner's consent.
+        if ($s && is_object($s) && isset($s->sessVar) && is_array($s->sessVar)) {
+            unset($s->sessVar['ImpersonatorId'], $s->sessVar['OriginalRootId']);
         }
     }
 

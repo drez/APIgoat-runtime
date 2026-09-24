@@ -765,6 +765,26 @@ class RbacMiddleware implements MiddlewareInterface
                             }
                         }
                     }
+
+                    // Every other query key (join/groupby/order/info/…) must be
+                    // covered by the rule — RbacRuleMatcher::queryKeyClauses()
+                    // is the single definition, mirrored here in SQL.
+                    foreach (RbacRuleMatcher::queryKeyClauses($this->args['data']['query']) as $qc) {
+                        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $qc['key'])) {
+                            $where[] = '0';   // not a coverable key: no rule matches
+                            continue;
+                        }
+                        $pathPh = ":p{$i}";
+                        $jsonPh = ":j{$i}";
+                        $params[$pathPh] = '$.' . $qc['path'];
+                        $params[$jsonPh] = json_encode($qc['value']);
+                        $select[] = "IF(JSON_CONTAINS(`body`, {$jsonPh}, {$pathPh}), 1, 0) as `m{$i}`";
+                        $where[] = "(JSON_CONTAINS(`body`, {$jsonPh}, {$pathPh})
+                                OR JSON_VALUE(`body`, {$pathPh}) = '*'
+                                OR JSON_VALUE(`body`, '$.query') = '*')";
+                        $fields[] = "m{$i}";
+                        $i++;
+                    }
                 } else {
                     $pathPh = ":p{$i}";
                     $valPh = ":v{$i}";

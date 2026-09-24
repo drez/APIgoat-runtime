@@ -478,10 +478,13 @@ class QueryBuilder
      * `r` on any one entity could join AuthyRelatedByIdCreation and read — or
      * LIKE-probe — another table through it. The related model is held to the
      * rule the base entity is: Admin passes, otherwise hasRights(model,'r')
-     * must not be false. A Public+Allow read keeps its waiver for ordinary
-     * tables (public content lists join each other) but, exactly like
-     * getJson(), never for a table that holds credentials. Unresolvable
-     * target, no session: refused.
+     * must not be false. A Public+Allow pass on the BASE route no longer
+     * waives the related read by itself (review-3 Wave 3): the related model
+     * must be public in its own right — it has a Public+Allow `list` rule in
+     * api_rbac (public content lists that join each other keep working) —
+     * and, exactly like getJson(), never a table that holds credentials.
+     * GC_RBAC_PUBLIC_JOIN_WAIVER=1 restores the old blanket waiver.
+     * Unresolvable target, no session: refused.
      *
      * @param array|null $target [PhpName, TableMap] from relationTarget()
      * @return boolean
@@ -491,7 +494,8 @@ class QueryBuilder
         if (!\is_array($target) || $target[0] === '') {
             return false;
         }
-        if ($this->publicPassed && !self::tableMapHoldsCredentials($target[1])) {
+        if ($this->publicPassed && !self::tableMapHoldsCredentials($target[1])
+            && (self::publicJoinWaiver() || self::isPublicListModel($target[0]))) {
             return true;
         }
         $session = (\defined('_AUTH_VAR') && isset($_SESSION[\_AUTH_VAR])) ? $_SESSION[\_AUTH_VAR] : null;
@@ -502,6 +506,48 @@ class QueryBuilder
             return true;
         }
         return $session->hasRights($target[0], 'r') !== false;
+    }
+
+    /** Test seam: fn(string $model): bool replacing the api_rbac lookup. */
+    public static ?\Closure $publicListResolver = null;
+
+    /** @var array<string,bool> per-process memo */
+    private static array $publicListMemo = [];
+
+    /** GC_RBAC_PUBLIC_JOIN_WAIVER=1: legacy blanket waiver (pre 2026-09-23). */
+    private static function publicJoinWaiver(): bool
+    {
+        $v = \function_exists('env') ? env('GC_RBAC_PUBLIC_JOIN_WAIVER') : \getenv('GC_RBAC_PUBLIC_JOIN_WAIVER');
+        return $v === true || \in_array(\strtolower(\trim((string) $v)), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    /**
+     * Does $model have its own Public+Allow `list` rule (any method)? Then a
+     * public route may join/filter it: anonymous callers can read it directly
+     * anyway. Fails closed (false) on any lookup error.
+     */
+    public static function isPublicListModel(string $model): bool
+    {
+        if (self::$publicListResolver !== null) {
+            return (bool) (self::$publicListResolver)($model);
+        }
+        if (\array_key_exists($model, self::$publicListMemo)) {
+            return self::$publicListMemo[$model];
+        }
+        $ok = false;
+        try {
+            if (\class_exists('\\App\\ApiRbacQuery')) {
+                $ok = \App\ApiRbacQuery::create()
+                    ->filterByModel($model)
+                    ->filterByAction('list')
+                    ->filterByScope('Public')
+                    ->filterByRule('Allow')
+                    ->count() > 0;
+            }
+        } catch (\Throwable $e) {
+            $ok = false;
+        }
+        return self::$publicListMemo[$model] = $ok;
     }
 
     private function setSelect(array $selectRequest)

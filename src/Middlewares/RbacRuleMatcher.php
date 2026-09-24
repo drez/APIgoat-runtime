@@ -117,6 +117,9 @@ final class RbacRuleMatcher
                         }
                     }
                 }
+                foreach (self::queryKeyClauses($val) as $c) {
+                    $clauses[] = $c;
+                }
             } else {
                 $clauses[] = [
                     'path'  => (string) $key,
@@ -126,6 +129,46 @@ final class RbacRuleMatcher
             }
         }
         return $clauses;
+    }
+
+    /**
+     * QueryBuilder keys a rule does NOT have to name: paging only (limit is
+     * clamped server-side). Everything else in the `query` container —
+     * join, groupby, order, info, debug, dontrun, anything unknown — widens
+     * what the request reads, so the matched rule must cover it.
+     */
+    public const QUERY_FREE_KEYS = ['select', 'filter', 'limit', 'page', 'max_page'];
+
+    /** GC_RBAC_LEGACY_BODY_MATCH=1: only select/filter are matched (pre 2026-09-23). */
+    public static function legacyBodyMatch(): bool
+    {
+        $v = \function_exists('env') ? env('GC_RBAC_LEGACY_BODY_MATCH') : \getenv('GC_RBAC_LEGACY_BODY_MATCH');
+        return $v === true || \in_array(\strtolower(\trim((string) $v)), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    /**
+     * One 'qkey' clause per non-free key of the request's `query` object:
+     * passes when the rule's query.<key> contains the value, or holds '*',
+     * or the rule's whole query is '*'. A key that is not a plain identifier
+     * can never be covered (its path would not be a valid JSON path).
+     * Shared with RbacMiddleware::findBestMatch() so SQL and PHP agree.
+     *
+     * @return array<int, array{path: string, kind: string, value: mixed, key: string}>
+     */
+    public static function queryKeyClauses($query): array
+    {
+        if (!\is_array($query) || self::legacyBodyMatch()) {
+            return [];
+        }
+        $out = [];
+        foreach ($query as $k => $v) {
+            $k = (string) $k;
+            if (\in_array($k, self::QUERY_FREE_KEYS, true)) {
+                continue;
+            }
+            $out[] = ['path' => 'query.' . $k, 'kind' => 'qkey', 'value' => $v, 'key' => $k];
+        }
+        return $out;
     }
 
     /** @return int|null exact-match count, or null when the WHERE fails */
@@ -142,6 +185,13 @@ final class RbacRuleMatcher
             if ($c['kind'] === 'select') {
                 $exact = self::jsonContains($target, $c['value']);
                 $pass  = $exact || self::scalarAtPath($body, $c['path']) === '*';
+            } elseif ($c['kind'] === 'qkey') {
+                if (!\preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $c['key'])) {
+                    return null;
+                }
+                $exact = $target !== null && self::jsonContains($target, $c['value']);
+                $pass  = $exact || self::scalarAtPath($body, $c['path']) === '*'
+                    || self::scalarAtPath($body, 'query') === '*';
             } elseif ($c['kind'] === 'filter') {
                 $exact = self::jsonContains($target, [$c['value']]);
                 $star  = self::jsonContains($target, [[$c['value'][0] ?? null, '*']]);

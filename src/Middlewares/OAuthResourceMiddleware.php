@@ -133,8 +133,12 @@ class OAuthResourceMiddleware implements MiddlewareInterface
                 ->withHeader('Content-Type', 'application/json');
         }
 
-        if ($status === BearerSessionAuthenticator::AUTHENTICATED
-            || $status === BearerSessionAuthenticator::NOT_OAUTH) {
+        if ($status === BearerSessionAuthenticator::AUTHENTICATED) {
+            // Mark the request so AuthyMiddleware's CSRF / mutating-GET gates
+            // know the bearer really authenticated (not just a header).
+            return $handler->handle($request->withAttribute(AuthyMiddleware::ATTR_BEARER_AUTH, true));
+        }
+        if ($status === BearerSessionAuthenticator::NOT_OAUTH) {
             // Authenticated → continue with hydrated session (RBAC/Authy/Api authorize downstream).
             // NOT_OAUTH → let JwtAuthentication handle/reject the token.
             return $handler->handle($request);

@@ -29,7 +29,31 @@ class AuthyMiddleware implements MiddlewareInterface
         $this->privilegeMap = (require _BASE_DIR . "config/privileges.map.php");
     }
 
+    /** Response header carrying the outcome of an impersonation (iarc) switch. */
+    public const IARC_HEADER = 'X-Gc-Iarc';
+
+    /** null = no iarc in this request; 'switched' | 'refused' otherwise. */
+    private ?string $iarcOutcome = null;
+
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        $this->iarcOutcome = null;
+        $response = $this->processRequest($request, $handler);
+        // The template reads the switch outcome (GuiManager 'alive' and any
+        // other route carrying iarc); status codes are left untouched.
+        return self::withIarcOutcome($response, $this->iarcOutcome);
+    }
+
+    /** Stamp X-Gc-Iarc when a switch was attempted. Pure, unit-tested. */
+    public static function withIarcOutcome(ResponseInterface $response, ?string $outcome): ResponseInterface
+    {
+        if ($outcome !== 'switched' && $outcome !== 'refused') {
+            return $response;
+        }
+        return $response->withHeader(self::IARC_HEADER, $outcome);
+    }
+
+    private function processRequest(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $this->args = $request->getAttribute('parsed_args');
 
@@ -276,9 +300,14 @@ class AuthyMiddleware implements MiddlewareInterface
         // ambient cookie credential to forge), NOT every is_api route. A
         // cookie-authenticated write to an API route must still carry the CSRF
         // token — the first-party client already attaches it to all non-GET.
-        $hasBearerAuth = stripos($request->getHeaderLine('Authorization'), 'Bearer ') === 0;
-        if ($hasBearerAuth
-            || ! in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+        //
+        // Review-3 Wave 3: the header alone is not enough. A connected COOKIE
+        // session plus any "Authorization: Bearer x" skipped JwtAuthentication
+        // (it short-circuits on connected==='YES') and then skipped this gate
+        // too, so the request ran on the ambient cookie with no token check at
+        // all. Only a bearer that actually authenticated is exempt.
+        if (! in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+            || self::bearerAuthenticated($request, $_SESSION[_AUTH_VAR] ?? null)
             || $_SESSION[_AUTH_VAR]->get('connected') != 'YES'
             || $this->checkExclude($this->args['route'])) {
             return null;
@@ -301,6 +330,49 @@ class AuthyMiddleware implements MiddlewareInterface
         $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Invalid or missing CSRF token']]);
         $ApiResponse->setStatus(403);
         return $ApiResponse->getResponse();
+    }
+
+    /** Request attribute OAuthResourceMiddleware sets when an RS256 bearer hydrated the session. */
+    public const ATTR_BEARER_AUTH = 'gc_bearer_auth';
+
+    /**
+     * Did the request's Bearer token actually authenticate it? Only then is it
+     * free of the ambient-cookie CSRF / mutating-GET gates.
+     *
+     *  - OAuth RS256: OAuthResourceMiddleware marks ATTR_BEARER_AUTH on success;
+     *  - app HS256: JwtAuthentication's before-handler sets jwt_claims once the
+     *    signature verified;
+     *  - a CONNECTED cookie session + HS256 bearer: JwtAuthentication skipped
+     *    the token (connected already), so verify it here and require it to
+     *    belong to the session's user (a mobile client whose cookie jar kept
+     *    the login session keeps working; a junk header does not exempt).
+     */
+    public static function bearerAuthenticated(ServerRequestInterface $request, $session): bool
+    {
+        $line = $request->getHeaderLine('Authorization');
+        if (stripos($line, 'Bearer ') !== 0) {
+            return false;
+        }
+        if ($request->getAttribute(self::ATTR_BEARER_AUTH) === true) {
+            return true;
+        }
+        $claims = $request->getAttribute('jwt_claims');
+        if (is_array($claims) && $claims !== []) {
+            return true;
+        }
+        $token  = trim(substr($line, 7));
+        $secret = function_exists('env') ? env('JWT_SECRET') : getenv('JWT_SECRET');
+        if ($token === '' || !is_string($secret) || $secret === ''
+            || !class_exists(\Firebase\JWT\JWT::class) || !is_object($session)) {
+            return false;
+        }
+        try {
+            $decoded = (array) \Firebase\JWT\JWT::decode($token, new \Firebase\JWT\Key($secret, 'HS256'));
+        } catch (\Throwable $e) {
+            return false;
+        }
+        $id = (int) ($decoded['authyId'] ?? (ctype_digit((string) ($decoded['sub'] ?? '')) ? $decoded['sub'] : 0));
+        return $id > 0 && (int) $session->get('id') === $id;
     }
 
     /**
@@ -334,7 +406,7 @@ class AuthyMiddleware implements MiddlewareInterface
         if (! empty($this->args['is_api'])) {
             return null;
         }
-        if (stripos($request->getHeaderLine('Authorization'), 'Bearer ') === 0) {
+        if (self::bearerAuthenticated($request, $_SESSION[_AUTH_VAR] ?? null)) {
             return null;
         }
         if ($_SESSION[_AUTH_VAR]->get('connected') != 'YES') {
@@ -398,6 +470,15 @@ class AuthyMiddleware implements MiddlewareInterface
     }
 
     private function checkUserSwitch($request): bool
+    {
+        $switched = $this->attemptUserSwitch($request);
+        if (! empty($this->args['data']['iarc'])) {
+            $this->iarcOutcome = $switched ? 'switched' : 'refused';
+        }
+        return $switched;
+    }
+
+    private function attemptUserSwitch($request): bool
     {
         if (! self::canSwitchUser($_SESSION[_AUTH_VAR])) {
             return false;

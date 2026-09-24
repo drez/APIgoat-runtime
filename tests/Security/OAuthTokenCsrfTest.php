@@ -147,10 +147,36 @@ $r5 = run($mw, $argsProp, $method, makeRequest('POST', '', 'sess-csrf-token'),
     ['route' => 'Product', 'model' => 'Product', 'action' => 'update', 'is_api' => true, 'data' => []]);
 check('connected session + POST real route + valid csrf -> allowed', $r5, null);
 
-// 6. Bearer requests carry no forgeable ambient credential (existing exemption).
-$r6 = run($mw, $argsProp, $method, makeRequest('POST', 'Bearer abc'),
-    ['route' => 'Product', 'model' => 'Product', 'action' => 'update', 'is_api' => true, 'data' => []]);
-check('bearer + POST real route, no csrf -> allowed', $r6, null);
+// 6. An AUTHENTICATED bearer carries no forgeable ambient credential.
+$apiArgs = ['route' => 'Product', 'model' => 'Product', 'action' => 'update', 'is_api' => true, 'data' => []];
+$r6 = run($mw, $argsProp, $method,
+    makeRequest('POST', 'Bearer abc')->withAttribute(AuthyMiddleware::ATTR_BEARER_AUTH, true), $apiArgs);
+check('OAuth-authenticated bearer + POST real route, no csrf -> allowed', $r6, null);
+$r6b = run($mw, $argsProp, $method,
+    makeRequest('POST', 'Bearer abc')->withAttribute('jwt_claims', ['authyId' => 2]), $apiArgs);
+check('JwtAuthentication-verified bearer + POST, no csrf -> allowed', $r6b, null);
+
+// 6c. Review-3 Wave 3: a junk bearer header on a connected COOKIE session is
+//     NOT authentication — JwtAuthentication skipped it (already connected).
+$r6c = run($mw, $argsProp, $method, makeRequest('POST', 'Bearer abc'), $apiArgs);
+check('unverified bearer + connected cookie session, no csrf -> 403',
+    $r6c instanceof ResponseInterface && $r6c->getStatusCode() === 403, true);
+
+// 6d. ... but the mobile case (cookie jar kept the login session, a VALID
+//     HS256 app token for the same user) stays exempt.
+putenv('JWT_SECRET=csrf-test-secret-0123456789abcdef0123456789abcdef');
+$good  = \Firebase\JWT\JWT::encode(['authyId' => 2, 'exp' => time() + 60], 'csrf-test-secret-0123456789abcdef0123456789abcdef', 'HS256');
+$other = \Firebase\JWT\JWT::encode(['authyId' => 3, 'exp' => time() + 60], 'csrf-test-secret-0123456789abcdef0123456789abcdef', 'HS256');
+$forged = \Firebase\JWT\JWT::encode(['authyId' => 2, 'exp' => time() + 60], 'not-the-project-secret-0123456789abcdef0123456789', 'HS256');
+check('valid HS256 bearer for the session user -> allowed',
+    run($mw, $argsProp, $method, makeRequest('POST', 'Bearer ' . $good), $apiArgs), null);
+$r6e = run($mw, $argsProp, $method, makeRequest('POST', 'Bearer ' . $other), $apiArgs);
+check('valid HS256 bearer for ANOTHER user on this cookie -> 403',
+    $r6e instanceof ResponseInterface && $r6e->getStatusCode() === 403, true);
+$r6f = run($mw, $argsProp, $method, makeRequest('POST', 'Bearer ' . $forged), $apiArgs);
+check('HS256 bearer signed with another secret -> 403',
+    $r6f instanceof ResponseInterface && $r6f->getStatusCode() === 403, true);
+putenv('JWT_SECRET');
 
 // 7. Exact-route match only — a lookalike route must not inherit the exemption.
 $r7 = run($mw, $argsProp, $method, makeRequest('POST'),

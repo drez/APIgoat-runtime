@@ -73,6 +73,7 @@ final class QueryBuilderRelatedRightsTest extends TestCase
     protected function tearDown(): void
     {
         unset($_SESSION[\_AUTH_VAR]);
+        QueryBuilder::$publicListResolver = null;
     }
 
     /** @return array{0: array, 1: array} [messages, calls] */
@@ -182,6 +183,8 @@ final class QueryBuilderRelatedRightsTest extends TestCase
     public function test_public_read_waives_ordinary_joins_but_never_a_credential_table(): void
     {
         unset($_SESSION[\_AUTH_VAR]);   // anonymous
+        // The joined model must itself be public (Public+Allow list rule).
+        QueryBuilder::$publicListResolver = static fn (string $m): bool => $m === 'QbrTag' || $m === 'Authy';
         [$msgs] = $this->build(['join' => ['QbrTag']], ['rbac_public' => 'passed']);
         $this->assertSame([], $msgs);
         [$msgs] = $this->build(['join' => ['AuthyRelatedByIdCreation']], ['rbac_public' => 'passed']);
@@ -191,6 +194,27 @@ final class QueryBuilderRelatedRightsTest extends TestCase
         // no public rule, no session: nothing related is readable
         [$msgs] = $this->build(['join' => ['QbrTag']]);
         $this->assertSame(['Join: Permission denied on (QbrTag)'], $msgs);
+    }
+
+    public function test_public_pass_does_not_waive_a_non_public_related_model(): void
+    {
+        unset($_SESSION[\_AUTH_VAR]);   // anonymous
+        QueryBuilder::$publicListResolver = static fn (string $m): bool => false;
+        [$msgs] = $this->build(['join' => ['QbrTag']], ['rbac_public' => 'passed']);
+        $this->assertSame(['Join: Permission denied on (QbrTag)'], $msgs);
+        // an authenticated caller with its own read right still may
+        $_SESSION[\_AUTH_VAR] = new QbrSession(false, ['QbrBase' => true, 'QbrTag' => true]);
+        [$msgs] = $this->build(['join' => ['QbrTag']], ['rbac_public' => 'passed']);
+        $this->assertSame([], $msgs);
+        // legacy blanket waiver, opt-in
+        unset($_SESSION[\_AUTH_VAR]);
+        putenv('GC_RBAC_PUBLIC_JOIN_WAIVER=1');
+        try {
+            [$msgs] = $this->build(['join' => ['QbrTag']], ['rbac_public' => 'passed']);
+            $this->assertSame([], $msgs);
+        } finally {
+            putenv('GC_RBAC_PUBLIC_JOIN_WAIVER');
+        }
     }
 
     public function test_acl_column_guard_covers_a_base_prefixed_filter(): void
