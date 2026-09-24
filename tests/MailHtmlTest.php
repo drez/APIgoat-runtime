@@ -145,4 +145,20 @@ final class MailHtmlTest extends TestCase
             $this->assertStringContainsString('u\\\\72 l(', $out, 'the escaped backslash is kept as written');
         }
     }
+
+    public function test_string_urls_in_image_functions_follow_the_url_policy(): void
+    {
+        // image-set("…" 1x) takes a plain string as an image URL (security re-check of 59d0d88).
+        $in = '<style>.a{background-image:image-set("http://t.example/px.gif" 1x, url(https://t.example/p2.gif) 2x)}'
+            . ' .b{background-image:-webkit-image-set(\'https://t.example/w.gif\' 1x)}'
+            . ' .c{background-image:image-set("javascript:alert(1)" 1x, "data:image/png;base64,AAAA" 2x)}</style>';
+        $out = MailHtml::defuse($in, false);
+        $this->assertStringContainsString('image-set("' . MailHtml::BLOCKED_PREFIX . 'http://t.example/px.gif" 1x', $out);
+        $this->assertStringContainsString("-webkit-image-set('" . MailHtml::BLOCKED_PREFIX . "https://t.example/w.gif' 1x)", $out);
+        $this->assertStringNotContainsString('javascript', $out);
+        $this->assertStringContainsString('"data:image/png;base64,AAAA" 2x', $out);
+        $this->assertStringContainsString('image-set("http://t.example/px.gif" 1x', MailHtml::withImages($out), 'Show images restores it');
+        $this->assertStringContainsString('image-set("http://t.example/px.gif" 1x', MailHtml::defuse($in, true), 'images on: kept as written');
+        $this->assertStringContainsString('content:"x"', MailHtml::defuse('<style>a:before{content:"x"}</style>', false), 'plain strings untouched');
+    }
 }

@@ -247,6 +247,23 @@ final class MailHtml
             }
             return $images ? $m[0] : 'url(' . $m[1] . self::BLOCKED_PREFIX . trim($m[2]) . $m[1] . ')';
         }, $css) ?? '';
+        // image-set() / cross-fade() / image() / src() also take a plain string
+        // as an image URL ("https://t/px.gif" 1x): same policy as url() — a
+        // string that is not http(s)/data:image goes, a remote one is parked
+        // while images are blocked.
+        $css = preg_replace_callback('/((?:-webkit-)?image-set|cross-fade|image|src)\s*(\((?:[^()]++|(?2))*\))/i', static function (array $m) use ($images): string {
+            $args = preg_replace_callback('/(["\'])(.*?)\1/s', static function (array $q) use ($images): string {
+                $u = strtolower(trim($q[2]));
+                if (str_starts_with($u, 'data:image/')) {
+                    return $q[0];
+                }
+                if (!str_starts_with($u, 'http') && !str_starts_with($u, '//')) {
+                    return $q[1] . $q[1];
+                }
+                return $images ? $q[0] : $q[1] . self::BLOCKED_PREFIX . trim($q[2]) . $q[1];
+            }, $m[2]) ?? '';
+            return $m[1] . $args;
+        }, $css) ?? '';
         // SECURITY: libxml writes <style> text raw, so a "<" left in the CSS can
         // close the element ("</style><img onerror=…>"). \3C is the same
         // character to CSS and can never form a tag.
