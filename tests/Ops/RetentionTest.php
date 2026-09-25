@@ -115,4 +115,64 @@ final class RetentionTest extends TestCase
         $this->assertSame(0, $result['ops_sec_event']);
         $this->assertCount(6, $result);
     }
+
+    /**
+     * R13: prune() must issue `DELETE ... LIMIT $batchSize`, repeated until
+     * a batch comes back short, rather than one unbatched full-scan DELETE
+     * (a long lock on an actively-written prod table). Isolated to one
+     * table (ops_req_slow) via the SQL text prepare() receives — every
+     * other table's mocked statement reports 0 rows so it can't add noise
+     * to the assertion.
+     */
+    public function test_prune_batches_deletes_until_a_short_batch(): void
+    {
+        $pdo = $this->createMock(\PDO::class);
+        $pdo->method('prepare')->willReturnCallback(function (string $sql) {
+            $stmt = $this->createMock(\PDOStatement::class);
+            $stmt->method('execute')->willReturn(true);
+            if (\str_contains($sql, 'ops_req_slow')) {
+                $seq = [3, 3, 1]; // two full batches of 3, then a short one: stop, total 7
+                $i = 0;
+                $stmt->method('rowCount')->willReturnCallback(static function () use (&$i, $seq) {
+                    return $seq[$i++] ?? 0;
+                });
+            } else {
+                $stmt->method('rowCount')->willReturn(0);
+            }
+
+            return $stmt;
+        });
+
+        $result = Retention::prune($pdo, 1_000_000, 14, 180, 3);
+
+        $this->assertSame(7, $result['ops_req_slow'], 'a batch loop must sum every batch, not just report the last one');
+    }
+
+    /**
+     * The safety cap: a backlog that never comes back short (every batch
+     * is exactly $batchSize) must still stop after MAX_BATCHES_PER_TABLE
+     * batches rather than looping forever, and must say so via error_log
+     * (redirected to a temp file in setUp — R11) so an operator can tell
+     * the table didn't fully catch up in one run.
+     */
+    public function test_prune_stops_at_the_batch_safety_cap_and_logs_it(): void
+    {
+        $pdo = $this->createMock(\PDO::class);
+        $pdo->method('prepare')->willReturnCallback(function (string $sql) {
+            $stmt = $this->createMock(\PDOStatement::class);
+            $stmt->method('execute')->willReturn(true);
+            $stmt->method('rowCount')->willReturn(\str_contains($sql, 'ops_req_slow') ? 3 : 0);
+
+            return $stmt;
+        });
+
+        $result = Retention::prune($pdo, 1_000_000, 14, 180, 3);
+
+        // MAX_BATCHES_PER_TABLE (1000) full batches of 3, never a short one.
+        $this->assertSame(3000, $result['ops_req_slow']);
+
+        $logged = (string) \file_get_contents($this->logFile);
+        $this->assertStringContainsString('ops_req_slow', $logged);
+        $this->assertStringContainsString('safety cap', $logged);
+    }
 }

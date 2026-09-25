@@ -32,6 +32,17 @@ final class Retention
 
     private const SECONDS_PER_DAY = 86400;
 
+    /** Default rows deleted per DELETE ... LIMIT, per prune() call. */
+    private const DEFAULT_BATCH_SIZE = 5000;
+
+    /**
+     * Safety cap on how many batches a single table can run through in one
+     * prune() call — an unbounded backlog (e.g. retention was never run for
+     * months) must not turn a nightly job into an unbounded one; it just
+     * catches up over several nights instead.
+     */
+    private const MAX_BATCHES_PER_TABLE = 1000;
+
     /** table => the column its cutoff is compared against. */
     private const PRUNE_COLUMN = [
         'ops_req_slow'    => 'created_at',
@@ -70,23 +81,52 @@ final class Retention
      * (see cutoffs()). Returns the number of rows deleted per table —
      * ops_report is never included (it is never pruned).
      *
+     * R13 (controller ruling): on an actively-written prod table, one
+     * unbatched `DELETE ... WHERE col < :cutoff` can hold a long lock over
+     * a full-table scan (some of these columns have no index — see the
+     * with_ops_monitor `<table>_created_at_index` fix that's the other
+     * half of R13). So each table is deleted in batches of $batchSize rows
+     * — `DELETE ... LIMIT $batchSize`, repeated until a batch comes back
+     * short (fewer than $batchSize rows), which means nothing older than
+     * the cutoff is left. MAX_BATCHES_PER_TABLE caps how many batches a
+     * single table can run in one call — a backlog too big to fully clear
+     * tonight is still bounded, and simply finishes over the next few
+     * nightly runs instead of blocking this one indefinitely.
+     *
+     * Never throws: a single table's DELETE failing partway through its
+     * batches (e.g. the table doesn't exist on a project that only
+     * partially declared with_ops_monitor) is swallowed to error_log and
+     * reported as however many rows that table's batches deleted before
+     * the failure (0 if none), so one bad table can never stop the others
+     * from being pruned.
+     *
      * @return array<string,int>
      */
-    public static function prune(\PDO $pdo, int $now, int $rawDays, int $rollupDays): array
+    public static function prune(\PDO $pdo, int $now, int $rawDays, int $rollupDays, int $batchSize = self::DEFAULT_BATCH_SIZE): array
     {
         $cutoffs = self::cutoffs($now, $rawDays, $rollupDays);
         $deleted = [];
 
         foreach ($cutoffs as $table => $cutoff) {
             $column = self::PRUNE_COLUMN[$table];
+            $total = 0;
             try {
-                $stmt = $pdo->prepare("DELETE FROM {$table} WHERE {$column} < :cutoff");
-                $stmt->execute([':cutoff' => $cutoff]);
-                $deleted[$table] = $stmt->rowCount();
+                $stmt = $pdo->prepare("DELETE FROM {$table} WHERE {$column} < :cutoff LIMIT {$batchSize}");
+                for ($batch = 0; $batch < self::MAX_BATCHES_PER_TABLE; $batch++) {
+                    $stmt->execute([':cutoff' => $cutoff]);
+                    $n = $stmt->rowCount();
+                    $total += $n;
+                    if ($n < $batchSize) {
+                        break; // fewer than a full batch came back: nothing older than the cutoff remains
+                    }
+                    if ($batch === self::MAX_BATCHES_PER_TABLE - 1) {
+                        \error_log("[ops] retention prune: {$table} hit the {$batch}-batch safety cap; more rows may remain for the next run");
+                    }
+                }
             } catch (\Throwable $e) {
                 \error_log("[ops] retention prune failed for {$table}: " . $e->getMessage());
-                $deleted[$table] = 0;
             }
+            $deleted[$table] = $total;
         }
 
         return $deleted;
