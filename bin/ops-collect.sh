@@ -28,10 +28,45 @@
 # minimal box. Written with `set -euo pipefail`; every place a probe COULD
 # legitimately fail (grep with no match, a missing binary, ...) is guarded
 # with an `if`/`|| true` so that failure never trips the script itself.
+#
+# Fix round 1 (R16): running as root but writing into a directory the
+# jailed web user controls means that user could swap a path component for
+# a symlink and trick this script into writing a root-owned file somewhere
+# else entirely (or overwriting an arbitrary file through a symlinked
+# output path). Before doing anything else this script refuses to run
+# unless BOTH the output directory and the output path itself are exactly
+# what they claim to be — no symlink anywhere in the directory, and the
+# output path (if it exists at all) is a plain regular file, never a
+# symlink or a directory.
 set -euo pipefail
 
 out="${1:?usage: ops-collect.sh <output-path>}"
 out_dir="$(dirname -- "$out")"
+
+# The output directory must exist, contain no symlink in its resolved path,
+# and not itself be a symlink. `realpath -e` both requires existence and
+# fully resolves every component; a result that differs from the literal
+# $out_dir we were given means a symlink (or a `..`/relative component) sat
+# somewhere in the path — refuse rather than silently write through it.
+# Callers are documented (see the install line above) to pass an absolute,
+# already-canonical directory, so a legitimate call never differs here.
+if ! real_dir="$(realpath -e -- "$out_dir" 2>/dev/null)"; then
+    printf 'ops-collect.sh: output directory does not exist or cannot be resolved: %s\n' "$out_dir" >&2
+    exit 1
+fi
+if [ "$real_dir" != "$out_dir" ] || [ -L "$out_dir" ]; then
+    printf 'ops-collect.sh: refusing to write into %s -- a symlink (or non-canonical path) is involved\n' "$out_dir" >&2
+    exit 1
+fi
+
+# The output path itself, if it already exists, must be a plain regular
+# file -- never a symlink (which `mv -f` would otherwise happily replace
+# the TARGET of, not the link itself is fine, but we still refuse outright
+# for predictability) and never a directory or other special file.
+if [ -e "$out" ] && { [ -L "$out" ] || [ ! -f "$out" ]; }; then
+    printf 'ops-collect.sh: refusing to write to %s -- it exists and is not a regular file\n' "$out" >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------
 # load1 — 1-minute load average, from /proc/loadavg.
@@ -167,6 +202,10 @@ at="$(date +%s)"
 # Write atomically: a temp file in the SAME directory as the output (so the
 # final mv is a same-filesystem rename, not a copy), mode 0644, then mv into
 # place. A reader (SnapshotFileSource) never sees a partially written file.
+# Defense in depth: `mv -f` (rename(2)) replaces whatever directory entry
+# $out names without following a symlink there -- though the pre-flight
+# check above already refuses to run at all if $out exists and is a
+# symlink, so this is belt-and-braces, not the only guard.
 # ---------------------------------------------------------------------
 tmp="$(mktemp "${out_dir}/.ops-snapshot.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT

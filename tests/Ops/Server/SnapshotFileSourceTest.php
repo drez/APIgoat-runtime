@@ -187,4 +187,72 @@ final class SnapshotFileSourceTest extends TestCase
     {
         $this->assertNull(SnapshotFileSource::normalize([]));
     }
+
+    // ── R16 fix round 1, item 3: service/jail keys are untrusted input ──
+    // (the snapshot file is web-user-writable) and must match
+    // ^[A-Za-z0-9@._-]{1,64}$ or be dropped, rather than failing the whole
+    // snapshot or passing an attacker-controlled key through unchanged.
+
+    public function test_normalize_drops_service_keys_with_disallowed_characters(): void
+    {
+        $payload = $this->validPayload([
+            'services' => [
+                'nginx'          => true,       // kept: valid charset
+                'php-fpm.8.4'    => true,       // kept: dots/dashes allowed
+                'evil; rm -rf /' => true,       // dropped: spaces/semicolon/slash
+                'has space'      => false,      // dropped: space
+                ''                => true,      // dropped: empty
+            ],
+        ]);
+
+        $snap = SnapshotFileSource::normalize($payload);
+
+        $this->assertIsArray($snap);
+        $this->assertSame(['nginx' => true, 'php-fpm.8.4' => true], $snap['services']);
+    }
+
+    public function test_normalize_drops_f2b_jail_keys_with_disallowed_characters(): void
+    {
+        $payload = $this->validPayload([
+            'f2b' => [
+                'sshd'         => 3,      // kept
+                'nginx-botsearch' => 1,   // kept: dash allowed
+                '../../etc'    => 99,     // dropped: dots-slash traversal-looking key
+                "sshd\nEvil"   => 1,      // dropped: newline
+            ],
+        ]);
+
+        $snap = SnapshotFileSource::normalize($payload);
+
+        $this->assertIsArray($snap);
+        $this->assertSame(['sshd' => 3, 'nginx-botsearch' => 1], $snap['f2b']);
+    }
+
+    public function test_normalize_drops_a_service_key_longer_than_64_chars(): void
+    {
+        $tooLong = \str_repeat('a', 65);
+        $justRight = \str_repeat('b', 64);
+        $payload = $this->validPayload([
+            'services' => [$tooLong => true, $justRight => true],
+        ]);
+
+        $snap = SnapshotFileSource::normalize($payload);
+
+        $this->assertIsArray($snap);
+        $this->assertSame([$justRight => true], $snap['services']);
+    }
+
+    public function test_normalize_returns_empty_services_and_f2b_when_every_key_is_invalid(): void
+    {
+        $payload = $this->validPayload([
+            'services' => ['bad key' => true],
+            'f2b'      => ['also bad' => 1],
+        ]);
+
+        $snap = SnapshotFileSource::normalize($payload);
+
+        $this->assertIsArray($snap, 'an all-invalid-key services/f2b must not fail the whole snapshot');
+        $this->assertSame([], $snap['services']);
+        $this->assertSame([], $snap['f2b']);
+    }
 }

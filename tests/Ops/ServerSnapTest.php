@@ -15,72 +15,70 @@ require_once __DIR__ . '/../../src/Ops/Server/Factory.php';
 require_once __DIR__ . '/../../src/Ops/ServerSnap.php';
 
 /**
- * Pure-logic coverage of ServerSnap::collect()'s branching (no source / no
- * snapshot / stored / swallowed failure) and store()'s SQL shape, using a
- * PDO mock — R1: this host has no pdo_sqlite, so the actual INSERT against a
- * real ops_server_snap table is tested against MySQL in
- * P/.admin/tests/Custom/OpsServerSnapTest.php instead.
+ * Pure-logic coverage only (R1: no pdo_sqlite on this host) — and, per R16
+ * (controller ruling, fix round 1, item 5), collect() now gates on
+ * Config::enabled() FIRST, exactly like CronLog::record()/SecEvent::record().
+ * No _BASE_DIR is ever defined anywhere in this test process (see
+ * ConfigTest's docblock — ServerSnapTest shares that invariant), so
+ * Config::enabled() is always false here and every branch PAST that gate
+ * (source selection, the snapshot itself, the stale-dedup check, the actual
+ * INSERT, the swallowed-PDO-failure path) is unreachable from this suite —
+ * exactly as CronLogTest only covers CronLog::record()'s no-op-when-disabled
+ * contract, not its actual insert. Those branches are exercised for real,
+ * against a project that actually declares with_ops_monitor (enabled() is
+ * genuinely true there), in P/.admin/tests/Custom/OpsServerSnapTest.php.
+ *
+ * What's still fully unit-testable here without a database: the
+ * disabled-short-circuit contract, and store()'s SQL/param shape + that it
+ * does NOT swallow a PDO failure (store() is the inner, ungated half —
+ * same split as SecEvent::write()/record()).
  */
 final class ServerSnapTest extends TestCase
 {
-    private string $dir;
-
     protected function setUp(): void
     {
         Config::reset();
-        $this->dir = \sys_get_temp_dir() . '/server_snap_test_' . \uniqid();
-        \mkdir($this->dir, 0775, true);
     }
 
     protected function tearDown(): void
     {
         Config::reset();
-        foreach (\glob($this->dir . '/*') ?: [] as $f) {
-            @\unlink($f);
-        }
-        @\rmdir($this->dir);
     }
 
-    private function writeSnapshot(array $overrides = []): string
+    public function test_ops_monitor_is_disabled_in_this_process(): void
     {
-        $path = $this->dir . '/snap.json';
-        \file_put_contents($path, \json_encode(\array_merge([
-            'load1'      => 0.5,
-            'mem_pct'    => 40.0,
-            'disk_pct'   => 20.0,
-            'services'   => ['nginx' => true],
-            'f2b_banned' => 1,
-            'f2b'        => ['sshd' => 1],
-            'auth'       => ['ssh_failed' => 2, 'ssh_accepted' => 1, 'window_h' => 24],
-            'at'         => \time(),
-        ], $overrides)));
-
-        return $path;
+        $this->assertFalse(\defined('_BASE_DIR'), 'a prior test defined _BASE_DIR; this assertion is no longer meaningful');
+        $this->assertFalse(Config::enabled());
     }
 
-    public function test_collect_returns_no_source_when_server_source_is_none(): void
+    public function test_collect_returns_disabled_and_never_touches_the_pdo(): void
     {
-        Config::override(['server_source' => 'none', 'snapshot_path' => '']);
         $pdo = $this->createMock(\PDO::class);
         $pdo->expects($this->never())->method('prepare');
 
-        $this->assertSame('server snap: no source', ServerSnap::collect($pdo, \time()));
+        $this->assertSame('server snap: disabled', ServerSnap::collect($pdo));
     }
 
-    public function test_collect_returns_unavailable_when_the_snapshot_file_is_missing(): void
+    /**
+     * Config::override() only changes what get()/all() return — it can
+     * never fake enabled() (that stays tied to the real manifest file, see
+     * Config's own docblock) — so even a full 'snapshot' override must
+     * still short-circuit to 'disabled' here.
+     */
+    public function test_collect_stays_disabled_even_with_a_full_config_override(): void
     {
-        Config::override(['server_source' => 'snapshot', 'snapshot_path' => $this->dir . '/does-not-exist.json']);
+        Config::override(['server_source' => 'snapshot', 'snapshot_path' => '/tmp/whatever.json']);
+
         $pdo = $this->createMock(\PDO::class);
         $pdo->expects($this->never())->method('prepare');
 
-        $this->assertSame('server snap: unavailable', ServerSnap::collect($pdo, \time()));
+        $this->assertSame('server snap: disabled', ServerSnap::collect($pdo));
     }
 
-    public function test_collect_stores_a_valid_snapshot(): void
+    public function test_store_inserts_with_the_expected_shape_using_the_snapshots_own_at(): void
     {
-        $path = $this->writeSnapshot();
-        Config::override(['server_source' => 'snapshot', 'snapshot_path' => $path]);
-
+        // R16 item 4: created_at is $snap['at'], never a separately-passed
+        // "now" — store() no longer even accepts one.
         $stmt = $this->createMock(\PDOStatement::class);
         $stmt->expects($this->once())->method('execute')->with($this->callback(function (array $params) {
             return $params[':load1'] === 0.5
@@ -90,7 +88,7 @@ final class ServerSnapTest extends TestCase
                 && $params[':f2b_banned'] === 1
                 && $params[':f2b'] === \json_encode(['sshd' => 1])
                 && $params[':auth'] === \json_encode(['ssh_failed' => 2, 'ssh_accepted' => 1, 'window_h' => 24])
-                && \is_int($params[':created_at']);
+                && $params[':created_at'] === 999888;
         }))->willReturn(true);
 
         $pdo = $this->createMock(\PDO::class);
@@ -99,30 +97,16 @@ final class ServerSnapTest extends TestCase
             ->with($this->stringContains('INSERT INTO ops_server_snap'))
             ->willReturn($stmt);
 
-        $this->assertSame('server snap: stored', ServerSnap::collect($pdo, 12345));
-    }
-
-    public function test_collect_swallows_a_pdo_failure_and_returns_error(): void
-    {
-        $path = $this->writeSnapshot();
-        Config::override(['server_source' => 'snapshot', 'snapshot_path' => $path]);
-
-        $pdo = $this->createMock(\PDO::class);
-        $pdo->method('prepare')->willThrowException(new \PDOException("Table 'ops_server_snap' doesn't exist"));
-
-        $this->assertSame('server snap: error', ServerSnap::collect($pdo, \time()));
-    }
-
-    public function test_collect_never_throws_even_on_an_unexpected_error(): void
-    {
-        $path = $this->writeSnapshot();
-        Config::override(['server_source' => 'snapshot', 'snapshot_path' => $path]);
-
-        $pdo = $this->createMock(\PDO::class);
-        $pdo->method('prepare')->willThrowException(new \RuntimeException('boom'));
-
-        $result = ServerSnap::collect($pdo, \time());
-        $this->assertSame('server snap: error', $result);
+        ServerSnap::store($pdo, [
+            'load1'      => 0.5,
+            'mem_pct'    => 40.0,
+            'disk_pct'   => 20.0,
+            'services'   => ['nginx' => true],
+            'f2b_banned' => 1,
+            'f2b'        => ['sshd' => 1],
+            'auth'       => ['ssh_failed' => 2, 'ssh_accepted' => 1, 'window_h' => 24],
+            'at'         => 999888,
+        ]);
     }
 
     public function test_store_does_not_swallow_a_pdo_failure(): void
@@ -137,6 +121,7 @@ final class ServerSnapTest extends TestCase
             'load1' => 0.1, 'mem_pct' => 1.0, 'disk_pct' => 1.0,
             'services' => [], 'f2b_banned' => 0, 'f2b' => [],
             'auth' => ['ssh_failed' => 0, 'ssh_accepted' => 0, 'window_h' => 24],
-        ], \time());
+            'at' => 123,
+        ]);
     }
 }

@@ -116,4 +116,72 @@ final class OpsCollectShTest extends TestCase
 
         $this->assertNotSame(0, $exitCode, 'ops-collect.sh should fail fast without an output-path argument');
     }
+
+    // ── R16 fix round 1, item 2: refuse to write through a symlinked ────
+    // directory or over a non-regular-file output path. The script runs as
+    // root but writes into a directory the jailed web user controls, so a
+    // symlink swapped in there could otherwise redirect a root-owned write
+    // anywhere on the filesystem.
+
+    public function test_symlinked_out_dir_is_refused_and_nothing_is_written_at_the_target(): void
+    {
+        if (!$this->bashAvailable()) {
+            $this->markTestSkipped('bash unavailable on this host');
+        }
+
+        $base = \sys_get_temp_dir() . '/ops-collect-sh-symlink-test-' . \uniqid();
+        $realDir = $base . '/real';
+        $linkDir = $base . '/link';
+        \mkdir($realDir, 0775, true);
+        \symlink($realDir, $linkDir);
+
+        try {
+            $target = $linkDir . '/out.json';
+            $cmd = 'bash ' . \escapeshellarg($this->script) . ' ' . \escapeshellarg($target) . ' 2>&1';
+            $output = [];
+            $exitCode = 0;
+            \exec($cmd, $output, $exitCode);
+
+            $this->assertNotSame(0, $exitCode, 'ops-collect.sh must refuse a symlinked output directory');
+            $this->assertNotEmpty($output, 'ops-collect.sh should explain the refusal on stderr');
+
+            // Nothing must have been written through the symlink, at the
+            // real target directory it points to, or at the literal
+            // (symlinked) path either.
+            $this->assertSame([], \array_diff(\scandir($realDir) ?: [], ['.', '..']), 'a file was written at the symlink target despite the refusal');
+            $this->assertFileDoesNotExist($target);
+        } finally {
+            @\unlink($linkDir);
+            foreach (\glob($realDir . '/*') ?: [] as $f) {
+                @\unlink($f);
+            }
+            @\rmdir($realDir);
+            @\rmdir($base);
+        }
+    }
+
+    public function test_out_path_pre_existing_as_a_directory_is_refused(): void
+    {
+        if (!$this->bashAvailable()) {
+            $this->markTestSkipped('bash unavailable on this host');
+        }
+
+        $dir = \sys_get_temp_dir() . '/ops-collect-sh-dirout-test-' . \uniqid();
+        $target = $dir . '/out.json';
+        \mkdir($target, 0775, true); // $target itself is a directory, not a file
+
+        try {
+            $cmd = 'bash ' . \escapeshellarg($this->script) . ' ' . \escapeshellarg($target) . ' 2>&1';
+            $output = [];
+            $exitCode = 0;
+            \exec($cmd, $output, $exitCode);
+
+            $this->assertNotSame(0, $exitCode, 'ops-collect.sh must refuse an output path that already exists as a directory');
+            $this->assertNotEmpty($output, 'ops-collect.sh should explain the refusal on stderr');
+            $this->assertTrue(\is_dir($target), 'the pre-existing directory must be left untouched');
+        } finally {
+            @\rmdir($target);
+            @\rmdir($dir);
+        }
+    }
 }

@@ -29,7 +29,7 @@ final class Config
         'slow_query_ms' => 250,
         'raw_days'      => 14,
         'rollup_days'   => 180,
-        'server_source' => 'snapshot',
+        'server_source' => 'none',
         'report_to'     => 'Admin',
         'snapshot_path' => '',
     ];

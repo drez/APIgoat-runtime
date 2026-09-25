@@ -42,7 +42,7 @@ final class ConfigTest extends TestCase
         $this->assertSame(250, Config::get('slow_query_ms'));
         $this->assertSame(14, Config::get('raw_days'));
         $this->assertSame(180, Config::get('rollup_days'));
-        $this->assertSame('snapshot', Config::get('server_source'));
+        $this->assertSame('none', Config::get('server_source'));
         $this->assertSame('Admin', Config::get('report_to'));
         $this->assertSame('', Config::get('snapshot_path'));
     }

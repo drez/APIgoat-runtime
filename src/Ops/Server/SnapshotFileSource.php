@@ -21,6 +21,18 @@ namespace ApiGoat\Ops\Server;
  */
 final class SnapshotFileSource implements Source
 {
+    /**
+     * Service/jail key charset the collector itself restricts to (R16 fix
+     * round 1, item 3) — but the snapshot file lives inside the app's own
+     * open_basedir, writable by the same web user the app runs as, so a
+     * compromised or buggy app process could hand-edit it with an
+     * arbitrary key (a huge string, control characters, ...) before this
+     * class ever reads it back. normalize() re-validates every key against
+     * this same pattern and silently drops anything that doesn't match,
+     * rather than trusting the file just because it decoded as JSON.
+     */
+    private const KEY_PATTERN = '/^[A-Za-z0-9@._-]{1,64}$/';
+
     /** @var string */
     private $path;
 
@@ -52,7 +64,10 @@ final class SnapshotFileSource implements Source
      * Validate + cast a decoded snapshot payload. Pure (no filesystem), so
      * it's unit-tested directly against fixture arrays. Returns null when a
      * required top-level or `auth` sub-key is missing, or when `services` /
-     * `f2b` / `auth` are present but not arrays.
+     * `f2b` / `auth` are present but not arrays. `services`/`f2b` entries
+     * whose key doesn't match KEY_PATTERN are silently dropped (not a
+     * reason to fail the whole snapshot) — the file is web-user-writable,
+     * so its keys are untrusted input, not just its values.
      *
      * @param array<mixed,mixed> $d
      * @return array{load1:float,mem_pct:float,disk_pct:float,services:array<string,bool>,f2b_banned:int,f2b:array<string,int>,auth:array{ssh_failed:int,ssh_accepted:int,window_h:int},at:int}|null
@@ -75,12 +90,20 @@ final class SnapshotFileSource implements Source
 
         $services = [];
         foreach ($d['services'] as $name => $up) {
-            $services[(string) $name] = (bool) $up;
+            $name = (string) $name;
+            if (!\preg_match(self::KEY_PATTERN, $name)) {
+                continue;
+            }
+            $services[$name] = (bool) $up;
         }
 
         $f2b = [];
         foreach ($d['f2b'] as $jail => $n) {
-            $f2b[(string) $jail] = (int) $n;
+            $jail = (string) $jail;
+            if (!\preg_match(self::KEY_PATTERN, $jail)) {
+                continue;
+            }
+            $f2b[$jail] = (int) $n;
         }
 
         return [
