@@ -180,4 +180,64 @@ final class MonthlyReportTest extends TestCase
         ], [], []);
         $this->assertCount(4, $out);
     }
+
+    // ── previousPeriod() ─────────────────────────────────────────────────
+
+    public function test_previous_period_rolls_over_the_year(): void
+    {
+        $this->assertSame('2025-12', MonthlyReport::previousPeriod('2026-01'));
+    }
+
+    public function test_previous_period_within_the_same_year(): void
+    {
+        $this->assertSame('2026-08', MonthlyReport::previousPeriod('2026-09'));
+    }
+
+    // ── rankByP95() ──────────────────────────────────────────────────────
+
+    /**
+     * Fix round 1, finding 1: the "slowest 10 routes (p95)" display must
+     * rank by p95 desc, not by Stats::slowestRoutes()'s own ordering
+     * (total time spent, sum_ms desc) — a high-traffic-but-fast route can
+     * have a larger sum_ms than a rare-but-slow one despite a much lower p95.
+     */
+    public function test_rank_by_p95_puts_the_slow_rare_route_before_the_fast_high_traffic_one(): void
+    {
+        $highTrafficFast = ['route' => '/fast', 'method' => 'GET', 'n' => 10000, 'avg_ms' => 50.0, 'p95_ms' => 80, 'n_5xx' => 0];
+        $rareSlow = ['route' => '/slow', 'method' => 'GET', 'n' => 5, 'avg_ms' => 900.0, 'p95_ms' => 2200, 'n_5xx' => 0];
+
+        // Mirrors Stats::slowestRoutes()'s own ordering: sum_ms(highTrafficFast)
+        // = 10000*50 = 500000 vs sum_ms(rareSlow) = 5*900 = 4500 — the fast
+        // route would sort FIRST under that ranking, which is the bug.
+        $ranked = MonthlyReport::rankByP95([$highTrafficFast, $rareSlow]);
+
+        $this->assertSame('/slow', $ranked[0]['route'], 'higher p95 must rank first regardless of total time spent');
+        $this->assertSame('/fast', $ranked[1]['route']);
+    }
+
+    public function test_rank_by_p95_ties_break_on_request_volume_desc(): void
+    {
+        $lowVolume = ['route' => '/a', 'method' => 'GET', 'n' => 5, 'avg_ms' => 100.0, 'p95_ms' => 300, 'n_5xx' => 0];
+        $highVolume = ['route' => '/b', 'method' => 'GET', 'n' => 50, 'avg_ms' => 100.0, 'p95_ms' => 300, 'n_5xx' => 0];
+
+        $ranked = MonthlyReport::rankByP95([$lowVolume, $highVolume]);
+
+        $this->assertSame('/b', $ranked[0]['route']);
+        $this->assertSame('/a', $ranked[1]['route']);
+    }
+
+    public function test_rank_by_p95_does_not_mutate_the_caller_array_order(): void
+    {
+        $routes = [
+            ['route' => '/fast', 'method' => 'GET', 'n' => 10000, 'avg_ms' => 50.0, 'p95_ms' => 80, 'n_5xx' => 0],
+            ['route' => '/slow', 'method' => 'GET', 'n' => 5, 'avg_ms' => 900.0, 'p95_ms' => 2200, 'n_5xx' => 0],
+        ];
+        $originalOrder = \array_column($routes, 'route');
+
+        MonthlyReport::rankByP95($routes);
+
+        // The anomaly loop iterates the ORIGINAL (sum_ms-ordered) list —
+        // rankByP95() must return a re-sorted copy, not sort in place.
+        $this->assertSame($originalOrder, \array_column($routes, 'route'));
+    }
 }

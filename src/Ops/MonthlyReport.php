@@ -73,13 +73,16 @@ final class MonthlyReport
 
         $errorSigs = self::errorSignatures($logPath, $period, self::TOP_LIMIT);
 
-        // One wide query for both "all routes this month" (anomaly matching
-        // + 5xx total) and the top-10 display slice — Stats::slowestRoutes()
-        // orders by total time spent (sum_ms desc), so the first 10 of the
-        // wide result IS the "slowest 10 routes" the brief asks for.
+        // One wide query for "all routes this month", reused for the
+        // anomaly loop (order doesn't matter there — every route is
+        // checked) and the exact 5xx total. Stats::slowestRoutes() itself
+        // orders by total time spent (sum_ms desc), NOT p95 — a high-traffic
+        // fast route can out-total a rare slow one — so the "slowest 10
+        // routes (p95)" display table is a separate, pure re-sort
+        // (rankByP95()) of a copy, not a slice of this list.
         $currentRoutes = $s->slowestRoutes($from, $to, self::ALL_LIMIT);
         $prevRoutes = $s->slowestRoutes($prevFrom, $prevTo, self::ALL_LIMIT);
-        $slowestTop = \array_slice($currentRoutes, 0, self::TOP_LIMIT);
+        $slowestTop = \array_slice(self::rankByP95($currentRoutes), 0, self::TOP_LIMIT);
         $total5xx = (int) \array_sum(\array_column($currentRoutes, 'n_5xx'));
 
         $prevP95ByKey = [];
@@ -360,9 +363,37 @@ final class MonthlyReport
         return [$from, $to];
     }
 
-    private static function previousPeriod(string $period): string
+    /**
+     * The 'YYYY-MM' immediately before $period (e.g. '2026-01' => '2025-12').
+     * Public (rather than folded into periodRange()) so this is directly
+     * unit-testable without a Stats/PDO — see
+     * RT/tests/Ops/MonthlyReportTest.php's year-rollover coverage.
+     */
+    public static function previousPeriod(string $period): string
     {
         return (string) \date('Y-m', (int) \strtotime($period . '-01 -1 month'));
+    }
+
+    /**
+     * Re-sort a copy of Stats::slowestRoutes()'s result by p95 desc (ties
+     * broken by request volume desc) for the "slowest 10 routes (p95)"
+     * display table. slowestRoutes() itself orders by total time spent
+     * (sum_ms desc) — a different, equally valid ranking used for the
+     * anomaly loop and the 5xx total — so a high-traffic route with a fast
+     * p95 but a large sum_ms must not crowd out a rare route with a much
+     * worse p95 in the report's "slowest" table. Pure: no PDO, no Stats;
+     * directly unit-testable (RT/tests/Ops/MonthlyReportTest.php).
+     *
+     * @param list<array{route:string, method:string, n:int, avg_ms:float, p95_ms:int, n_5xx:int}> $routes
+     * @return list<array{route:string, method:string, n:int, avg_ms:float, p95_ms:int, n_5xx:int}>
+     */
+    public static function rankByP95(array $routes): array
+    {
+        \usort($routes, static function (array $a, array $b): int {
+            return ($b['p95_ms'] <=> $a['p95_ms']) ?: ($b['n'] <=> $a['n']);
+        });
+
+        return $routes;
     }
 
     /**
