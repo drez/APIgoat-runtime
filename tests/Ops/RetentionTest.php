@@ -20,6 +20,27 @@ final class RetentionTest extends TestCase
 {
     private const DAY = 86400;
 
+    private $prevLog;
+    private string $logFile;
+
+    protected function setUp(): void
+    {
+        // prune()'s per-table swallow calls error_log() on a DELETE
+        // failure — redirected to a temp file so a failing table never
+        // leaks a line to this test run's stdout/stderr (R11).
+        $this->logFile = \tempnam(\sys_get_temp_dir(), 'retention');
+        $this->prevLog = \ini_get('error_log');
+        \ini_set('error_log', $this->logFile);
+    }
+
+    protected function tearDown(): void
+    {
+        \ini_set('error_log', (string) $this->prevLog);
+        if (\is_file($this->logFile)) {
+            \unlink($this->logFile);
+        }
+    }
+
     public function test_cutoffs_uses_raw_days_for_request_and_query_slow_tables(): void
     {
         $now = 1_000_000;
