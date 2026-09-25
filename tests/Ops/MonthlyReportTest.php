@@ -240,4 +240,47 @@ final class MonthlyReportTest extends TestCase
         // rankByP95() must return a re-sorted copy, not sort in place.
         $this->assertSame($originalOrder, \array_column($routes, 'route'));
     }
+
+    // ── Final review M4 / M5 ─────────────────────────────────────────────
+
+    public function test_email_looking_tokens_are_stripped_from_signatures(): void
+    {
+        $path = $this->tmpDir . '/php-error.log';
+        \file_put_contents(
+            $path,
+            "[15-Aug-2026 10:00:01 UTC] mail to fred@example.com failed\n"
+            . "[15-Aug-2026 10:00:02 UTC] mail to jane.doe+x@test.org failed\n"
+        );
+
+        $sigs = MonthlyReport::errorSignatures($path, '2026-08', 10);
+        $this->assertCount(1, $sigs);
+        $this->assertSame(2, $sigs[0]['n']);
+        $this->assertSame('mail to <email> failed', $sigs[0]['sig']);
+    }
+
+    public function test_a_log_without_a_trailing_newline_still_counts_its_last_line(): void
+    {
+        $path = $this->tmpDir . '/php-error.log';
+        \file_put_contents($path, "[15-Aug-2026 10:00:01 UTC] one\r\n[15-Aug-2026 10:00:02 UTC] one");
+
+        $sigs = MonthlyReport::errorSignatures($path, '2026-08', 10);
+        $this->assertSame([['sig' => 'one', 'n' => 2]], $sigs);
+    }
+
+    public function test_p95_rule_skipped_when_both_months_are_in_the_overflow_bucket(): void
+    {
+        $out = MonthlyReport::anomalies(0, 0, 0, null, [], [
+            ['route' => '/huge', 'method' => 'GET', 'p95_ms' => 9000],
+        ], ['/huge|GET' => 2600]);
+        $this->assertSame([], $out);
+    }
+
+    public function test_p95_rule_still_fires_when_only_this_month_overflows(): void
+    {
+        $out = MonthlyReport::anomalies(0, 0, 0, null, [], [
+            ['route' => '/huge', 'method' => 'GET', 'p95_ms' => 9000],
+        ], ['/huge|GET' => 1000]);
+        $this->assertCount(1, $out);
+        $this->assertStringContainsString('>2500 ms', $out[0]);
+    }
 }

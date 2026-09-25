@@ -12,9 +12,25 @@
 # Usage:
 #   ops-collect.sh <absolute-output-path>
 #
-# Install (as root, crontab -e or /etc/cron.d), every 5 minutes:
+# Install (as root) — NEVER run this script in place from vendor/ or from
+# anywhere else inside the web tree: the web user can write there, so a
+# root cron pointed at that copy would run whatever the web user put in it,
+# i.e. hand it root. Install a root-owned copy outside the web tree instead
+# and point the crontab at THAT copy:
 #
-#   */5 * * * * root /path/to/ops-collect.sh /var/www/clients/clientN/webN/web/.admin/tmp/ops-snapshot.json
+#   install -o root -g root -m 0755 /path/to/.admin/vendor/apigoat/runtime/bin/ops-collect.sh /usr/local/sbin/ops-collect.sh
+#
+# then (crontab -e as root, or a root-owned file in /etc/cron.d), every 5
+# minutes:
+#
+#   */5 * * * * root /usr/local/sbin/ops-collect.sh /var/www/clients/clientN/webN/web/.admin/tmp/ops-snapshot.json
+#
+# Re-run the `install` line after a runtime update to pick up a new version.
+#
+# The output path must be the CANONICAL path, with no symlinked component
+# anywhere in it (`realpath -e <dir>` must print the directory unchanged).
+# On ISPConfig that means /var/www/clients/clientN/webN/..., NOT the
+# /var/www/<domain>/... convenience symlink — that path is refused.
 #
 # The app reads this file hourly (the opsServerSnap cron job, P/.admin/config/cron.php)
 # via ApiGoat\Ops\Server\SnapshotFileSource, so 5-minute freshness is a
@@ -194,20 +210,64 @@ if command -v fail2ban-client >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------
-# auth — last 24h sshd "Failed password"/"Invalid user" vs "Accepted",
-# from journalctl when available, else /var/log/auth.log. Best-effort: 0
-# when neither source is readable.
+# auth — last 24h sshd "Failed password" vs "Accepted", from journalctl
+# when available, else a syslog auth file (/var/log/auth.log, or the file
+# named by OPS_COLLECT_AUTH_LOG, e.g. /var/log/secure on RHEL). Best-effort:
+# 0 when no source is readable.
+#
+# Counted: "Failed password" lines only. One attempt for an unknown user logs
+# BOTH "Invalid user x" and "Failed password for invalid user x", so counting
+# both double-counted it; the "Failed password" line alone covers valid and
+# invalid users. Not counted: probes that never try a password at all
+# (pre-auth disconnects, key-only failures).
+#
+# The auth-file fallback keeps only lines from the last 24h by their syslog
+# timestamp — RFC 3339 ("2026-09-25T01:02:03...") or traditional
+# ("Sep 25 01:02:03", year-less; a Dec->Jan window is handled). Timestamps
+# are compared as local time, ignoring any UTC offset in the line; when GNU
+# `date -d` is unavailable the whole file is counted instead.
 # ---------------------------------------------------------------------
 ssh_failed=0
 ssh_accepted=0
 window_h=24
-if command -v journalctl >/dev/null 2>&1; then
-    lines="$(journalctl -u ssh -u sshd --since "24 hours ago" -o cat 2>/dev/null || true)"
-    ssh_failed="$(printf '%s\n' "$lines" | grep -cE 'Failed password|Invalid user' || true)"
-    ssh_accepted="$(printf '%s\n' "$lines" | grep -c 'Accepted' || true)"
-elif [ -r /var/log/auth.log ]; then
-    ssh_failed="$(grep -cE 'Failed password|Invalid user' /var/log/auth.log 2>/dev/null || true)"
-    ssh_accepted="$(grep -c 'Accepted' /var/log/auth.log 2>/dev/null || true)"
+
+count_ssh() {
+    awk '/Failed password/ { f++ } /Accepted / { a++ } END { printf "%d %d\n", f, a }'
+}
+
+auth_log="${OPS_COLLECT_AUTH_LOG:-/var/log/auth.log}"
+counts=""
+if [ -z "${OPS_COLLECT_AUTH_LOG:-}" ] && command -v journalctl >/dev/null 2>&1; then
+    counts="$(journalctl -u ssh -u sshd --since "24 hours ago" -o cat 2>/dev/null | count_ssh || true)"
+elif [ -r "$auth_log" ]; then
+    if cut_iso="$(date -d '24 hours ago' '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)" \
+        && cut_bsd="$(date -d '24 hours ago' '+%m %d %H:%M:%S' 2>/dev/null)"; then
+        now_iso="$(date '+%Y-%m-%dT%H:%M:%S')"
+        now_bsd="$(date '+%m %d %H:%M:%S')"
+        counts="$(awk -v ci="$cut_iso" -v ni="$now_iso" -v cb="$cut_bsd" -v nb="$now_bsd" '
+            BEGIN {
+                split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", m, " ")
+                for (i = 1; i <= 12; i++) mon[m[i]] = sprintf("%02d", i)
+            }
+            !/sshd/ { next }
+            $1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T/ {
+                k = substr($1, 1, 19)
+                if (k >= ci && k <= ni) print
+                next
+            }
+            ($1 in mon) {
+                k = sprintf("%s %02d %s", mon[$1], $2, $3)
+                if (cb <= nb) { if (k >= cb && k <= nb) print }
+                else if (k >= cb || k <= nb) print
+            }
+        ' "$auth_log" 2>/dev/null | count_ssh || true)"
+    else
+        counts="$(grep 'sshd' "$auth_log" 2>/dev/null | count_ssh || true)"
+    fi
+fi
+if [ -n "$counts" ]; then
+    ssh_failed="${counts%% *}"
+    ssh_accepted="${counts##* }"
 fi
 case "$ssh_failed" in ''|*[!0-9]*) ssh_failed=0 ;; esac
 case "$ssh_accepted" in ''|*[!0-9]*) ssh_accepted=0 ;; esac
@@ -218,18 +278,43 @@ at="$(date +%s)"
 # Write atomically: a temp file in the SAME directory as the output (so the
 # final mv is a same-filesystem rename, not a copy), mode 0644, then mv into
 # place. A reader (SnapshotFileSource) never sees a partially written file.
-# Defense in depth: `mv -f` (rename(2)) replaces whatever directory entry
-# $out names without following a symlink there -- though the pre-flight
-# check above already refuses to run at all if $out exists and is a
-# symlink, so this is belt-and-braces, not the only guard.
+#
+# TOCTOU (final review M1): the pre-flight symlink check above runs well
+# before this write, and the directory's owner (the web user) could swap a
+# component for a symlink in between. So when running as root into a
+# directory owned by someone else, the write itself runs AS THAT OWNER
+# (`runuser -u <owner>`): whatever a symlink points it at, it can only write
+# where the web user could already write. When running as root without
+# `runuser`, or into a root-owned directory, or as a non-root user, root
+# privileges are not lent to anyone and the write stays in-process, after
+# re-checking the directory right before it. Residual risk: only on a root
+# run WITHOUT runuser into a non-root-owned directory, a symlink swapped in
+# the instant between that re-check and mktemp/mv can still redirect this
+# root write — install util-linux (runuser) to close it.
 # ---------------------------------------------------------------------
-tmp="$(mktemp "${out_dir}/.ops-snapshot.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
-
-printf '{"load1":%s,"mem_pct":%s,"disk_pct":%s,"services":%s,"f2b_banned":%s,"f2b":%s,"auth":{"ssh_failed":%s,"ssh_accepted":%s,"window_h":%s},"at":%s}\n' \
+payload="$(printf '{"load1":%s,"mem_pct":%s,"disk_pct":%s,"services":%s,"f2b_banned":%s,"f2b":%s,"auth":{"ssh_failed":%s,"ssh_accepted":%s,"window_h":%s},"at":%s}' \
     "$load1" "$mem_pct" "$disk_pct" "$services_json" "$f2b_banned" "$f2b_json" \
-    "$ssh_failed" "$ssh_accepted" "$window_h" "$at" > "$tmp"
+    "$ssh_failed" "$ssh_accepted" "$window_h" "$at")"
 
-chmod 0644 "$tmp"
-mv -f "$tmp" "$out"
-trap - EXIT
+# The same steps in both branches; $1 = directory, $2 = output path, the
+# payload on stdin.
+write_snippet='umask 022
+tmp="$(mktemp "$1/.ops-snapshot.XXXXXX")" || exit 1
+if cat > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$2"; then exit 0; fi
+rm -f "$tmp"; exit 1'
+
+dir_owner_uid="$(stat -c %u -- "$out_dir" 2>/dev/null || echo 0)"
+dir_owner="$(stat -c %U -- "$out_dir" 2>/dev/null || echo UNKNOWN)"
+
+if [ "$(id -u)" = "0" ] && [ "$dir_owner_uid" != "0" ] && [ "$dir_owner" != "UNKNOWN" ] \
+    && command -v runuser >/dev/null 2>&1; then
+    printf '%s\n' "$payload" | runuser -u "$dir_owner" -- sh -c "$write_snippet" sh "$out_dir" "$out"
+else
+    # Re-check right before the write (see above).
+    if [ "$(realpath -e -- "$out_dir" 2>/dev/null || true)" != "$out_dir" ] || [ -L "$out_dir" ] \
+        || { [ -e "$out" ] && { [ -L "$out" ] || [ ! -f "$out" ]; }; }; then
+        printf 'ops-collect.sh: refusing to write to %s -- the path changed during collection\n' "$out" >&2
+        exit 1
+    fi
+    printf '%s\n' "$payload" | sh -c "$write_snippet" sh "$out_dir" "$out"
+fi

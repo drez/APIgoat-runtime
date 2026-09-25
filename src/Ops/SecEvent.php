@@ -24,6 +24,11 @@ namespace ApiGoat\Ops;
  * string (never a password, token, email or tool argument) — enforced by
  * review, not by this class, since SecEvent has no way to know what a
  * caller's string means.
+ *
+ * Transactions: record() writes on the request's shared Propel connection,
+ * so an event recorded while a transaction is open on it commits or ROLLS
+ * BACK with that transaction — an event recorded just before a rollback is
+ * lost with it.
  */
 final class SecEvent
 {
@@ -97,11 +102,32 @@ final class SecEvent
         );
         $stmt->execute([
             ':type'       => $type,
-            ':id_authy'   => $idAuthy,
+            // 0 is never a real authy row (FK) — store it as anonymous.
+            ':id_authy'   => ($idAuthy !== null && $idAuthy > 0) ? $idAuthy : null,
             ':ip'         => $ip,
             ':detail'     => $detail,
             ':created_at' => $now,
         ]);
+    }
+
+    /**
+     * A caller's user id as ops_sec_event.id_authy expects it: null for an
+     * anonymous or unknown user. The session getters return null/'' for a
+     * signed-out session, and `(int) null` is 0 — which is no authy row, so
+     * the insert failed on the FK and the event was lost (final review I3).
+     *
+     * @param mixed $id
+     */
+    public static function authyId($id): ?int
+    {
+        if (\is_int($id)) {
+            return $id > 0 ? $id : null;
+        }
+        if (\is_string($id) && \ctype_digit($id)) {
+            return ((int) $id) > 0 ? (int) $id : null;
+        }
+
+        return null;
     }
 
     /**

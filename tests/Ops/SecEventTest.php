@@ -146,4 +146,33 @@ final class SecEventTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         SecEvent::record('not-a-real-type');
     }
+
+    // ── Final review I3: (int) null → 0 made the insert fail on the FK and
+    // lost the event; anonymous / deleted users must record NULL.
+
+    public function test_authy_id_maps_anonymous_values_to_null(): void
+    {
+        $this->assertNull(SecEvent::authyId(null));
+        $this->assertNull(SecEvent::authyId(''));
+        $this->assertNull(SecEvent::authyId(0));
+        $this->assertNull(SecEvent::authyId('0'));
+        $this->assertNull(SecEvent::authyId(-3));
+        $this->assertNull(SecEvent::authyId('abc'));
+        $this->assertNull(SecEvent::authyId(false));
+        $this->assertSame(7, SecEvent::authyId(7));
+        $this->assertSame(12, SecEvent::authyId('12'));
+    }
+
+    public function test_write_stores_a_zero_id_as_null(): void
+    {
+        $stmt = $this->createMock(\PDOStatement::class);
+        $stmt->expects($this->once())
+            ->method('execute')
+            ->with($this->callback(static fn (array $p): bool => \array_key_exists(':id_authy', $p) && $p[':id_authy'] === null))
+            ->willReturn(true);
+        $pdo = $this->createMock(\PDO::class);
+        $pdo->method('prepare')->willReturn($stmt);
+
+        SecEvent::write($pdo, 'csrf', 0, '1.1.1.1', 'POST /x', 1);
+    }
 }

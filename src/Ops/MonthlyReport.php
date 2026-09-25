@@ -44,6 +44,9 @@ final class MonthlyReport
     /** p95-regression anomaly multiplier vs the previous month. */
     private const P95_ANOMALY_MULTIPLIER = 2;
 
+    /** Upper bound of the last finite latency bucket (b2500); past it a p95 is only an estimate. */
+    private const P95_OVERFLOW_MS = 2500;
+
     /**
      * Build the report for $period ('YYYY-MM'). Pure: no PDO write, no mail.
      * $logPath is the php-error.log to mine for top error signatures — pass
@@ -93,7 +96,10 @@ final class MonthlyReport
         $serverTrend = $s->serverTrend($from, $to);
         $maxLoad = self::maxOf($serverTrend, 'load1');
         $maxDisk = self::maxOf($serverTrend, 'disk_pct');
-        $maxBans = self::maxOf($serverTrend, 'f2b_banned');
+        // f2b_banned is a count: an int for the summary and renderHtml()'s
+        // ?int (maxOf() is a float max, shared with load/disk).
+        $maxBansF = self::maxOf($serverTrend, 'f2b_banned');
+        $maxBans = $maxBansF === null ? null : (int) $maxBansF;
 
         $anomalies = self::anomalies(
             $overview['failed_logins'],
@@ -158,9 +164,14 @@ final class MonthlyReport
      * suite. No recipients resolve => the report is still stored
      * (emailed=0), $send is never called.
      *
+     * $noSendReason: when non-null the report is built and stored but never
+     * mailed ($send is not called, emailed=0) and the summary line says
+     * "not emailed (<reason>)" — the cron job uses it while the project has
+     * not opted in to report email.
+     *
      * Returns a one-line summary (anomaly count + recipient outcome).
      */
-    public static function run(\PDO $pdo, string $period, ?string $group = null, ?callable $send = null): string
+    public static function run(\PDO $pdo, string $period, ?string $group = null, ?callable $send = null, ?string $noSendReason = null): string
     {
         self::assertPeriod($period);
 
@@ -174,7 +185,7 @@ final class MonthlyReport
 
         $recipients = self::recipients($pdo, $group);
         $emailed = 0;
-        if ($recipients !== []) {
+        if ($noSendReason === null && $recipients !== []) {
             $emailed = $send($recipients, "Security report {$period}", $built['html']) ? 1 : 0;
         }
 
@@ -196,9 +207,13 @@ final class MonthlyReport
         ]);
 
         $anomalyCount = \count($built['summary']['anomalies']);
-        $recipientNote = $recipients === []
-            ? 'no recipients'
-            : \sprintf('%d recipient(s)%s', \count($recipients), $emailed ? '' : ' (send failed)');
+        if ($noSendReason !== null) {
+            $recipientNote = "not emailed ({$noSendReason})";
+        } else {
+            $recipientNote = $recipients === []
+                ? 'no recipients'
+                : \sprintf('%d recipient(s)%s', \count($recipients), $emailed ? '' : ' (send failed)');
+        }
 
         return \sprintf(
             'Security report %s: %d anomal%s, %s',
@@ -225,6 +240,12 @@ final class MonthlyReport
      * bracketed-date format (a stack-trace continuation, blank line, …) is
      * silently skipped, not counted as its own signature.
      *
+     * Files are streamed line by line (fgets), never loaded whole. Coverage
+     * caveats: the log rotates at 20 MB and only one old generation (.1) is
+     * kept, so a busy month can be only partially covered. Email-looking
+     * tokens are replaced by '<email>' in the signature, but other unquoted
+     * personal data inside a message is not recognised and stays.
+     *
      * @return list<array{sig: string, n: int}>
      */
     public static function errorSignatures(string $logPath, string $period, int $limit): array
@@ -236,12 +257,12 @@ final class MonthlyReport
             if ($path === '' || !\is_file($path) || !\is_readable($path)) {
                 continue;
             }
-            $content = @\file_get_contents($path);
-            if ($content === false || $content === '') {
+            $fh = @\fopen($path, 'rb');
+            if ($fh === false) {
                 continue;
             }
-            foreach (\explode("\n", $content) as $line) {
-                $line = \rtrim($line, "\r");
+            while (($line = \fgets($fh)) !== false) {
+                $line = \rtrim($line, "\r\n");
                 if ($line === '') {
                     continue;
                 }
@@ -252,6 +273,7 @@ final class MonthlyReport
                 $sig = self::signature($parsed['message']);
                 $counts[$sig] = ($counts[$sig] ?? 0) + 1;
             }
+            \fclose($fh);
         }
 
         if ($counts === []) {
@@ -280,7 +302,10 @@ final class MonthlyReport
      *   - a new Deny route (one message per route in $newDenyRoutes, which
      *     the caller has already filtered to "modified within the period");
      *   - p95 of any route > 2x the previous month (matched by
-     *     route + '|' + method against $prevP95ByKey).
+     *     route + '|' + method against $prevP95ByKey) — skipped when BOTH
+     *     p95s are past 2500 ms: both sit in the open-ended overflow bucket,
+     *     whose estimate is not a real measurement, so their ratio means
+     *     nothing.
      *
      * @param list<array{model: string, action: ?string, method: string}> $newDenyRoutes
      * @param list<array{route: string, method: string, p95_ms: int}> $currentRoutes
@@ -330,6 +355,9 @@ final class MonthlyReport
 
         foreach ($currentRoutes as $r) {
             $prevP95 = $prevP95ByKey[$r['route'] . '|' . $r['method']] ?? 0;
+            if ($r['p95_ms'] > self::P95_OVERFLOW_MS && $prevP95 > self::P95_OVERFLOW_MS) {
+                continue;
+            }
             if ($r['p95_ms'] > 0 && $prevP95 > 0 && $r['p95_ms'] > $prevP95 * self::P95_ANOMALY_MULTIPLIER) {
                 $out[] = \sprintf(
                     'Route %s %s p95 %s vs %s last month (more than %dx)',
@@ -440,7 +468,7 @@ final class MonthlyReport
      */
     private static function p95Label(int $ms): string
     {
-        return $ms > 2500 ? '>2500 ms' : $ms . ' ms';
+        return $ms > self::P95_OVERFLOW_MS ? '>2500 ms' : $ms . ' ms';
     }
 
     /** @return ?array{period: string, message: string} */
@@ -470,10 +498,15 @@ final class MonthlyReport
         return $map[$abbr] ?? null;
     }
 
-    /** Strip quoted substrings, then digit runs, so varying ids/values collapse into one signature. */
+    /**
+     * Strip quoted substrings, then email-looking tokens, then digit runs, so
+     * varying ids/values collapse into one signature and no bare address
+     * reaches the report.
+     */
     private static function signature(string $message): string
     {
         $message = (string) \preg_replace('/\'[^\']*\'|"[^"]*"/', '?', $message);
+        $message = (string) \preg_replace('/[^\s@]+@[^\s@]+/', '<email>', $message);
         $message = (string) \preg_replace('/\d+/', '#', $message);
 
         return \trim($message);

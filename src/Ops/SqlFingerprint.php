@@ -33,9 +33,13 @@ final class SqlFingerprint
         $sql = (string) \preg_replace("/'(?:[^'\\\\]|\\\\.|'')*'/s", '?', $sql);
         $sql = (string) \preg_replace('/"(?:[^"\\\\]|\\\\.|"")*"/s', '?', $sql);
 
-        // Bare numeric literals — not digits that are part of an identifier
-        // (e.g. `b100`, `authy2`), which have no word boundary around them.
-        $sql = (string) \preg_replace('/(?<![A-Za-z0-9_])-?\d+(?:\.\d+)?(?![A-Za-z0-9_])/', '?', $sql);
+        // Unquoted hex literals (0x1A2B); X'..' is already a quoted string.
+        $sql = (string) \preg_replace('/(?<![A-Za-z0-9_])0x[0-9A-Fa-f]+(?![A-Za-z0-9_])/i', '?', $sql);
+
+        // Bare numeric literals, with an optional exponent (1.5e10, -2E-3) —
+        // not digits that are part of an identifier (e.g. `b100`, `authy2`),
+        // which have no word boundary around them.
+        $sql = (string) \preg_replace('/(?<![A-Za-z0-9_])-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?![A-Za-z0-9_])/', '?', $sql);
 
         return \substr($sql, 0, self::MAX_LEN);
     }

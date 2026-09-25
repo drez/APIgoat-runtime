@@ -208,7 +208,7 @@ class AuthyMiddleware implements MiddlewareInterface
                         . ' for authy#' . (int) $_SESSION[_AUTH_VAR]->getIdAuthy());
                     \ApiGoat\Ops\SecEvent::record(
                         'access_denied',
-                        (int) $_SESSION[_AUTH_VAR]->getIdAuthy(),
+                        \ApiGoat\Ops\SecEvent::authyId($_SESSION[_AUTH_VAR]->getIdAuthy()),
                         null,
                         $request->getMethod() . ' ' . $this->args['model'] . '/' . $this->args['action']
                     );
@@ -263,7 +263,7 @@ class AuthyMiddleware implements MiddlewareInterface
         } catch (\Exception $e) { /* DB transient: keep the session, don't lock out */ }
         if ($verdict === 'logout') {
             error_log('gc: stale session signed out for authy#' . (int) $sess->getIdAuthy());
-            \ApiGoat\Ops\SecEvent::record('stale_session', (int) $sess->getIdAuthy());
+            \ApiGoat\Ops\SecEvent::record('stale_session', \ApiGoat\Ops\SecEvent::authyId($sess->getIdAuthy()));
             // Keep the per-browser csrf token + language so the page's re-auth
             // modal can sign straight back in.
             $_SESSION[_AUTH_VAR] = \ApiGoat\Auth\AccountSecurity::signedOutSession($sess);
@@ -336,7 +336,7 @@ class AuthyMiddleware implements MiddlewareInterface
         error_log('csrf rejected: ' . $method . ' ' . ($this->args['route'] ?? '')
             . ' from ' . ($_SERVER['REMOTE_ADDR'] ?? '?')
             . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
-        \ApiGoat\Ops\SecEvent::record('csrf', (int) $_SESSION[_AUTH_VAR]->get('id'), null, $method . ' ' . (string) ($this->args['route'] ?? ''));
+        \ApiGoat\Ops\SecEvent::record('csrf', \ApiGoat\Ops\SecEvent::authyId($_SESSION[_AUTH_VAR]->get('id')), null, $method . ' ' . (string) ($this->args['route'] ?? ''));
         $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Invalid or missing CSRF token']]);
         $ApiResponse->setStatus(403);
         return $ApiResponse->getResponse();
@@ -509,7 +509,7 @@ class AuthyMiddleware implements MiddlewareInterface
         $sessionCsrf   = (string) ($_SESSION[_AUTH_VAR]->sessVar['IarcCsrf'] ?? '');
         if ($submittedCsrf === '' || $sessionCsrf === '' || ! hash_equals($sessionCsrf, (string) $submittedCsrf)) {
             error_log('iarc switch rejected: csrf mismatch from ' . $_SERVER['REMOTE_ADDR'] . ' uid=' . $_SESSION[_AUTH_VAR]->get('id'));
-            \ApiGoat\Ops\SecEvent::record('switch_rejected', (int) $_SESSION[_AUTH_VAR]->get('id'), null, 'csrf_mismatch');
+            \ApiGoat\Ops\SecEvent::record('switch_rejected', \ApiGoat\Ops\SecEvent::authyId($_SESSION[_AUTH_VAR]->get('id')), null, 'csrf_mismatch');
             return false;
         }
 
@@ -525,7 +525,7 @@ class AuthyMiddleware implements MiddlewareInterface
         $rootObj        = \App\AuthyQuery::create()->findPk($originalRootId);
         if (! $rootObj || $rootObj->getIsRoot() !== 'Yes') {
             error_log('iarc switch rejected: impersonator ' . $originalRootId . ' is not root');
-            \ApiGoat\Ops\SecEvent::record('switch_rejected', $originalRootId, null, 'not_root');
+            \ApiGoat\Ops\SecEvent::record('switch_rejected', \ApiGoat\Ops\SecEvent::authyId($originalRootId), null, 'not_root');
             unset($_SESSION[_AUTH_VAR]->sessVar['ImpersonatorId']);
             return false;
         }

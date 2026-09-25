@@ -86,4 +86,30 @@ final class SqlFingerprintTest extends TestCase
             SqlFingerprint::hash('SELECT * FROM x WHERE id = 999999')
         );
     }
+
+    // ── Final review I3: unquoted hex literals and scientific notation.
+
+    public function test_hex_literals_stripped(): void
+    {
+        $this->assertSame(
+            'SELECT * FROM t WHERE h = ? OR h = ? AND b100 = ?',
+            SqlFingerprint::normalize('SELECT * FROM t WHERE h = 0x1A2B OR h = 0XDEADbeef AND b100 = 0x0')
+        );
+    }
+
+    public function test_scientific_notation_stripped(): void
+    {
+        $this->assertSame(
+            'SELECT * FROM t WHERE x > ? AND y < ? AND z = ?',
+            SqlFingerprint::normalize('SELECT * FROM t WHERE x > 1.5e10 AND y < -2E-3 AND z = 3e+2')
+        );
+    }
+
+    public function test_hex_and_exponent_values_share_a_hash(): void
+    {
+        $this->assertSame(
+            SqlFingerprint::hash('SELECT 1 FROM t WHERE h = 0xAA AND x = 1e5'),
+            SqlFingerprint::hash('SELECT 2 FROM t WHERE h = 0xBBCC AND x = 2.5E-7')
+        );
+    }
 }

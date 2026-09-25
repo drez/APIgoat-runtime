@@ -226,4 +226,130 @@ final class OpsCollectShTest extends TestCase
             @\rmdir($dir);
         }
     }
+
+    // ── Final review M2: the auth-file fallback counts only the last 24h
+    // and counts "Failed password" only (an invalid-user attempt logs both
+    // "Invalid user" and "Failed password" — counting both doubled it).
+
+    public function test_auth_log_fallback_counts_only_the_last_24h_and_never_double_counts(): void
+    {
+        if (!$this->bashAvailable() || !$this->procLoadavgAvailable()) {
+            $this->markTestSkipped('bash or /proc/loadavg unavailable on this host');
+        }
+
+        $log = \tempnam(\sys_get_temp_dir(), 'authlog');
+        // Written in UTC and the script run with TZ=UTC: syslog stamps local
+        // time, and the script compares against its own local clock.
+        $bsd = static fn (int $ts): string => \gmdate('M ', $ts) . \sprintf('%2d', (int) \gmdate('j', $ts)) . \gmdate(' H:i:s', $ts);
+        $iso = static fn (int $ts): string => \gmdate('Y-m-d\TH:i:s.000000+00:00', $ts);
+        $now = \time();
+        $old = $now - 3 * 86400;
+        $recent = $now - 3600;
+        \file_put_contents($log, \implode("\n", [
+            // 3 days old: excluded (both formats)
+            $bsd($old) . ' host sshd[1]: Failed password for root from 1.2.3.4 port 1 ssh2',
+            $iso($old) . ' host sshd[1]: Accepted publickey for fred from 1.2.3.4 port 1 ssh2',
+            // last hour, traditional: one invalid-user attempt = 2 lines, counted once
+            $bsd($recent) . ' host sshd[2]: Invalid user admin from 5.6.7.8 port 2',
+            $bsd($recent) . ' host sshd[2]: Failed password for invalid user admin from 5.6.7.8 port 2 ssh2',
+            // last hour, RFC 3339
+            $iso($recent) . ' host sshd[3]: Failed password for root from 5.6.7.8 port 3 ssh2',
+            $iso($recent) . ' host sshd[4]: Accepted publickey for fred from 9.9.9.9 port 4 ssh2',
+            // not sshd: ignored
+            $iso($recent) . ' host sudo[5]: Failed password something',
+        ]) . "\n");
+
+        try {
+            $cmd = 'TZ=UTC OPS_COLLECT_AUTH_LOG=' . \escapeshellarg($log) . ' bash ' . \escapeshellarg($this->script) . ' ' . \escapeshellarg($this->outPath) . ' 2>&1';
+            $output = [];
+            $exitCode = 0;
+            \exec($cmd, $output, $exitCode);
+            $this->assertSame(0, $exitCode, \implode("\n", $output));
+
+            $auth = \json_decode((string) \file_get_contents($this->outPath), true)['auth'];
+            $this->assertSame(2, $auth['ssh_failed']);
+            $this->assertSame(1, $auth['ssh_accepted']);
+        } finally {
+            @\unlink($log);
+        }
+    }
+
+    // ── Final review M1: running as root into a directory someone else
+    // owns, the write itself runs AS the directory owner via runuser, so a
+    // symlink swapped in after the pre-flight check can't redirect a root
+    // write. Simulated with PATH stubs for `id` (reports uid 0) and
+    // `runuser` (records its arguments, then runs the command unprivileged).
+
+    public function test_root_run_into_a_non_root_directory_writes_via_runuser_as_the_owner(): void
+    {
+        if (!$this->bashAvailable() || !$this->procLoadavgAvailable()) {
+            $this->markTestSkipped('bash or /proc/loadavg unavailable on this host');
+        }
+        if (\function_exists('posix_geteuid') && \posix_geteuid() === 0) {
+            $this->markTestSkipped('needs a non-root test user owning the output directory');
+        }
+
+        $stubs = \sys_get_temp_dir() . '/ops-collect-sh-stubs-' . \uniqid();
+        \mkdir($stubs, 0775, true);
+        // The output directory must be owned by this (non-root) test user —
+        // sys_get_temp_dir() itself is root-owned.
+        $this->outPath = $stubs . '/out.json';
+        $argLog = $stubs . '/runuser.args';
+        \file_put_contents($stubs . '/id', "#!/bin/sh\necho 0\n");
+        \file_put_contents($stubs . '/runuser', "#!/bin/sh\nprintf '%s\\n' \"\$@\" > " . \escapeshellarg($argLog) . "\nshift 3\nexec \"\$@\"\n");
+        \chmod($stubs . '/id', 0755);
+        \chmod($stubs . '/runuser', 0755);
+
+        try {
+            $cmd = 'PATH=' . \escapeshellarg($stubs) . ':"$PATH" bash ' . \escapeshellarg($this->script) . ' ' . \escapeshellarg($this->outPath) . ' 2>&1';
+            $output = [];
+            $exitCode = 0;
+            \exec($cmd, $output, $exitCode);
+
+            $this->assertSame(0, $exitCode, \implode("\n", $output));
+            $this->assertFileExists($argLog, 'the write did not go through runuser');
+            $args = \file($argLog, \FILE_IGNORE_NEW_LINES);
+            $owner = \posix_getpwuid(\fileowner(\dirname($this->outPath)))['name'];
+            $this->assertSame(['-u', $owner, '--', 'sh', '-c'], \array_slice($args, 0, 5));
+            $this->assertIsArray(\json_decode((string) \file_get_contents($this->outPath), true));
+            $this->assertSame('0644', \substr(\sprintf('%o', \fileperms($this->outPath)), -4));
+        } finally {
+            @\unlink($argLog);
+            @\unlink($this->outPath);
+            @\unlink($stubs . '/id');
+            @\unlink($stubs . '/runuser');
+            @\rmdir($stubs);
+        }
+    }
+
+    public function test_non_root_run_writes_in_process_without_runuser(): void
+    {
+        if (!$this->bashAvailable() || !$this->procLoadavgAvailable()) {
+            $this->markTestSkipped('bash or /proc/loadavg unavailable on this host');
+        }
+        if (\function_exists('posix_geteuid') && \posix_geteuid() === 0) {
+            $this->markTestSkipped('must run as a non-root user');
+        }
+
+        $stubs = \sys_get_temp_dir() . '/ops-collect-sh-stubs-' . \uniqid();
+        \mkdir($stubs, 0775, true);
+        $argLog = $stubs . '/runuser.args';
+        \file_put_contents($stubs . '/runuser', "#!/bin/sh\ntouch " . \escapeshellarg($argLog) . "\nexit 1\n");
+        \chmod($stubs . '/runuser', 0755);
+
+        try {
+            $cmd = 'PATH=' . \escapeshellarg($stubs) . ':"$PATH" bash ' . \escapeshellarg($this->script) . ' ' . \escapeshellarg($this->outPath) . ' 2>&1';
+            $output = [];
+            $exitCode = 0;
+            \exec($cmd, $output, $exitCode);
+
+            $this->assertSame(0, $exitCode, \implode("\n", $output));
+            $this->assertFileDoesNotExist($argLog, 'a non-root run must not go through runuser');
+            $this->assertFileExists($this->outPath);
+        } finally {
+            @\unlink($argLog);
+            @\unlink($stubs . '/runuser');
+            @\rmdir($stubs);
+        }
+    }
 }

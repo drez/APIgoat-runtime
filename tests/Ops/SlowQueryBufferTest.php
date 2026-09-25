@@ -72,8 +72,20 @@ final class SlowQueryBufferTest extends TestCase
         $pdo = $this->createMock(\PDO::class);
         $pdo->method('prepare')->willThrowException(new \PDOException("Table 'ops_query_slow' doesn't exist"));
 
-        SlowQueryBuffer::flush($pdo, '/x');
+        // flush()'s swallow logs via error_log() — redirected to a temp file
+        // so the line never reaches this run's stderr (R11), and asserted on.
+        $log = \tempnam(\sys_get_temp_dir(), 'slowq');
+        $prev = \ini_get('error_log');
+        \ini_set('error_log', $log);
+        try {
+            SlowQueryBuffer::flush($pdo, '/x');
+            $logged = (string) \file_get_contents($log);
+        } finally {
+            \ini_set('error_log', (string) $prev);
+            @\unlink($log);
+        }
 
+        $this->assertStringContainsString("ops_query_slow' doesn't exist", $logged);
         $this->assertSame(0, SlowQueryBuffer::count());
         $this->assertFalse(SlowQueryBuffer::isFlushing());
     }

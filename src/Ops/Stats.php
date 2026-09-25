@@ -77,7 +77,12 @@ final class Stats
         ];
     }
 
-    /** @return list<array{day:string, failed:int, ok:int}> */
+    /**
+     * Days are DATE(timestamp) in the MySQL session's time zone (see
+     * latencyTrend() for the UTC-day contrast).
+     *
+     * @return list<array{day:string, failed:int, ok:int}>
+     */
     public function loginTrend(int $from, int $to): array
     {
         $rows = $this->all(
@@ -246,6 +251,10 @@ final class Stats
 
     /**
      * Grouped by hour for a range up to 3 days, by day for anything longer.
+     *
+     * Day buckets are UTC days (FLOOR(unix hour / 86400)), whereas
+     * loginTrend() groups by DATE(timestamp) in the MySQL session's time
+     * zone — the two trends' day boundaries can differ by the UTC offset.
      *
      * @return list<array{hour:int, n:int, avg_ms:float, p95_ms:int}>
      */

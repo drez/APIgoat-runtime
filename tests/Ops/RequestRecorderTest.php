@@ -53,12 +53,23 @@ final class RequestRecorderTest extends TestCase
         $pdo = $this->createMock(\PDO::class);
         $pdo->method('prepare')->willThrowException(new \PDOException('no such table: ops_req_hour'));
 
-        RequestRecorder::safeRecord($pdo, [
-            'route' => '/x', 'method' => 'GET', 'path' => '/x', 'status' => 200,
-            'ms' => 1, 'queries' => 0, 'id_authy' => null, 'ip' => '', 'ts' => 0,
-        ], 1000);
+        // The swallow logs via error_log() — redirected to a temp file so the
+        // line never reaches this run's stderr (R11), and asserted on.
+        $log = \tempnam(\sys_get_temp_dir(), 'recorder');
+        $prev = \ini_get('error_log');
+        \ini_set('error_log', $log);
+        try {
+            RequestRecorder::safeRecord($pdo, [
+                'route' => '/x', 'method' => 'GET', 'path' => '/x', 'status' => 200,
+                'ms' => 1, 'queries' => 0, 'id_authy' => null, 'ip' => '', 'ts' => 0,
+            ], 1000);
+            $logged = (string) \file_get_contents($log);
+        } finally {
+            \ini_set('error_log', (string) $prev);
+            @\unlink($log);
+        }
 
-        $this->addToAssertionCount(1); // reaching here means no exception escaped
+        $this->assertStringContainsString('[ops] record failed: no such table: ops_req_hour', $logged);
     }
 
     public function test_record_rethrows_are_not_expected_from_record_itself(): void
