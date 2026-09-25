@@ -43,6 +43,64 @@ final class RequestRecorder
     private static bool $shutdownRegistered = false;
 
     /**
+     * The matched route pattern of the request in flight, as noted from
+     * INSIDE Slim's routing (see noteRoute()). ServerTimingMiddleware — the
+     * outermost middleware — cannot read it itself: Slim's RoutingMiddleware
+     * puts the routing attributes only on the NEW request object it hands to
+     * the inner middlewares, never on the one the outer ones hold, so
+     * RouteContext::fromRequest() on the outer request always throws.
+     */
+    private static ?string $notedRoute = null;
+
+    /**
+     * Test seam: the records defer() queued and that have not been run yet,
+     * in order. Emptied together with the hooks at shutdown and by
+     * takePendingForTest().
+     *
+     * @var list<array<string,mixed>>
+     */
+    private static array $pending = [];
+
+    /** Start of a request (ServerTimingMiddleware): forget the previous request's route. */
+    public static function beginRequest(): void
+    {
+        self::$notedRoute = null;
+    }
+
+    /**
+     * Called from inside routing (SessionReleaseMiddleware, the first runtime
+     * middleware after RoutingMiddleware) with the matched route's pattern.
+     * Requests that never reach routing — short-circuited by Authy/Rbac/Jwt
+     * above it, or 404/405 — are never noted and keep '(unmatched)'.
+     */
+    public static function noteRoute(?string $pattern): void
+    {
+        self::$notedRoute = ($pattern === null || $pattern === '') ? null : $pattern;
+    }
+
+    /** The pattern noteRoute() recorded for the request in flight, or null. */
+    public static function notedRoute(): ?string
+    {
+        return self::$notedRoute;
+    }
+
+    /**
+     * Test seam: return the records defer() queued and drop them together
+     * with their shutdown hooks, so nothing tries a real database when the
+     * test process exits.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public static function takePendingForTest(): array
+    {
+        $pending = self::$pending;
+        self::$pending = [];
+        self::$shutdownHooks = [];
+
+        return $pending;
+    }
+
+    /**
      * Which of the fixed latency buckets $ms falls into.
      *
      * @return 'b100'|'b250'|'b500'|'b1000'|'b2500'|'b_inf'
@@ -177,6 +235,8 @@ final class RequestRecorder
      */
     public static function defer(array $r): void
     {
+        self::$pending[] = $r;
+
         self::$shutdownHooks[] = static function () use ($r): void {
             try {
                 $pdo = \Propel::getConnection(_DATA_SRC);
@@ -250,6 +310,7 @@ final class RequestRecorder
 
                 $hooks = self::$shutdownHooks;
                 self::$shutdownHooks = [];
+                self::$pending = [];
                 self::$shutdownRegistered = false;
 
                 foreach ($hooks as $hook) {

@@ -29,7 +29,6 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use Slim\Routing\RouteContext;
 
 final class ServerTimingMiddleware implements MiddlewareInterface
 {
@@ -37,6 +36,8 @@ final class ServerTimingMiddleware implements MiddlewareInterface
     {
         Timing::reset();
         QueryCounter::reset();
+        TimedStatement::reset();
+        RequestRecorder::beginRequest();
         // A fresh Propel connection is opened per request (config/Built/propel.php,
         // required from config/legacy.php, before this middleware ever runs) — so
         // whatever this process() call queued for a PRIOR request must not survive
@@ -93,16 +94,15 @@ final class ServerTimingMiddleware implements MiddlewareInterface
     private function recordOpsRequest(ServerRequestInterface $request, ResponseInterface $response, float $total): void
     {
         try {
-            // RouteContext::fromRequest() throws when routing never ran
-            // (e.g. the request failed before addRoutingMiddleware saw it).
-            try {
-                $route = RouteContext::fromRequest($request)->getRoute();
-            } catch (\Throwable $e) {
-                $route = null;
-            }
-
+            // The route comes from INSIDE routing (SessionReleaseMiddleware
+            // -> RequestRecorder::noteRoute()), never from $request: this is
+            // the OUTERMOST middleware, and Slim's RoutingMiddleware sets the
+            // routing attributes only on the new request it passes inward, so
+            // RouteContext::fromRequest($request) here always threw and every
+            // request was recorded as '(unmatched)' (final review C1,
+            // tests/Ops/RouteCaptureTest).
             RequestRecorder::defer([
-                'route'    => RequestRecorder::routeKey($route?->getPattern()),
+                'route'    => RequestRecorder::routeKey(RequestRecorder::notedRoute()),
                 'method'   => $request->getMethod(),
                 'path'     => $request->getUri()->getPath(),
                 'status'   => $response->getStatusCode(),

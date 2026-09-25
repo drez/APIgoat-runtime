@@ -20,14 +20,19 @@
  *
  * Must be registered INNERMOST (first $app->add()) so every middleware that
  * reads or writes the session (OAuth hydrate, Authy, Rbac) has already run.
+ *
+ * Being the first runtime middleware inside routing, it is also where the
+ * ops recorder learns the matched route pattern (noteRoute() below).
  */
 
 namespace ApiGoat\Middlewares;
 
+use ApiGoat\Ops\RequestRecorder;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Slim\Routing\RouteContext;
 
 final class SessionReleaseMiddleware implements MiddlewareInterface
 {
@@ -45,6 +50,24 @@ final class SessionReleaseMiddleware implements MiddlewareInterface
         if (self::shouldRelease($auth) && session_status() === PHP_SESSION_ACTIVE) {
             session_write_close();
         }
+        self::noteRoute($request);
         return $handler->handle($request);
+    }
+
+    /**
+     * Ops telemetry (final review C1): this is the first runtime middleware
+     * INSIDE Slim's routing, so $request here carries the routing attributes
+     * the outermost ServerTimingMiddleware never sees. Hand the matched
+     * pattern to RequestRecorder for it. Best-effort — never breaks the
+     * request.
+     */
+    private static function noteRoute(ServerRequestInterface $request): void
+    {
+        try {
+            $route = RouteContext::fromRequest($request)->getRoute();
+            RequestRecorder::noteRoute($route?->getPattern());
+        } catch (\Throwable $e) {
+            // routing did not run for this request; it stays '(unmatched)'
+        }
     }
 }

@@ -27,9 +27,30 @@ namespace ApiGoat\Ops;
  * So the statement class PDO hands back is the built-in \PDOStatement
  * unless/until this class replaces it — extending \PDOStatement directly is
  * correct here, not \DebugPDOStatement.
+ *
+ * Coverage: only prepared statements are timed. PDO::query() and PDO::exec()
+ * called directly on the connection never go through execute() and are
+ * neither counted nor captured as slow queries.
  */
 class TimedStatement extends \PDOStatement
 {
+    /**
+     * Config::get('slow_query_ms'), read once per request instead of on every
+     * execute(). Reset by ServerTimingMiddleware next to QueryCounter::reset().
+     */
+    private static ?float $slowQueryMs = null;
+
+    /** Drop the cached threshold — called at the start of every request. */
+    public static function reset(): void
+    {
+        self::$slowQueryMs = null;
+    }
+
+    private static function slowQueryMs(): float
+    {
+        return self::$slowQueryMs ??= (float) Config::get('slow_query_ms');
+    }
+
     /**
      * Times parent::execute(), records it on QueryCounter, and queues a
      * slow-query row when the duration crosses Config::get('slow_query_ms').
@@ -55,7 +76,7 @@ class TimedStatement extends \PDOStatement
         try {
             QueryCounter::inc($ms);
 
-            if ($ms >= (float) Config::get('slow_query_ms')) {
+            if ($ms >= self::slowQueryMs()) {
                 SlowQueryBuffer::queue((int) \round($ms), (string) $this->queryString);
             }
         } catch (\Throwable $e) {

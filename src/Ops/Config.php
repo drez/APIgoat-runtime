@@ -45,10 +45,28 @@ final class Config
      */
     private static ?array $overrides = null;
 
+    /**
+     * Test seam: when non-null, enabled() returns this instead of checking
+     * the manifest — lets a middleware test exercise the recording path
+     * without defining _BASE_DIR (which the Ops tests must never do).
+     * Cleared by reset().
+     */
+    private static ?bool $forcedEnabled = null;
+
     /** The behavior is declared for this project (the manifest exists). */
     public static function enabled(): bool
     {
+        if (self::$forcedEnabled !== null) {
+            return self::$forcedEnabled;
+        }
+
         return \defined('_BASE_DIR') && \is_file(self::path());
+    }
+
+    /** Test seam: force enabled() to $v (null = back to the manifest check). */
+    public static function forceEnabled(?bool $v): void
+    {
+        self::$forcedEnabled = $v;
     }
 
     /**
@@ -89,6 +107,7 @@ final class Config
     {
         self::$cache = null;
         self::$overrides = null;
+        self::$forcedEnabled = null;
     }
 
     /** @return array<string,mixed> raw manifest contents, [] when there is none */
@@ -96,7 +115,9 @@ final class Config
     {
         if (self::$cache === null) {
             self::$cache = [];
-            if (self::enabled()) {
+            // The real file check, never the forceEnabled() seam — a forced
+            // test must not dereference an undefined _BASE_DIR here.
+            if (\defined('_BASE_DIR') && \is_file(self::path())) {
                 $m = require self::path();
                 if (\is_array($m)) {
                     self::$cache = $m;
