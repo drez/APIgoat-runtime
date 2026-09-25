@@ -170,9 +170,10 @@ final class RequestRecorder
      * Queue $r to be recorded after the response has been sent. Registers
      * (once) a shutdown function that first releases the client via
      * fastcgi_finish_request() when available, then runs every queued hook
-     * — this request's record plus, from Task 3 onward, the slow-query
-     * buffer flush. Getting the DB connection happens inside the hook's own
-     * try, so a Propel/connection problem at shutdown can never throw.
+     * — this request's record, plus (Task 3) the slow-query buffer flush,
+     * keyed to the same routeKey this request's record uses. Getting the DB
+     * connection happens inside each hook's own try, so a Propel/connection
+     * problem at shutdown can never throw.
      */
     public static function defer(array $r): void
     {
@@ -182,6 +183,15 @@ final class RequestRecorder
                 self::safeRecord($pdo, $r, (int) Config::get('slow_ms'));
             } catch (\Throwable $e) {
                 \error_log('[ops] record failed: ' . $e->getMessage());
+            }
+        };
+
+        self::$shutdownHooks[] = static function () use ($r): void {
+            try {
+                $pdo = \Propel::getConnection(_DATA_SRC);
+                SlowQueryBuffer::flush($pdo, (string) $r['route']);
+            } catch (\Throwable $e) {
+                \error_log('[ops] slow query flush failed: ' . $e->getMessage());
             }
         };
 

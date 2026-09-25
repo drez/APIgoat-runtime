@@ -22,6 +22,8 @@ namespace ApiGoat\Middlewares;
 use ApiGoat\Ops\Config;
 use ApiGoat\Ops\QueryCounter;
 use ApiGoat\Ops\RequestRecorder;
+use ApiGoat\Ops\SlowQueryBuffer;
+use ApiGoat\Ops\TimedStatement;
 use ApiGoat\Utility\Timing;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -35,6 +37,21 @@ final class ServerTimingMiddleware implements MiddlewareInterface
     {
         Timing::reset();
         QueryCounter::reset();
+        // A fresh Propel connection is opened per request (config/Built/propel.php,
+        // required from config/legacy.php, before this middleware ever runs) — so
+        // whatever this process() call queued for a PRIOR request must not survive
+        // into this one even if that request's flush never ran (e.g. it crashed
+        // before RequestRecorder::defer()'s shutdown hook fired).
+        SlowQueryBuffer::reset();
+
+        // Security & Performance dashboards, Task 3: install the timed PDO
+        // statement class that feeds QueryCounter/SlowQueryBuffer. Only when
+        // Config::enabled() — a project that never declared with_ops_monitor
+        // pays no per-query overhead at all.
+        if (Config::enabled()) {
+            $this->attachTimedStatement();
+        }
+
         $start = (float) ($request->getServerParams()['REQUEST_TIME_FLOAT'] ?? microtime(true));
         $response = $handler->handle($request);
         $total = (microtime(true) - $start) * 1000;
@@ -48,6 +65,23 @@ final class ServerTimingMiddleware implements MiddlewareInterface
         }
 
         return $response->withHeader('Server-Timing', Timing::header($total));
+    }
+
+    /**
+     * Sets PDO::ATTR_STATEMENT_CLASS on this request's Propel connection so
+     * every prepare()/execute() from here on is timed. Wrapped so a Propel
+     * hiccup (no connection yet, wrong datasource, ...) can never break the
+     * request — telemetry setup is best-effort by contract everywhere else
+     * in this feature too.
+     */
+    private function attachTimedStatement(): void
+    {
+        try {
+            $con = \Propel::getConnection(\defined('_DATA_SRC') ? _DATA_SRC : null);
+            $con->setAttribute(\PDO::ATTR_STATEMENT_CLASS, [TimedStatement::class]);
+        } catch (\Throwable $e) {
+            \error_log('[ops] TimedStatement attach failed: ' . $e->getMessage());
+        }
     }
 
     /**
