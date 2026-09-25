@@ -10,7 +10,7 @@
 # talks to systemd/fail2ban/journalctl itself.
 #
 # Usage:
-#   ops-collect.sh <output-path>
+#   ops-collect.sh <absolute-output-path>
 #
 # Install (as root, crontab -e or /etc/cron.d), every 5 minutes:
 #
@@ -40,7 +40,23 @@
 # symlink or a directory.
 set -euo pipefail
 
-out="${1:?usage: ops-collect.sh <output-path>}"
+out="${1:?usage: ops-collect.sh <absolute-output-path>}"
+
+# R18 (controller ruling, fix round 2): the symlink check below compares
+# `realpath -e`'s (always absolute) result against the literal path we were
+# given -- a relative path (e.g. "tmp/out.json") can never equal that
+# absolute result even with no symlink anywhere, so it was being refused
+# with the wrong, misleading message ("a symlink ... is involved"). Require
+# an absolute path outright, before that check ever runs, with its own
+# distinct message and exit code.
+case "$out" in
+    /*) ;;
+    *)
+        printf 'ops-collect.sh: output path must be absolute: %s\n' "$out" >&2
+        exit 2
+        ;;
+esac
+
 out_dir="$(dirname -- "$out")"
 
 # The output directory must exist, contain no symlink in its resolved path,

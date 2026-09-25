@@ -117,6 +117,48 @@ final class OpsCollectShTest extends TestCase
         $this->assertNotSame(0, $exitCode, 'ops-collect.sh should fail fast without an output-path argument');
     }
 
+    /**
+     * R18 (controller ruling, fix round 2): the symlink check further down
+     * compares `realpath -e`'s (always absolute) result against the literal
+     * path given -- a relative path can never equal that even with no
+     * symlink involved, so it used to be refused with the wrong, misleading
+     * "a symlink ... is involved" message. A relative path must instead be
+     * refused up front, before the symlink check runs, with its own
+     * message and a distinct exit code (2).
+     */
+    public function test_relative_output_path_is_refused_with_a_distinct_message_and_exit_code(): void
+    {
+        if (!$this->bashAvailable()) {
+            $this->markTestSkipped('bash unavailable on this host');
+        }
+
+        $cwd = \sys_get_temp_dir() . '/ops-collect-sh-relpath-test-' . \uniqid();
+        \mkdir($cwd, 0775, true);
+
+        try {
+            $relative = 'tmp/out2.json';
+            $cmd = 'cd ' . \escapeshellarg($cwd) . ' && bash ' . \escapeshellarg($this->script) . ' ' . \escapeshellarg($relative) . ' 2>&1';
+            $output = [];
+            $exitCode = 0;
+            \exec($cmd, $output, $exitCode);
+
+            $this->assertSame(2, $exitCode, 'a relative output path must exit 2, not just non-zero');
+            $joined = \implode("\n", $output);
+            $this->assertStringContainsString(
+                'ops-collect.sh: output path must be absolute: ' . $relative,
+                $joined
+            );
+            $this->assertFileDoesNotExist($cwd . '/' . $relative);
+            $this->assertDirectoryDoesNotExist($cwd . '/tmp', 'no directory should have been created either');
+        } finally {
+            foreach (\glob($cwd . '/tmp/*') ?: [] as $f) {
+                @\unlink($f);
+            }
+            @\rmdir($cwd . '/tmp');
+            @\rmdir($cwd);
+        }
+    }
+
     // ── R16 fix round 1, item 2: refuse to write through a symlinked ────
     // directory or over a non-regular-file output path. The script runs as
     // root but writes into a directory the jailed web user controls, so a
