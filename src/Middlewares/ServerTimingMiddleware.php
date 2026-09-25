@@ -19,20 +19,67 @@
 
 namespace ApiGoat\Middlewares;
 
+use ApiGoat\Ops\Config;
+use ApiGoat\Ops\QueryCounter;
+use ApiGoat\Ops\RequestRecorder;
 use ApiGoat\Utility\Timing;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Slim\Routing\RouteContext;
 
 final class ServerTimingMiddleware implements MiddlewareInterface
 {
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         Timing::reset();
+        QueryCounter::reset();
         $start = (float) ($request->getServerParams()['REQUEST_TIME_FLOAT'] ?? microtime(true));
         $response = $handler->handle($request);
         $total = (microtime(true) - $start) * 1000;
+
+        // Security & Performance dashboards, Task 2: queue this request for
+        // the ops_req_hour/ops_req_slow recorder. Config::enabled() is false
+        // (and touches no DB) on any project that never declared
+        // with_ops_monitor, so this is a no-op there.
+        if (Config::enabled()) {
+            $this->recordOpsRequest($request, $response, $total);
+        }
+
         return $response->withHeader('Server-Timing', Timing::header($total));
+    }
+
+    /**
+     * Never allowed to affect the response: recording is fire-and-forget
+     * (RequestRecorder::defer() queues it for a shutdown hook), and every
+     * step here is wrapped so a routing/PSR-7 surprise can't leak out of
+     * this middleware either.
+     */
+    private function recordOpsRequest(ServerRequestInterface $request, ResponseInterface $response, float $total): void
+    {
+        try {
+            // RouteContext::fromRequest() throws when routing never ran
+            // (e.g. the request failed before addRoutingMiddleware saw it).
+            try {
+                $route = RouteContext::fromRequest($request)->getRoute();
+            } catch (\Throwable $e) {
+                $route = null;
+            }
+
+            RequestRecorder::defer([
+                'route'    => RequestRecorder::routeKey($route?->getPattern()),
+                'method'   => $request->getMethod(),
+                'path'     => $request->getUri()->getPath(),
+                'status'   => $response->getStatusCode(),
+                'ms'       => (int) \round($total),
+                'queries'  => QueryCounter::count(),
+                'id_authy' => RequestRecorder::currentAuthyId(),
+                'ip'       => $request->getServerParams()['REMOTE_ADDR'] ?? '',
+                'ts'       => \time(),
+            ]);
+        } catch (\Throwable $e) {
+            \error_log('[ops] defer failed: ' . $e->getMessage());
+        }
     }
 }
