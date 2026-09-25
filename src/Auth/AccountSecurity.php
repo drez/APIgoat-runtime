@@ -223,6 +223,7 @@ final class AccountSecurity
         if (self::reauthFailures($id) >= self::REAUTH_MAX_FAILURES) {
             \password_verify($plain, self::DUMMY_BCRYPT);
             \error_log('AccountSecurity: re-auth throttled for user ' . $id . ' from ' . ($_SERVER['REMOTE_ADDR'] ?? '-'));
+            \ApiGoat\Ops\SecEvent::record('reauth_throttled', $id);
             self::endSessionOf($id);
             return false;
         }

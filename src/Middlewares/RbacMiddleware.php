@@ -152,6 +152,12 @@ class RbacMiddleware implements MiddlewareInterface
 
         if ($this->rbac_rule == 'Deny') {
             $error[] = "Route denied. Check your API access control. Hard 'Deny'.";
+            \ApiGoat\Ops\SecEvent::record(
+                'rbac_deny',
+                \ApiGoat\Ops\RequestRecorder::currentAuthyId(),
+                null,
+                (string) ($this->args['model'] ?? '') . '/' . (string) ($this->args['action'] ?? '')
+            );
         }
 
         if ($error) {

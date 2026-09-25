@@ -96,6 +96,7 @@ class RefreshTokenRepository implements RefreshTokenRepositoryInterface
                 ));
                 return true;
             }
+            \ApiGoat\Ops\SecEvent::record('token_reuse', (int) $row->getIdAuthy(), null, (string) $row->getClientId());
             self::revokeFamily((int) $row->getIdAuthy(), (string) $row->getClientId(), 'refresh token reuse', (string) $tokenId);
             return true;
         }
@@ -154,6 +155,7 @@ class RefreshTokenRepository implements RefreshTokenRepositoryInterface
             $clientId,
             $presentedId !== '' ? substr(hash('sha256', $presentedId), 0, 12) : '-'
         ));
+        \ApiGoat\Ops\SecEvent::record('token_revoked', $idAuthy, null, $reason);
     }
 
     /** Revoke every outstanding OAuth refresh token for a user (password-reset hook). */

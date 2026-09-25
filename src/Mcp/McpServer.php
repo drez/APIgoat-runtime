@@ -156,6 +156,9 @@ class McpServer
         if ($tool === null) {
             throw new \DomainException("Unknown tool '{$name}'", -32602);
         }
+        // Defensive: some test doubles for AuthySession don't implement getIdAuthy().
+        $idAuthy = \method_exists($session, 'getIdAuthy') ? $session->getIdAuthy() : null;
+        $idAuthy = ($idAuthy === null || $idAuthy === '') ? null : (int) $idAuthy;
         try {
             // The registry's rights check is an authorization gate, not just a
             // list filter: a tool hidden from tools/list must not be reachable
@@ -168,7 +171,33 @@ class McpServer
                 );
             }
 
-            return $tool->handle((array) ($params['arguments'] ?? []), $session);
+            try {
+                $result = $tool->handle((array) ($params['arguments'] ?? []), $session);
+            } catch (ToolError $te2) {
+                \ApiGoat\Ops\SecEvent::record(
+                    'mcp_call',
+                    $idAuthy,
+                    null,
+                    \ApiGoat\Ops\SecEvent::mcpDetail($name, $te2->kind ?? 'error')
+                );
+                throw $te2;
+            } catch (\Throwable $e) {
+                \ApiGoat\Ops\SecEvent::record(
+                    'mcp_call',
+                    $idAuthy,
+                    null,
+                    \ApiGoat\Ops\SecEvent::mcpDetail($name, 'exception')
+                );
+                throw $e;
+            }
+            \ApiGoat\Ops\SecEvent::record(
+                'mcp_call',
+                $idAuthy,
+                null,
+                \ApiGoat\Ops\SecEvent::mcpDetail($name, null)
+            );
+
+            return $result;
         } catch (ToolError $te) {
             $msgs = $te->messages;
             array_unshift($msgs, $te->getMessage());

@@ -24,6 +24,17 @@ class JwtBeforeHandler implements BeforeHandlerInterface
     {
     }
 
+    /** Defensive getIdAuthy() read — $authyRow is a real Authy row here, but never assume the getter exists. */
+    private function idAuthyOf($authyRow): ?int
+    {
+        if (!\is_object($authyRow) || !\method_exists($authyRow, 'getIdAuthy')) {
+            return null;
+        }
+        $id = $authyRow->getIdAuthy();
+
+        return ($id === null || $id === '') ? null : (int) $id;
+    }
+
     private function hydrateFromAuthyRow(Request $request, array $routeArgs, $authyRow): void
     {
         if (!$authyRow) {
@@ -42,6 +53,7 @@ class JwtBeforeHandler implements BeforeHandlerInterface
                 || strcasecmp((string) $deact, 'No') === 0);
             if (!$active) {
                 error_log('[JwtAuthentication before] refused: account deactivated');
+                \ApiGoat\Ops\SecEvent::record('jwt_refused', $this->idAuthyOf($authyRow), null, 'deactivated');
                 return;
             }
         }
@@ -49,6 +61,7 @@ class JwtBeforeHandler implements BeforeHandlerInterface
             $exp = $authyRow->getExpire();
             if ($exp !== null && $exp !== '' && ($ts = strtotime((string) $exp)) !== false && $ts <= time()) {
                 error_log('[JwtAuthentication before] refused: account expired');
+                \ApiGoat\Ops\SecEvent::record('jwt_refused', $this->idAuthyOf($authyRow), null, 'expired');
                 return;
             }
         }
