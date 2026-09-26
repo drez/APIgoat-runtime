@@ -36,7 +36,51 @@ class ClientRepository implements ClientRepositoryInterface
         if ($clientSecret === null || $row->getClientSecretHash() === null) {
             return false;
         }
-        return password_verify((string) $clientSecret, $row->getClientSecretHash());
+        $check = self::verifySecret((string) $clientSecret, (string) $row->getClientSecretHash());
+        if ($check['ok'] && $check['rehash'] !== null) {
+            try {
+                $row->setClientSecretHash($check['rehash']);
+                $row->save();
+            } catch (\Throwable $e) {
+                // upgrade is an optimisation: the secret was valid either way
+                error_log('[oauth] client secret rehash failed: ' . $e->getMessage());
+            }
+        }
+        return $check['ok'];
+    }
+
+    /** Stored form of a server-minted client secret (see verifySecret()). */
+    public static function hashSecret(string $secret): string
+    {
+        return 'sha256$' . hash('sha256', $secret);
+    }
+
+    /**
+     * Verify a client secret against its stored hash.
+     *
+     * Client secrets are server-minted (bin2hex(random_bytes(32)) in
+     * register()), 256 random bits — never a human password — so a slow KDF
+     * adds no protection (nobody can brute-force 2^256), while bcrypt cost
+     * 12 (PHP 8.4's default) spent ~280 ms of every token call. They are
+     * stored as sha256$<hex> and compared in constant time. Legacy bcrypt
+     * rows still verify; a correct secret yields a `rehash` to the fast
+     * form, a wrong one never does. Anything else fails closed.
+     *
+     * @return array{ok: bool, rehash: ?string}
+     */
+    public static function verifySecret(string $secret, string $stored): array
+    {
+        if ($secret === '') {
+            return ['ok' => false, 'rehash' => null];
+        }
+        if (str_starts_with($stored, 'sha256$') && strlen($stored) === 71) {
+            return ['ok' => hash_equals($stored, self::hashSecret($secret)), 'rehash' => null];
+        }
+        if (str_starts_with($stored, '$2y$') || str_starts_with($stored, '$2b$')) {
+            $ok = password_verify($secret, $stored);
+            return ['ok' => $ok, 'rehash' => $ok ? self::hashSecret($secret) : null];
+        }
+        return ['ok' => false, 'rehash' => null];
     }
 
     /**
@@ -69,7 +113,7 @@ class ClientRepository implements ClientRepositoryInterface
         $secretHash = null;
         if ($isConfidential) {
             $secret = bin2hex(random_bytes(32));
-            $secretHash = password_hash($secret, PASSWORD_DEFAULT);
+            $secretHash = self::hashSecret($secret);
         }
 
         $row = new \App\OauthClient();
