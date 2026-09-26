@@ -352,4 +352,45 @@ final class OpsCollectShTest extends TestCase
             @\rmdir($stubs);
         }
     }
+
+    /**
+     * `gc fail2ban` coverage: the collector records which logs the gc-probe
+     * jail watches (the deploy advisory reads it — a jailed deploy user cannot
+     * ask fail2ban). Hostile path characters never reach the JSON.
+     */
+    public function test_f2b_logs_lists_the_gc_probe_jail_logs(): void
+    {
+        if (!$this->bashAvailable() || !$this->procLoadavgAvailable()) {
+            $this->markTestSkipped('needs bash + /proc/loadavg');
+        }
+        $stubs = \sys_get_temp_dir() . '/ops-collect-f2b-' . \uniqid();
+        \mkdir($stubs, 0775, true);
+        $this->outPath = $stubs . '/out.json';
+        \file_put_contents($stubs . '/fail2ban-client', <<<'SH'
+#!/bin/sh
+case "$*" in
+  "status") printf 'Status\n|- Number of jail:\t2\n`- Jail list:\tsshd, gc-probe\n' ;;
+  "status sshd") printf '`- Currently banned:\t1\n' ;;
+  "status gc-probe") printf '`- Currently banned:\t3\n' ;;
+  "get gc-probe logpath") printf 'Current monitored log file(s):\n|- /var/www/clients/client1/web134/log/access.log\n`- /var/www/clients/client1/web78/log/access.log"],"x":["\n' ;;
+esac
+SH);
+        \chmod($stubs . '/fail2ban-client', 0755);
+        try {
+            $cmd = 'PATH=' . \escapeshellarg($stubs) . ':"$PATH" bash ' . \escapeshellarg($this->script) . ' ' . \escapeshellarg($this->outPath) . ' 2>&1';
+            \exec($cmd, $out, $code);
+            $this->assertSame(0, $code, \implode("\n", $out));
+            $d = \json_decode((string) \file_get_contents($this->outPath), true);
+            $this->assertIsArray($d, 'still valid JSON with a hostile path in the jail');
+            $this->assertSame(['sshd' => 1, 'gc-probe' => 3], $d['f2b']);
+            $this->assertSame([
+                '/var/www/clients/client1/web134/log/access.log',
+                '/var/www/clients/client1/web78/log/access.logx',
+            ], $d['f2b_logs']['gc-probe']);
+        } finally {
+            @\unlink($stubs . '/fail2ban-client');
+            @\unlink($this->outPath);
+            @\rmdir($stubs);
+        }
+    }
 }

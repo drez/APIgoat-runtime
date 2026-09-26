@@ -189,6 +189,7 @@ fi
 # banned" count. Empty object (and 0) when fail2ban-client is absent.
 # ---------------------------------------------------------------------
 f2b_json="{}"
+f2b_logs_json="{}"
 f2b_banned=0
 if command -v fail2ban-client >/dev/null 2>&1; then
     jail_line="$(fail2ban-client status 2>/dev/null | awk -F: '/Jail list:/ { print $2 }' || true)"
@@ -197,7 +198,7 @@ if command -v fail2ban-client >/dev/null 2>&1; then
     for jail in $jail_line; do
         safe_jail="$(printf '%s' "$jail" | tr -cd 'A-Za-z0-9@._-')"
         [ -n "$safe_jail" ] || continue
-        banned="$(fail2ban-client status "$safe_jail" 2>/dev/null | awk -F: '/Currently banned:/ { gsub(/ /,"",$2); print $2 }' || true)"
+        banned="$(fail2ban-client status "$safe_jail" 2>/dev/null | awk -F: '/Currently banned:/ { gsub(/[ \t]/,"",$2); print $2 }' || true)"
         case "$banned" in
             ''|*[!0-9]*) banned=0 ;;
         esac
@@ -206,6 +207,20 @@ if command -v fail2ban-client >/dev/null 2>&1; then
     done
     if [ "${#parts[@]}" -gt 0 ]; then
         f2b_json="{$(IFS=,; echo "${parts[*]}")}"
+    fi
+    # f2b_logs — the log files the `gc fail2ban` scanner jail watches, so a
+    # deploy (which runs as the jailed web user and cannot ask fail2ban) can
+    # tell whether THIS site is covered. Only that one jail; paths keep
+    # [A-Za-z0-9/._*-] and nothing else (they land in JSON unescaped).
+    if [ -n "$(printf '%s\n' $jail_line | grep -x 'gc-probe' || true)" ]; then
+        logs=()
+        while IFS= read -r lp; do
+            lp="$(printf '%s' "$lp" | sed -E 's/^[|`]- +//' | tr -cd 'A-Za-z0-9/._*-')"
+            case "$lp" in
+                /*) logs+=("\"${lp}\"") ;;
+            esac
+        done < <(fail2ban-client get gc-probe logpath 2>/dev/null || true)
+        f2b_logs_json="{\"gc-probe\":[$(IFS=,; echo "${logs[*]}")]}"
     fi
 fi
 
@@ -292,8 +307,8 @@ at="$(date +%s)"
 # the instant between that re-check and mktemp/mv can still redirect this
 # root write — install util-linux (runuser) to close it.
 # ---------------------------------------------------------------------
-payload="$(printf '{"load1":%s,"mem_pct":%s,"disk_pct":%s,"services":%s,"f2b_banned":%s,"f2b":%s,"auth":{"ssh_failed":%s,"ssh_accepted":%s,"window_h":%s},"at":%s}' \
-    "$load1" "$mem_pct" "$disk_pct" "$services_json" "$f2b_banned" "$f2b_json" \
+payload="$(printf '{"load1":%s,"mem_pct":%s,"disk_pct":%s,"services":%s,"f2b_banned":%s,"f2b":%s,"f2b_logs":%s,"auth":{"ssh_failed":%s,"ssh_accepted":%s,"window_h":%s},"at":%s}' \
+    "$load1" "$mem_pct" "$disk_pct" "$services_json" "$f2b_banned" "$f2b_json" "$f2b_logs_json" \
     "$ssh_failed" "$ssh_accepted" "$window_h" "$at")"
 
 # The same steps in both branches; $1 = directory, $2 = output path, the
