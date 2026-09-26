@@ -303,9 +303,59 @@ class AuthyMiddleware implements MiddlewareInterface
      */
     private const CSRF_EXEMPT_ROUTES = ['oauth/token', 'oauth/register'];
 
+    /**
+     * Web sign-in family: anonymous by nature, so the session-token gate below
+     * never runs for them (connected != 'YES'). A foreign page could log a
+     * victim into the attacker's account (login CSRF) or trigger reset mails.
+     * They need a same-site Origin instead — not the session token, which a
+     * re-auth after an expired server session cannot match. API routes (the
+     * mobile credential exchange) are exempt: no browser, no ambient cookie.
+     */
+    private const SIGN_IN_ROUTES = ['authy/auth', 'authy/google', 'authy/reset', 'authy/register'];
+
+    /**
+     * True when the request's Origin — or, when the browser sent none, its
+     * Referer — names one of $allowedHosts (exact host, case-insensitive; the
+     * port is ignored). Missing, opaque ("null") or unparsable evidence is
+     * refused.
+     *
+     * @param list<string> $allowedHosts
+     */
+    public static function sameOrigin(string $origin, string $referer, array $allowedHosts): bool
+    {
+        $source = trim($origin) !== '' ? $origin : $referer;
+        $host = strtolower((string) parse_url(trim($source), PHP_URL_HOST));
+        if ($host === '') {
+            return false;
+        }
+        foreach ($allowedHosts as $allowed) {
+            if ($allowed !== '' && hash_equals(strtolower($allowed), $host)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private function checkCsrf(ServerRequestInterface $request): ?ResponseInterface
     {
         $method = strtoupper($request->getMethod());
+        $route = strtolower(trim((string) ($this->args['route'] ?? ''), '/'));
+        if ($method === 'POST' && empty($this->args['is_api'])
+            && in_array($route, self::SIGN_IN_ROUTES, true)
+            && $_SESSION[_AUTH_VAR]->get('connected') != 'YES') {
+            $hosts = [$request->getUri()->getHost()];
+            if (defined('_SITE_URL')) {
+                $hosts[] = (string) parse_url((string) constant('_SITE_URL'), PHP_URL_HOST);
+            }
+            if (!self::sameOrigin($request->getHeaderLine('Origin'), $request->getHeaderLine('Referer'), $hosts)) {
+                error_log('sign-in origin rejected: POST ' . $route . ' from ' . ($_SERVER['REMOTE_ADDR'] ?? '?')
+                    . ' origin=' . substr($request->getHeaderLine('Origin'), 0, 100));
+                \ApiGoat\Ops\SecEvent::record('csrf', null, null, 'POST ' . $route . ' (cross-site sign-in)');
+                $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Invalid request origin']]);
+                $ApiResponse->setStatus(403);
+                return $ApiResponse->getResponse();
+            }
+        }
         if (in_array(trim((string) ($this->args['route'] ?? ''), '/'), self::CSRF_EXEMPT_ROUTES, true)) {
             return null;
         }
