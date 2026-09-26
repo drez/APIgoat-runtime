@@ -149,6 +149,40 @@ final class Stats
         ], $rows);
     }
 
+    /**
+     * Security events collapsed by type + detail (a scanner's 15 rbac_deny on
+     * settings/list become one line), busiest first, with how many distinct
+     * IPs / users, the newest IP, and first/last seen.
+     *
+     * @return list<array{type:string, detail:string, n:int, ips:int, users:int, last_ip:?string, first_at:int, last_at:int}>
+     */
+    public function secEventGroups(int $from, int $to, ?string $type, int $limit): array
+    {
+        $limit = self::clampLimit($limit);
+        $sql = "SELECT type, detail, COUNT(*) n, COUNT(DISTINCT ip) ips, COUNT(DISTINCT id_authy) users,
+                       SUBSTRING_INDEX(GROUP_CONCAT(ip ORDER BY created_at DESC SEPARATOR ','), ',', 1) last_ip,
+                       MIN(created_at) first_at, MAX(created_at) last_at
+                FROM ops_sec_event
+                WHERE created_at BETWEEN ? AND ?";
+        $args = [$from, $to];
+        if ($type !== null) {
+            $sql .= ' AND type = ?';
+            $args[] = $type;
+        }
+        $sql .= ' GROUP BY type, detail ORDER BY n DESC, last_at DESC LIMIT ' . $limit;
+
+        return \array_map(static fn (array $r) => [
+            'type'     => (string) $r['type'],
+            'detail'   => (string) $r['detail'],
+            'n'        => (int) $r['n'],
+            'ips'      => (int) $r['ips'],
+            'users'    => (int) $r['users'],
+            'last_ip'  => $r['last_ip'] !== null && $r['last_ip'] !== '' ? (string) $r['last_ip'] : null,
+            'first_at' => (int) $r['first_at'],
+            'last_at'  => (int) $r['last_at'],
+        ], $this->all($sql, $args));
+    }
+
     /** Type => count, over the range — for the tools/dashboard breakdown. @return array<string,int> */
     public function secEventCounts(int $from, int $to): array
     {
