@@ -32,6 +32,7 @@ final class Config
         'server_source' => 'none',
         'report_to'     => 'Admin',
         'snapshot_path' => '',
+        'hub'           => false,
     ];
 
     /** Cached manifest contents (without defaults merged in), or null = not loaded yet. */
@@ -111,6 +112,48 @@ final class Config
     }
 
     /** @return array<string,mixed> raw manifest contents, [] when there is none */
+    /** Is this app the hub that receives the other apps' telemetry (with_ops_monitor hub: true)? */
+    public static function isHub(): bool
+    {
+        return self::get('hub') === true;
+    }
+
+    /** Hub ingest URL (env GC_OPS_HUB_URL), https only; null = do not forward. */
+    public static function hubUrl(): ?string
+    {
+        $url = self::env('GC_OPS_HUB_URL');
+
+        return $url !== null && \str_starts_with($url, 'https://') ? $url : null;
+    }
+
+    /** This app's hub site secret (env GC_OPS_HUB_KEY, an ana_site sk_ key). */
+    public static function hubKey(): ?string
+    {
+        return self::env('GC_OPS_HUB_KEY');
+    }
+
+    /**
+     * On the hub: the ana_site id that IS this app (env GC_OPS_SELF_SITE), so
+     * selecting it in the dashboards also shows the hub's own site_id = 0
+     * rows. Null when unset.
+     */
+    public static function selfSite(): ?int
+    {
+        $v = self::env('GC_OPS_SELF_SITE');
+
+        return $v !== null && \ctype_digit($v) && (int) $v > 0 ? (int) $v : null;
+    }
+
+    private static function env(string $key): ?string
+    {
+        $v = \function_exists('env') ? env($key) : \getenv($key);
+        if (!\is_string($v) || $v === '') {
+            $v = $_ENV[$key] ?? null;
+        }
+
+        return \is_string($v) && \trim($v) !== '' ? \trim($v) : null;
+    }
+
     private static function manifest(): array
     {
         if (self::$cache === null) {

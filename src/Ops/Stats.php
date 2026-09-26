@@ -32,8 +32,23 @@ final class Stats
     /** ops_req_hour histogram bucket columns => their upper bound (ms). */
     private const BUCKET_BOUNDS = ['b100' => 100, 'b250' => 250, 'b500' => 500, 'b1000' => 1000, 'b2500' => 2500];
 
-    public function __construct(private \PDO $pdo)
+    /**
+     * @param ?list<int> $sites site scope over the ops_* tables (their
+     *   site_id column; 0 = this app). null = every site. The framework
+     *   tables (authy_log, api_rbac, oauth_*, information_schema) only ever
+     *   describe THIS app, so a scope that excludes 0 reads them as empty.
+     */
+    public function __construct(private \PDO $pdo, private ?array $sites = null)
     {
+        if ($this->sites !== null) {
+            $this->sites = \array_values(\array_unique(\array_map('intval', $this->sites)));
+        }
+    }
+
+    /** Does the scope include this app's own (site 0) data? */
+    public function coversLocal(): bool
+    {
+        return $this->sites === null || \in_array(0, $this->sites, true);
     }
 
     // ── Security ─────────────────────────────────────────────────────────
@@ -43,27 +58,27 @@ final class Stats
      */
     public function securityOverview(int $from, int $to): array
     {
-        $logins = $this->one(
+        $logins = (!$this->coversLocal() ? null : $this->one(
             "SELECT
                 COALESCE(SUM(CASE WHEN result = 'w' THEN count ELSE 0 END), 0) failed,
                 COALESCE(SUM(CASE WHEN result = 'g' THEN count ELSE 0 END), 0) ok
              FROM authy_log
              WHERE UNIX_TIMESTAMP(timestamp) BETWEEN ? AND ?",
             [$from, $to]
-        ) ?? ['failed' => 0, 'ok' => 0];
+        )) ?? ['failed' => 0, 'ok' => 0];
 
         $rbacDenies = (int) $this->scalar(
-            'SELECT COUNT(*) FROM ops_sec_event WHERE type = ? AND created_at BETWEEN ? AND ?',
+            'SELECT COUNT(*) FROM ops_sec_event WHERE type = ? AND created_at BETWEEN ? AND ? /*SITE*/',
             ['rbac_deny', $from, $to]
         );
         $secEvents = (int) $this->scalar(
-            'SELECT COUNT(*) FROM ops_sec_event WHERE created_at BETWEEN ? AND ?',
+            'SELECT COUNT(*) FROM ops_sec_event WHERE created_at BETWEEN ? AND ? /*SITE*/',
             [$from, $to]
         );
         // "Active" is a right-now snapshot (currently valid, unrevoked
         // tokens), independent of the reporting range — a security overview
         // for last month should still show today's real exposure.
-        $activeTokens = (int) $this->scalar(
+        $activeTokens = !$this->coversLocal() ? 0 : (int) $this->scalar(
             'SELECT COUNT(*) FROM oauth_access_token WHERE revoked = 0 AND expires > ?',
             [\time()]
         );
@@ -85,6 +100,9 @@ final class Stats
      */
     public function loginTrend(int $from, int $to): array
     {
+        if (!$this->coversLocal()) {
+            return [];
+        }
         $rows = $this->all(
             "SELECT DATE(timestamp) day,
                     COALESCE(SUM(CASE WHEN result = 'w' THEN count ELSE 0 END), 0) failed,
@@ -106,6 +124,9 @@ final class Stats
     /** @return list<array{ip:string, login:string, failures:int}> */
     public function topFailing(int $from, int $to, int $limit): array
     {
+        if (!$this->coversLocal()) {
+            return [];
+        }
         $limit = self::clampLimit($limit);
         $rows = $this->all(
             'SELECT ip, login, COALESCE(SUM(count), 0) failures
@@ -130,7 +151,7 @@ final class Stats
         $limit = self::clampLimit($limit);
         $sql = 'SELECT type, id_authy, ip, detail, created_at
                 FROM ops_sec_event
-                WHERE created_at BETWEEN ? AND ?';
+                WHERE created_at BETWEEN ? AND ? /*SITE*/';
         $args = [$from, $to];
         if ($type !== null) {
             $sql .= ' AND type = ?';
@@ -159,19 +180,20 @@ final class Stats
     public function secEventGroups(int $from, int $to, ?string $type, int $limit): array
     {
         $limit = self::clampLimit($limit);
-        $sql = "SELECT type, detail, COUNT(*) n, COUNT(DISTINCT ip) ips, COUNT(DISTINCT id_authy) users,
+        $sql = "SELECT site_id, type, detail, COUNT(*) n, COUNT(DISTINCT ip) ips, COUNT(DISTINCT id_authy) users,
                        SUBSTRING_INDEX(GROUP_CONCAT(ip ORDER BY created_at DESC SEPARATOR ','), ',', 1) last_ip,
                        MIN(created_at) first_at, MAX(created_at) last_at
                 FROM ops_sec_event
-                WHERE created_at BETWEEN ? AND ?";
+                WHERE created_at BETWEEN ? AND ? /*SITE*/";
         $args = [$from, $to];
         if ($type !== null) {
             $sql .= ' AND type = ?';
             $args[] = $type;
         }
-        $sql .= ' GROUP BY type, detail ORDER BY n DESC, last_at DESC LIMIT ' . $limit;
+        $sql .= ' GROUP BY site_id, type, detail ORDER BY n DESC, last_at DESC LIMIT ' . $limit;
 
         return \array_map(static fn (array $r) => [
+            'site_id'  => (int) $r['site_id'],
             'type'     => (string) $r['type'],
             'detail'   => (string) $r['detail'],
             'n'        => (int) $r['n'],
@@ -187,7 +209,7 @@ final class Stats
     public function secEventCounts(int $from, int $to): array
     {
         $rows = $this->all(
-            'SELECT type, COUNT(*) n FROM ops_sec_event WHERE created_at BETWEEN ? AND ? GROUP BY type',
+            'SELECT type, COUNT(*) n FROM ops_sec_event WHERE created_at BETWEEN ? AND ? /*SITE*/ GROUP BY type',
             [$from, $to]
         );
 
@@ -207,6 +229,9 @@ final class Stats
      */
     public function denyRoutes(int $limit): array
     {
+        if (!$this->coversLocal()) {
+            return [];
+        }
         $limit = self::clampLimit($limit);
         $rows = $this->all(
             'SELECT model, action, method, count, date_modification
@@ -229,6 +254,9 @@ final class Stats
     /** @return list<array{client_id:string, created_at:?string, active_tokens:int}> */
     public function oauthClients(): array
     {
+        if (!$this->coversLocal()) {
+            return [];
+        }
         $rows = $this->all(
             'SELECT c.client_id, c.created_at,
                     COUNT(t.id_oauth_access_token) active_tokens
@@ -261,7 +289,7 @@ final class Stats
                 COALESCE(SUM(b100), 0) b100, COALESCE(SUM(b250), 0) b250, COALESCE(SUM(b500), 0) b500,
                 COALESCE(SUM(b1000), 0) b1000, COALESCE(SUM(b2500), 0) b2500, COALESCE(SUM(b_inf), 0) b_inf
              FROM ops_req_hour
-             WHERE hour BETWEEN ? AND ?',
+             WHERE hour BETWEEN ? AND ? /*SITE*/',
             [$from, $to]
         );
 
@@ -270,7 +298,7 @@ final class Stats
         $n5xx = $row !== null ? (int) $row['n_5xx'] : 0;
 
         $slowQueries = (int) $this->scalar(
-            'SELECT COUNT(*) FROM ops_query_slow WHERE created_at BETWEEN ? AND ?',
+            'SELECT COUNT(*) FROM ops_query_slow WHERE created_at BETWEEN ? AND ? /*SITE*/',
             [$from, $to]
         );
 
@@ -305,7 +333,7 @@ final class Stats
                     COALESCE(SUM(b100), 0) b100, COALESCE(SUM(b250), 0) b250, COALESCE(SUM(b500), 0) b500,
                     COALESCE(SUM(b1000), 0) b1000, COALESCE(SUM(b2500), 0) b2500, COALESCE(SUM(b_inf), 0) b_inf
              FROM ops_req_hour
-             WHERE hour BETWEEN ? AND ?
+             WHERE hour BETWEEN ? AND ? /*SITE*/
              GROUP BY bucket
              ORDER BY bucket",
             [$from, $to]
@@ -328,7 +356,7 @@ final class Stats
     {
         $limit = self::clampLimit($limit);
         $rows = $this->all(
-            'SELECT route, method,
+            'SELECT site_id, route, method,
                     COALESCE(SUM(n), 0) n,
                     COALESCE(SUM(sum_ms), 0) sum_ms,
                     COALESCE(MAX(max_ms), 0) max_ms,
@@ -336,8 +364,8 @@ final class Stats
                     COALESCE(SUM(b100), 0) b100, COALESCE(SUM(b250), 0) b250, COALESCE(SUM(b500), 0) b500,
                     COALESCE(SUM(b1000), 0) b1000, COALESCE(SUM(b2500), 0) b2500, COALESCE(SUM(b_inf), 0) b_inf
              FROM ops_req_hour
-             WHERE hour BETWEEN ? AND ?
-             GROUP BY route, method
+             WHERE hour BETWEEN ? AND ? /*SITE*/
+             GROUP BY site_id, route, method
              ORDER BY sum_ms DESC
              LIMIT ' . $limit,
             [$from, $to]
@@ -347,6 +375,7 @@ final class Stats
             $n = (int) $r['n'];
 
             return [
+                'site_id' => (int) $r['site_id'],
                 'route'   => (string) $r['route'],
                 'method'  => (string) $r['method'],
                 'n'       => $n,
@@ -368,18 +397,19 @@ final class Stats
     {
         $limit = self::clampLimit($limit);
         $rows = $this->all(
-            "SELECT COALESCE(route, path, '') grp, COALESCE(method, '') method,
+            "SELECT site_id, COALESCE(route, path, '') grp, COALESCE(method, '') method,
                     COUNT(*) n, AVG(ms) avg_ms, MAX(ms) max_ms, AVG(queries) avg_queries,
                     SUM(status >= 500) n_5xx, MAX(created_at) last_at
              FROM ops_req_slow
-             WHERE created_at BETWEEN ? AND ?
-             GROUP BY grp, method
+             WHERE created_at BETWEEN ? AND ? /*SITE*/
+             GROUP BY site_id, grp, method
              ORDER BY n DESC, max_ms DESC
              LIMIT " . $limit,
             [$from, $to]
         );
 
         return \array_map(static fn (array $r) => [
+            'site_id'     => (int) $r['site_id'],
             'route'       => (string) $r['grp'],
             'method'      => (string) $r['method'],
             'n'           => (int) $r['n'],
@@ -398,7 +428,7 @@ final class Stats
         $rows = $this->all(
             'SELECT route, method, path, status, ms, queries, id_authy, ip, created_at
              FROM ops_req_slow
-             WHERE created_at BETWEEN ? AND ?
+             WHERE created_at BETWEEN ? AND ? /*SITE*/
              ORDER BY created_at DESC
              LIMIT ' . $limit,
             [$from, $to]
@@ -424,7 +454,7 @@ final class Stats
         $rows = $this->all(
             'SELECT route, ms, sql_hash, sql_text, created_at
              FROM ops_query_slow
-             WHERE created_at BETWEEN ? AND ?
+             WHERE created_at BETWEEN ? AND ? /*SITE*/
              ORDER BY created_at DESC
              LIMIT ' . $limit,
             [$from, $to]
@@ -450,18 +480,19 @@ final class Stats
     {
         $limit = self::clampLimit($limit);
         $rows = $this->all(
-            "SELECT COALESCE(sql_hash, sql_text, '') grp, MAX(sql_hash) sql_hash, MAX(sql_text) sql_text,
+            "SELECT site_id, COALESCE(sql_hash, sql_text, '') grp, MAX(sql_hash) sql_hash, MAX(sql_text) sql_text,
                     COUNT(*) n, AVG(ms) avg_ms, MAX(ms) max_ms, MAX(created_at) last_at,
                     GROUP_CONCAT(DISTINCT route ORDER BY route SEPARATOR '\n') routes
              FROM ops_query_slow
-             WHERE created_at BETWEEN ? AND ?
-             GROUP BY grp
+             WHERE created_at BETWEEN ? AND ? /*SITE*/
+             GROUP BY site_id, grp
              ORDER BY n DESC, max_ms DESC
              LIMIT " . $limit,
             [$from, $to]
         );
 
         return \array_map(static fn (array $r) => [
+            'site_id'  => (int) $r['site_id'],
             'sql_hash' => $r['sql_hash'] !== null ? (string) $r['sql_hash'] : null,
             'sql_text' => $r['sql_text'] !== null ? (string) $r['sql_text'] : null,
             'n'        => (int) $r['n'],
@@ -475,6 +506,9 @@ final class Stats
     /** @return list<array{table:string, rows:int, data_bytes:int, index_bytes:int, total_bytes:int}> */
     public function tableSizes(int $limit): array
     {
+        if (!$this->coversLocal()) {
+            return [];
+        }
         $limit = self::clampLimit($limit);
         $rows = $this->all(
             'SELECT TABLE_NAME table_name, TABLE_ROWS table_rows,
@@ -500,13 +534,15 @@ final class Stats
     {
         $limit = self::clampLimit($limit);
         $rows = $this->all(
-            'SELECT job, started_at, ms, ok, summary, created_at
+            'SELECT site_id, job, started_at, ms, ok, summary, created_at
              FROM ops_cron_run
+             WHERE 1 = 1 /*SITE*/
              ORDER BY created_at DESC
              LIMIT ' . $limit
         );
 
         return \array_map(static fn (array $r) => [
+            'site_id'    => (int) $r['site_id'],
             'job'        => (string) $r['job'],
             'started_at' => $r['started_at'] !== null ? (int) $r['started_at'] : null,
             'ms'         => $r['ms'] !== null ? (int) $r['ms'] : null,
@@ -522,6 +558,7 @@ final class Stats
         $row = $this->one(
             'SELECT created_at, load1, mem_pct, disk_pct, services, f2b_banned, f2b, auth
              FROM ops_server_snap
+             WHERE 1 = 1 /*SITE*/
              ORDER BY created_at DESC
              LIMIT 1'
         );
@@ -548,7 +585,7 @@ final class Stats
         $rows = $this->all(
             'SELECT created_at, load1, mem_pct, disk_pct, f2b_banned
              FROM ops_server_snap
-             WHERE created_at BETWEEN ? AND ?
+             WHERE created_at BETWEEN ? AND ? /*SITE*/
              ORDER BY created_at',
             [$from, $to]
         );
@@ -625,10 +662,25 @@ final class Stats
         return \max(1, \min(1000, $limit));
     }
 
+    /**
+     * Swap the SITE marker comment for the site scope. The ids are ints cast in
+     * the constructor, so inlining them is injection-safe; an empty scope
+     * matches nothing.
+     */
+    private function scoped(string $sql): string
+    {
+        if ($this->sites === null) {
+            return \str_replace('/*SITE*/', '', $sql);
+        }
+        $in = $this->sites === [] ? 'AND 1 = 0' : 'AND site_id IN (' . \implode(',', $this->sites) . ')';
+
+        return \str_replace('/*SITE*/', $in, $sql);
+    }
+
     /** @return array<int,array<string,mixed>> */
     private function all(string $sql, array $args = []): array
     {
-        $st = $this->pdo->prepare($sql);
+        $st = $this->pdo->prepare($this->scoped($sql));
         $st->execute($args);
 
         return $st->fetchAll(\PDO::FETCH_ASSOC);
@@ -644,7 +696,7 @@ final class Stats
 
     private function scalar(string $sql, array $args = [])
     {
-        $st = $this->pdo->prepare($sql);
+        $st = $this->pdo->prepare($this->scoped($sql));
         $st->execute($args);
 
         return $st->fetchColumn();

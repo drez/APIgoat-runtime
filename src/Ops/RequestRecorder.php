@@ -255,6 +255,13 @@ final class RequestRecorder
             }
         };
 
+        // Ops housekeeping without cron (forward to the hub, server
+        // snapshot, retention) — throttled inside Tick to one request per
+        // Tick::INTERVAL; after the response, like the hooks above.
+        self::$shutdownHooks[] = static function (): void {
+            Tick::maybeRun();
+        };
+
         self::registerShutdown();
     }
 
