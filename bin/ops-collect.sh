@@ -208,19 +208,24 @@ if command -v fail2ban-client >/dev/null 2>&1; then
     if [ "${#parts[@]}" -gt 0 ]; then
         f2b_json="{$(IFS=,; echo "${parts[*]}")}"
     fi
-    # f2b_logs — the log files the `gc fail2ban` scanner jail watches, so a
+    # f2b_logs — the log files the `gc fail2ban` scanner jails watch, so a
     # deploy (which runs as the jailed web user and cannot ask fail2ban) can
-    # tell whether THIS site is covered. Only that one jail; paths keep
+    # tell whether THIS site is covered. Only those two jails; paths keep
     # [A-Za-z0-9/._*-] and nothing else (they land in JSON unescaped).
-    if [ -n "$(printf '%s\n' $jail_line | grep -x 'gc-probe' || true)" ]; then
+    lparts=()
+    for gj in gc-probe gc-probe-all; do
+        [ -n "$(printf '%s\n' $jail_line | grep -x "$gj" || true)" ] || continue
         logs=()
         while IFS= read -r lp; do
             lp="$(printf '%s' "$lp" | sed -E 's/^[|`]- +//' | tr -cd 'A-Za-z0-9/._*-')"
             case "$lp" in
                 /*) logs+=("\"${lp}\"") ;;
             esac
-        done < <(fail2ban-client get gc-probe logpath 2>/dev/null || true)
-        f2b_logs_json="{\"gc-probe\":[$(IFS=,; echo "${logs[*]}")]}"
+        done < <(fail2ban-client get "$gj" logpath 2>/dev/null || true)
+        lparts+=("\"${gj}\":[$(IFS=,; echo "${logs[*]}")]")
+    done
+    if [ "${#lparts[@]}" -gt 0 ]; then
+        f2b_logs_json="{$(IFS=,; echo "${lparts[*]}")}"
     fi
 fi
 
