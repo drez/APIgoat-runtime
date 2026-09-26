@@ -96,6 +96,10 @@ class AuthyMiddleware implements MiddlewareInterface
                 // match — an action or model segment named "oauth" on any
                 // catch-all model route used to skip the login check).
                 if (! RoutePath::isOAuthRoute($request->getUri()->getPath())) {
+                    // A cookieless visitor who is only being turned away gets
+                    // no session (no file, no cookie, no lock) — see
+                    // SessionLifetime::discardNewSession().
+                    \ApiGoat\Auth\SessionLifetime::discardNewSession($request->getCookieParams());
                     if ($request->getHeaderLine('X-Requested-With') === 'XMLHttpRequest') {
                         $ApiResponse = new ApiResponse($this->args, $this->response, ['status' => 'failure', 'data' => null, 'errors' => ['Authentication required']]);
                         $ApiResponse->setStatus(401);

@@ -99,4 +99,54 @@ final class SessionDeferTest extends TestCase
         // The cookie name stays 'ApiGoat' (renaming it would sign everyone out).
         self::assertSame('ApiGoat', SessionLifetime::GUI_COOKIE);
     }
+
+    public function testWithoutCookieDropsOnlyTheNamedSessionCookie(): void
+    {
+        $headers = [
+            'Set-Cookie: ApiGoat=abc123; expires=Mon, 26 Oct 2026 00:00:00 GMT; path=/; secure; HttpOnly; SameSite=Lax',
+            'Set-Cookie: other=1; path=/',
+            'Cache-Control: no-store',
+            'set-cookie: ApiGoat=deleted; path=/',
+            'Set-Cookie: ApiGoatX=keep; path=/',
+        ];
+        self::assertSame(
+            ['Set-Cookie: other=1; path=/', 'Set-Cookie: ApiGoatX=keep; path=/'],
+            \array_values(SessionLifetime::setCookiesWithout($headers, 'ApiGoat'))
+        );
+    }
+
+    /**
+     * An anonymous visitor with no ApiGoat cookie who is only being bounced
+     * to the login page gets no session: no file (3,834 of them on prod,
+     * mostly scanners) and no cookie.
+     */
+    #[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+    public function testDiscardNewSessionRemovesTheFileWhenNoCookieWasSent(): void
+    {
+        $dir = sys_get_temp_dir() . '/gc-sess-' . bin2hex(random_bytes(4));
+        mkdir($dir, 0700);
+        session_save_path($dir);
+        session_start();
+        $file = $dir . '/sess_' . session_id();
+        $_SESSION['x'] = 1;
+        session_write_close();
+        session_start();
+        self::assertFileExists($file);
+
+        self::assertTrue(SessionLifetime::discardNewSession([]));
+
+        self::assertSame(PHP_SESSION_NONE, session_status());
+        self::assertFileDoesNotExist($file);
+    }
+
+    #[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+    public function testDiscardNewSessionNeverTouchesAnExistingCookieSession(): void
+    {
+        session_save_path(sys_get_temp_dir());
+        session_start();
+        self::assertFalse(SessionLifetime::discardNewSession([SessionLifetime::GUI_COOKIE => 'abc']));
+        self::assertFalse(SessionLifetime::discardNewSession([session_name() => 'abc']), 'the running session\'s own cookie counts too');
+        self::assertSame(PHP_SESSION_ACTIVE, session_status());
+        session_destroy();
+    }
 }

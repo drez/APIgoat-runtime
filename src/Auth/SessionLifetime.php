@@ -129,6 +129,66 @@ final class SessionLifetime
     }
 
     /**
+     * Throw away the session THIS request just created, for an anonymous
+     * visitor who is only being bounced (303 to the login page / 401 XHR).
+     * Scanners hit that path hundreds of times: each probe left a 30-day
+     * session file (3,834 on prod 2026-09-26, 16 MB) and handed out an
+     * ApiGoat cookie for nothing.
+     *
+     * SECURITY: acts only when the request carried NO ApiGoat cookie, so it
+     * can never end a real (or planted) session — the session it destroys
+     * was minted in this same request and holds nothing but defaults. The
+     * login page still starts its own session (and CSRF token) as before.
+     *
+     * @param array<string,mixed> $cookies the request's cookies
+     * @return bool true when a session was discarded
+     */
+    public static function discardNewSession(array $cookies): bool
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            return false;
+        }
+        // Check the cookie of the session that is actually running (and the
+        // GUI one): any value at all means the visitor already had a session.
+        $name = session_name();
+        foreach ([$name, self::GUI_COOKIE] as $cookie) {
+            if (isset($cookies[$cookie]) && (string) $cookies[$cookie] !== '') {
+                return false;
+            }
+        }
+        session_destroy();
+        if (!headers_sent()) {
+            $keep = self::setCookiesWithout(headers_list(), $name);
+            header_remove('Set-Cookie');
+            foreach ($keep as $h) {
+                header($h, false);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The Set-Cookie header lines from $headers, minus every one setting
+     * cookie $name (exact name match, case-insensitive header name).
+     *
+     * @param list<string> $headers headers_list() output
+     * @return list<string>
+     */
+    public static function setCookiesWithout(array $headers, string $name): array
+    {
+        $out = [];
+        foreach ($headers as $h) {
+            if (!preg_match('/^set-cookie:\s*([^=;\s]+)=/i', $h, $m)) {
+                continue;
+            }
+            if ($m[1] !== $name) {
+                $out[] = $h;
+            }
+        }
+        return $out;
+    }
+
+    /**
      * True when the request carries a Bearer credential (Authorization or
      * X-Authorization, however the web server exposed it).
      *
