@@ -2,6 +2,8 @@
 
 namespace ApiGoat\OAuth;
 
+use Defuse\Crypto\Encoding;
+use Defuse\Crypto\Key;
 use League\OAuth2\Server\AuthorizationServer;
 use League\OAuth2\Server\CryptKey;
 use League\OAuth2\Server\Grant\AuthCodeGrant;
@@ -33,7 +35,7 @@ class OAuthServerFactory
             $this->accessTokens,
             $this->scopes,
             new CryptKey($this->privateKeyPem, null, false),
-            $this->encryptionKey
+            self::encryptionKeyFor($this->encryptionKey)
         );
 
         // Session policy for bearer clients (the MCP connector + the mobile app):
@@ -64,6 +66,29 @@ class OAuthServerFactory
         return new ResourceServer(
             $this->accessTokens,
             new CryptKey($this->publicKeyPem, null, false)
+        );
+    }
+
+    /**
+     * The Defuse Key league/oauth2-server encrypts refresh tokens and auth
+     * codes with, derived (HKDF-SHA256) from OAUTH_ENCRYPTION_KEY.
+     *
+     * Handed the raw string, the library used Crypto::*WithPassword: 100,000
+     * PBKDF2 rounds per call — ~400 ms of every token refresh on prod
+     * (2026-09-26: /oauth/token never under 500 ms). A real Key is ~0.5 ms.
+     * Changing the mode makes refresh tokens / codes issued before this
+     * change undecryptable: their holders (MCP connectors, the mobile app)
+     * sign in again once. An unset secret is passed through unchanged, so a
+     * misconfigured project fails exactly as before.
+     */
+    public static function encryptionKeyFor(string $secret): Key|string
+    {
+        if ($secret === '') {
+            return '';
+        }
+        $bytes = \hash_hkdf('sha256', $secret, 32, 'apigoat-oauth-defuse-key-v1');
+        return Key::loadFromAsciiSafeString(
+            Encoding::saveBytesToChecksummedAsciiSafeString(Key::KEY_CURRENT_VERSION, $bytes)
         );
     }
 
