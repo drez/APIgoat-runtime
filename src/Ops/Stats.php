@@ -323,6 +323,40 @@ final class Stats
         }, $rows);
     }
 
+    /**
+     * Slow requests collapsed by route pattern + method, busiest first — the
+     * per-row slowRequests() log turns N hits on /Client/edit/{id} into one
+     * line. An unmatched request (no route) groups by its path instead.
+     *
+     * @return list<array{route:string, method:string, n:int, avg_ms:float, max_ms:int, avg_queries:?float, n_5xx:int, last_at:int}>
+     */
+    public function slowRequestGroups(int $from, int $to, int $limit): array
+    {
+        $limit = self::clampLimit($limit);
+        $rows = $this->all(
+            "SELECT COALESCE(route, path, '') grp, COALESCE(method, '') method,
+                    COUNT(*) n, AVG(ms) avg_ms, MAX(ms) max_ms, AVG(queries) avg_queries,
+                    SUM(status >= 500) n_5xx, MAX(created_at) last_at
+             FROM ops_req_slow
+             WHERE created_at BETWEEN ? AND ?
+             GROUP BY grp, method
+             ORDER BY n DESC, max_ms DESC
+             LIMIT " . $limit,
+            [$from, $to]
+        );
+
+        return \array_map(static fn (array $r) => [
+            'route'       => (string) $r['grp'],
+            'method'      => (string) $r['method'],
+            'n'           => (int) $r['n'],
+            'avg_ms'      => \round((float) $r['avg_ms'], 1),
+            'max_ms'      => (int) $r['max_ms'],
+            'avg_queries' => $r['avg_queries'] !== null ? \round((float) $r['avg_queries'], 1) : null,
+            'n_5xx'       => (int) $r['n_5xx'],
+            'last_at'     => (int) $r['last_at'],
+        ], $rows);
+    }
+
     /** @return list<array{route:?string, method:?string, path:?string, status:?int, ms:int, queries:?int, id_authy:?int, ip:?string, created_at:int}> */
     public function slowRequests(int $from, int $to, int $limit): array
     {
@@ -368,6 +402,39 @@ final class Stats
             'sql_hash'   => $r['sql_hash'] !== null ? (string) $r['sql_hash'] : null,
             'sql_text'   => $r['sql_text'] !== null ? (string) $r['sql_text'] : null,
             'created_at' => (int) $r['created_at'],
+        ], $rows);
+    }
+
+    /**
+     * Slow queries collapsed by SQL fingerprint (sql_hash; the literal-free
+     * sql_text when a row has no hash), busiest first, with the distinct
+     * routes that ran them.
+     *
+     * @return list<array{sql_hash:?string, sql_text:?string, n:int, avg_ms:float, max_ms:int, last_at:int, routes:list<string>}>
+     */
+    public function slowQueryGroups(int $from, int $to, int $limit): array
+    {
+        $limit = self::clampLimit($limit);
+        $rows = $this->all(
+            "SELECT COALESCE(sql_hash, sql_text, '') grp, MAX(sql_hash) sql_hash, MAX(sql_text) sql_text,
+                    COUNT(*) n, AVG(ms) avg_ms, MAX(ms) max_ms, MAX(created_at) last_at,
+                    GROUP_CONCAT(DISTINCT route ORDER BY route SEPARATOR '\n') routes
+             FROM ops_query_slow
+             WHERE created_at BETWEEN ? AND ?
+             GROUP BY grp
+             ORDER BY n DESC, max_ms DESC
+             LIMIT " . $limit,
+            [$from, $to]
+        );
+
+        return \array_map(static fn (array $r) => [
+            'sql_hash' => $r['sql_hash'] !== null ? (string) $r['sql_hash'] : null,
+            'sql_text' => $r['sql_text'] !== null ? (string) $r['sql_text'] : null,
+            'n'        => (int) $r['n'],
+            'avg_ms'   => \round((float) $r['avg_ms'], 1),
+            'max_ms'   => (int) $r['max_ms'],
+            'last_at'  => (int) $r['last_at'],
+            'routes'   => $r['routes'] !== null && $r['routes'] !== '' ? \explode("\n", (string) $r['routes']) : [],
         ], $rows);
     }
 
