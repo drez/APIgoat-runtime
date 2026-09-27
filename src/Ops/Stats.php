@@ -318,7 +318,7 @@ final class Stats
      * loginTrend() groups by DATE(timestamp) in the MySQL session's time
      * zone — the two trends' day boundaries can differ by the UTC offset.
      *
-     * @return list<array{hour:int, n:int, avg_ms:float, p95_ms:int}>
+     * @return list<array{hour:int, n:int, avg_ms:float, p95_ms:int, rate_5xx:float}>
      */
     public function latencyTrend(int $from, int $to): array
     {
@@ -329,6 +329,7 @@ final class Stats
             "SELECT {$bucketExpr} bucket,
                     COALESCE(SUM(n), 0) n,
                     COALESCE(SUM(sum_ms), 0) sum_ms,
+                    COALESCE(SUM(n_5xx), 0) n_5xx,
                     COALESCE(MAX(max_ms), 0) max_ms,
                     COALESCE(SUM(b100), 0) b100, COALESCE(SUM(b250), 0) b250, COALESCE(SUM(b500), 0) b500,
                     COALESCE(SUM(b1000), 0) b1000, COALESCE(SUM(b2500), 0) b2500, COALESCE(SUM(b_inf), 0) b_inf
@@ -347,8 +348,29 @@ final class Stats
                 'n'      => $n,
                 'avg_ms' => $n > 0 ? \round(((int) $r['sum_ms']) / $n, 1) : 0.0,
                 'p95_ms' => self::p95FromBuckets(self::bucketsFromRow($r)),
+                'rate_5xx' => $n > 0 ? \round(((int) $r['n_5xx']) / $n, 4) : 0.0,
             ];
         }, $rows);
+    }
+
+    /**
+     * Slow-query count per bucket, bucketed exactly like latencyTrend()
+     * (hourly up to 3 days, UTC days beyond) so the two line up.
+     *
+     * @return list<array{hour:int, n:int}>
+     */
+    public function slowQueryTrend(int $from, int $to): array
+    {
+        $bucketExpr = ($to - $from) > 3 * 86400 ? 'FLOOR(created_at / 86400) * 86400' : 'FLOOR(created_at / 3600) * 3600';
+
+        return \array_map(static fn (array $r) => ['hour' => (int) $r['bucket'], 'n' => (int) $r['n']], $this->all(
+            "SELECT {$bucketExpr} bucket, COUNT(*) n
+             FROM ops_query_slow
+             WHERE created_at BETWEEN ? AND ? /*SITE*/
+             GROUP BY bucket
+             ORDER BY bucket",
+            [$from, $to]
+        ));
     }
 
     /** @return list<array{route:string, method:string, n:int, avg_ms:float, p95_ms:int, n_5xx:int}> */

@@ -29,6 +29,7 @@ final class Styles
 .ops-report-frame{display:block;width:100%;height:70vh;min-height:420px;margin-top:8px;border:0}
 .ops-t code{white-space:pre-wrap;word-break:break-all;font-size:12px}
 .ops-mini{max-width:100%;height:60px!important}
+.ops-spark{display:block;width:100%!important;height:36px!important;margin-top:6px;color:var(--mint,#00d1b2)}
 .ops-svc{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .ops-tip{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 </style>';
