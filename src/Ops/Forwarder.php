@@ -55,6 +55,9 @@ final class Forwarder
         if ($url === null || $key === null || Config::isHub()) {
             return 'forward: off';
         }
+        if (!Config::isProduction()) {
+            return 'forward: off (not production)';
+        }
         $now ??= \time();
         $stateFile ??= self::defaultStateFile();
 

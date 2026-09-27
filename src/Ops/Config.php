@@ -126,6 +126,17 @@ final class Config
         return $url !== null && \str_starts_with($url, 'https://') ? $url : null;
     }
 
+    /**
+     * Only a deployed app reports: `gc deploy` writes VERSION=production into
+     * the remote .env, and a local checkout has no VERSION (or another one),
+     * so dev data never reaches the hub even though `gc build` puts the
+     * collector settings in the project .env.
+     */
+    public static function isProduction(): bool
+    {
+        return self::env('VERSION') === 'production';
+    }
+
     /** This app's hub site secret (env GC_OPS_HUB_KEY, an ana_site sk_ key). */
     public static function hubKey(): ?string
     {
