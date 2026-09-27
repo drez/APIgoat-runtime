@@ -59,7 +59,13 @@ class RouteParser implements MiddlewareInterface
     {
         if ($this->method != 'OPTIONS') {
             $this->request = $request;
-            $this->method = $request->getMethod();
+            // HEAD is GET without a body (RFC 9110 9.3.2): Slim's router
+            // already sends it to the GET routes and the server drops the
+            // body, so parse — and let RBAC / the mutating-GET guard judge —
+            // it exactly as GET. It used to fall through to getArgs()'s
+            // "Method not implemented" and 500 every HEAD (monitors, link
+            // checkers, crawlers).
+            $this->method = $request->getMethod() === 'HEAD' ? 'GET' : $request->getMethod();
             $this->args['method'] = $this->method;
             $this->headers = $request->getHeaders();
 
