@@ -175,13 +175,14 @@ final class Stats
      * settings/list become one line), busiest first, with how many distinct
      * IPs / users, the newest IP, and first/last seen.
      *
-     * @return list<array{type:string, detail:string, n:int, ips:int, users:int, last_ip:?string, first_at:int, last_at:int}>
+     * @return list<array{type:string, detail:string, n:int, ips:int, users:int, last_ip:?string, ip_list:list<string>, first_at:int, last_at:int}>
      */
     public function secEventGroups(int $from, int $to, ?string $type, int $limit): array
     {
         $limit = self::clampLimit($limit);
         $sql = "SELECT site_id, type, detail, COUNT(*) n, COUNT(DISTINCT ip) ips, COUNT(DISTINCT id_authy) users,
                        SUBSTRING_INDEX(GROUP_CONCAT(ip ORDER BY created_at DESC SEPARATOR ','), ',', 1) last_ip,
+                       GROUP_CONCAT(DISTINCT ip ORDER BY ip SEPARATOR ',') ip_list,
                        MIN(created_at) first_at, MAX(created_at) last_at
                 FROM ops_sec_event
                 WHERE created_at BETWEEN ? AND ? /*SITE*/";
@@ -200,6 +201,9 @@ final class Stats
             'ips'      => (int) $r['ips'],
             'users'    => (int) $r['users'],
             'last_ip'  => $r['last_ip'] !== null && $r['last_ip'] !== '' ? (string) $r['last_ip'] : null,
+            // Every distinct IP (for the hover list); GROUP_CONCAT's 1 KB
+            // default cap can cut a long list — the count stays in 'ips'.
+            'ip_list'  => \array_values(\array_filter(\explode(',', (string) ($r['ip_list'] ?? '')), static fn ($ip) => \filter_var($ip, \FILTER_VALIDATE_IP) !== false)),
             'first_at' => (int) $r['first_at'],
             'last_at'  => (int) $r['last_at'],
         ], $this->all($sql, $args));

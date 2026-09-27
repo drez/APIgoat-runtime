@@ -52,10 +52,11 @@ final class Retention
         'ops_cron_run'    => 'created_at',
         'ops_server_snap' => 'created_at',
         'ops_mcp_hour'    => 'hour',
+        'ops_ip_info'     => 'created_at',
     ];
 
     /** Tables emitted only on some projects (with_mcp): skipped quietly when absent. */
-    private const OPTIONAL_TABLES = ['ops_mcp_hour'];
+    private const OPTIONAL_TABLES = ['ops_mcp_hour', 'ops_ip_info'];
 
     /**
      * table => cutoff timestamp (exclusive lower bound to KEEP; anything
@@ -78,6 +79,8 @@ final class Retention
             'ops_cron_run'    => $rollup,
             'ops_server_snap' => $rollup,
             'ops_mcp_hour'    => $rollup,
+            // A lookup cache, not telemetry: always a month (IpInfo::TTL).
+            'ops_ip_info'     => $now - IpInfo::TTL,
         ];
     }
 

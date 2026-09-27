@@ -2,6 +2,7 @@
 
 namespace ApiGoat\Ops\Dashboard;
 
+use ApiGoat\Ops\IpInfo;
 use ApiGoat\Ops\SecEvent;
 use ApiGoat\Ops\Stats;
 
@@ -59,6 +60,28 @@ final class SecurityView
         $oauthClients = $st->oauthClients();
         $server = (new Stats($pdo, $scope->serverSites()))->serverLatest();
 
+        // IPs shown by name: reverse DNS (else the IP) + RDAP owner, from the
+        // ops_ip_info cache the background tick fills (IpInfo).
+        $allIps = array_column($topFailing, 'ip');
+        foreach ($events as $ev) {
+            $allIps = array_merge($allIps, $ev['ip_list'], [$ev['last_ip'] ?? '']);
+        }
+        $ipInfo = IpInfo::map($pdo, $allIps);
+        $ipOrg = fn (string $ip) => implode(' · ', array_filter([$ipInfo[$ip]['org'] ?? null, $ipInfo[$ip]['country'] ?? null]));
+        $ipLine = fn (string $ip) => implode(' — ', array_filter([$ip, $ipInfo[$ip]['host'] ?? null, $ipOrg($ip)]));
+        $ipCell = function (?string $ip, array $all = [], int $total = 0) use ($e, $ipInfo, $ipOrg, $ipLine): string {
+            if ($ip === null || $ip === '') {
+                return '<td></td>';
+            }
+            $host = $ipInfo[$ip]['host'] ?? null;
+            $org = $ipOrg($ip);
+            $others = array_values(array_diff($all, [$ip]));
+            return '<td class="ops-ip"><span' . ($host !== null ? ' class="ops-tip" title="' . $e($ip) . '"' : '') . '>' . $e($host ?? $ip) . '</span>'
+                . ($others ? ' <span class="ops-foot ops-tip" title="' . $e(implode("\n", array_map($ipLine, $all))) . '">' . $e(sprintf(_('+%d more'), max(count($others), $total - 1))) . '</span>' : '')
+                . ($org !== '' ? '<div class="ops-foot">' . $e($org) . '</div>' : '')
+                . '</td>';
+        };
+
         $kpi = fn ($label, $val) => '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . $e($val) . '</div></div>';
 
         $typeOptions = '<option value="">' . $e(_('All types')) . '</option>';
@@ -81,7 +104,7 @@ final class SecurityView
             $eventsRows .= '<tr>' . ($siteCol ? '<td>' . $e($scope->label($ev['site_id'])) . '</td>' : '') . '<td><span class="cl-status cl-status-' . $e(self::severity($ev['type'])) . '">' . $e($ev['type']) . '</span></td>'
                 . '<td>' . $e($ev['detail']) . '</td>'
                 . '<td>' . (int) $ev['n'] . '</td>'
-                . '<td>' . $e($ev['last_ip'] ?? '') . ($ev['ips'] > 1 ? ' <span class="ops-foot">' . $e(sprintf(_('+%d more'), $ev['ips'] - 1)) . '</span>' : '') . '</td>'
+                . $ipCell($ev['last_ip'], $ev['ip_list'], $ev['ips'])
                 . '<td>' . ($ev['users'] > 0 ? (int) $ev['users'] : '') . '</td>'
                 . '<td>' . $e($when) . '</td></tr>';
         }
@@ -93,7 +116,7 @@ final class SecurityView
 
         $topFailingRows = '';
         foreach ($topFailing as $r) {
-            $topFailingRows .= '<tr><td>' . $e($r['ip']) . '</td><td>' . $e($r['login']) . '</td><td>' . (int) $r['failures'] . '</td></tr>';
+            $topFailingRows .= '<tr>' . $ipCell($r['ip']) . '<td>' . $e($r['login']) . '</td><td>' . (int) $r['failures'] . '</td></tr>';
         }
         $topFailingTable = '<div class="ops-card"><h3>' . $e(_('Top failing logins')) . '</h3>'
             . '<table class="ops-t"><tr><th>' . $e(_('IP')) . '</th><th>' . $e(_('Login')) . '</th><th>' . $e(_('Failures')) . '</th></tr>'

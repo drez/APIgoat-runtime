@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace ApiGoat\Tests\Ops;
 
+use ApiGoat\Ops\IpInfo;
 use ApiGoat\Ops\Retention;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../src/Ops/Retention.php';
+require_once __DIR__ . '/../../src/Ops/IpInfo.php';
 
 /**
  * Pure-logic coverage only (R1): this host has no pdo_sqlite, so prune()'s
@@ -79,13 +81,18 @@ final class RetentionTest extends TestCase
     {
         $expected = [
             'ops_req_slow', 'ops_query_slow', 'ops_sec_event',
-            'ops_req_hour', 'ops_cron_run', 'ops_server_snap', 'ops_mcp_hour',
+            'ops_req_hour', 'ops_cron_run', 'ops_server_snap', 'ops_mcp_hour', 'ops_ip_info',
         ];
         $actual = \array_keys(Retention::cutoffs(1_000_000, 14, 180));
         \sort($expected);
         \sort($actual);
 
         $this->assertSame($expected, $actual);
+    }
+
+    public function test_ip_cache_is_always_kept_one_month(): void
+    {
+        $this->assertSame(1_000_000 - IpInfo::TTL, Retention::cutoffs(1_000_000, 1, 30)['ops_ip_info']);
     }
 
     public function test_cutoffs_scales_with_different_windows(): void

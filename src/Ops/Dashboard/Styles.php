@@ -31,6 +31,7 @@ final class Styles
 .ops-mini{max-width:100%;height:60px!important}
 .ops-spark{display:block;width:100%!important;height:36px!important;margin-top:6px;color:var(--mint,#00d1b2)}
 .ops-svc{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.ops-ip{overflow-wrap:anywhere;max-width:280px}
 .ops-tip{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 </style>';
     }

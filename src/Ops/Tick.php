@@ -10,6 +10,7 @@ namespace ApiGoat\Ops;
  *   - Forwarder::run()     every tick (no-op unless GC_OPS_HUB_URL/KEY set)
  *   - ServerSnap::collect  hourly
  *   - Retention::prune     daily
+ *   - IpInfo::resolvePending every tick (a few IPs per run, time-boxed)
  *
  * so every app with with_ops_monitor keeps its tables trimmed and reports
  * to the hub without hand-editing its config/cron.php. A project that ALSO
@@ -22,7 +23,7 @@ final class Tick
 {
     public const INTERVAL = 300;
 
-    private const DUE = ['forward' => 300, 'snap' => 3600, 'prune' => 86400];
+    private const DUE = ['forward' => 300, 'snap' => 3600, 'prune' => 86400, 'ipinfo' => 300];
 
     /** @param ?string $dir test seam: where the lock/state files live */
     public static function maybeRun(?int $now = null, ?string $dir = null, ?callable $runner = null): ?array
@@ -88,6 +89,7 @@ final class Tick
             'forward' => Forwarder::run($pdo, $now),
             'snap'    => ServerSnap::collect($pdo),
             'prune'   => (string) \json_encode(Retention::prune($pdo, $now, (int) Config::get('raw_days'), (int) Config::get('rollup_days'))),
+            'ipinfo'  => IpInfo::resolvePending($pdo, $now),
         };
     }
 
