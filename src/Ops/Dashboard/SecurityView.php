@@ -57,7 +57,7 @@ final class SecurityView
         $events = $st->secEventGroups($f, $t, $type, 50);
         $denyRoutes = $st->denyRoutes(20);
         $oauthClients = $st->oauthClients();
-        $server = $st->serverLatest();
+        $server = (new Stats($pdo, $scope->serverSites()))->serverLatest();
 
         $kpi = fn ($label, $val) => '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . $e($val) . '</div></div>';
 

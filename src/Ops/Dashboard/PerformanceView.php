@@ -57,8 +57,9 @@ final class PerformanceView
         $slowQueries = $st->slowQueryGroups($f, $t, 50);
         $tableSizes = $st->tableSizes(20);
         $cronRuns = $st->cronRuns(20);
-        $server = $st->serverLatest();
-        $serverTrend = $st->serverTrend(time() - 86400, time());
+        $serverSt = new Stats($pdo, $scope->serverSites());
+        $server = $serverSt->serverLatest();
+        $serverTrend = $serverSt->serverTrend(time() - 86400, time());
 
         $kpi = fn ($label, $val) => '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . $e($val) . '</div></div>';
         $unavailable = _('unavailable');
@@ -136,11 +137,7 @@ final class PerformanceView
             . $cronRunsRows . ($cronRuns ? '' : '<tr><td colspan="' . ($siteCol ? 7 : 6) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
             . '</table></div>';
 
-        if ($siteCol) {
-            // Server health is per host: pick a site.
-            $server = null;
-            $serverCard = '<div class="ops-card"><h3>' . $e(_('Server')) . '</h3><p class="ops-empty">' . $e(_('Pick a site to see its server.')) . '</p></div>';
-        } elseif ($server === null) {
+        if ($server === null) {
             $serverCard = '<div class="ops-card"><h3>' . $e(_('Server')) . '</h3><p class="ops-empty">' . $e($unavailable) . '</p></div>';
         } else {
             $svcBadges = '';

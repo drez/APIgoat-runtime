@@ -60,6 +60,19 @@ final class Scope
     }
 
     /**
+     * The site_id list for the server panels (load, memory, disk, services,
+     * fail2ban). Every app runs on the hub's host today, so the hub's
+     * "All sites" view shows the hub's own snapshots (site_id 0) rather
+     * than a mix of other apps' forwarded alert snapshots.
+     *
+     * @return ?list<int>
+     */
+    public function serverSites(): ?array
+    {
+        return $this->showsSiteColumn() ? [0] : $this->statsSites();
+    }
+
+    /**
      * The selected site when it is another app (its local-only panels —
      * logins, deny routes, OAuth clients, table sizes — live in that app's
      * own dashboard), else null.
