@@ -156,6 +156,34 @@ final class PerformanceView
                 . '</div>';
         }
 
+        // MCP usage (ops_mcp_hour): only on a with_mcp project — or the hub,
+        // which holds every forwarding app's rows.
+        $mcp = $st->mcpUsage($f, $t, 50);
+        $mcpTable = null;
+        if ($mcp !== null) {
+            $mcpRows = '';
+            foreach ($mcp as $r) {
+                $errCls = $r['n_err'] > 0 ? 'high' : 'low';
+                $mcpRows .= '<tr>' . $siteTd($r) . '<td>' . $e($r['tool']) . '</td><td>' . $e($r['client'] !== '' ? $r['client'] : '—') . '</td>'
+                    . '<td>' . (int) $r['n'] . '</td>'
+                    . '<td>' . ($r['n_err'] > 0 ? '<span class="cl-status cl-status-' . $errCls . '">' . (int) $r['n_err'] . '</span>' : '0') . '</td>'
+                    . '<td>' . (int) $r['n_denied'] . '</td>'
+                    . '<td>' . $e($r['avg_ms']) . '</td><td>' . (int) $r['max_ms'] . '</td></tr>';
+            }
+            $mcpTable = '<div class="ops-card"><h3>' . $e(_('MCP')) . '</h3>'
+                . '<table class="ops-t"><tr>' . $siteTh
+                . $th(_('Tool'), _('MCP tool called (tools/call), or the protocol method (initialize, tools/list).'))
+                . $th(_('Client'), _('OAuth client the AI assistant connected with (the access token audience).'))
+                . $th(_('Calls'), _('Calls in the selected range.'))
+                . $th(_('Errors'), _('Calls that failed: tool error, unknown tool/method or an exception.'))
+                . $th(_('Denied'), _('Calls refused because the user has no access to the tool.'))
+                . $th(_('Avg ms'), _('Average server time per call.'))
+                . $th(_('Max ms'), _('Slowest single call.'))
+                . '</tr>'
+                . $mcpRows . ($mcp ? '' : '<tr><td colspan="' . ($siteCol ? 8 : 7) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
+                . '</table></div>';
+        }
+
         $tabs = [
             [_('Slowest routes'), $slowestRoutesTable],
             [_('Slow requests'), $slowRequestsTable],
@@ -164,6 +192,9 @@ final class PerformanceView
             [_('Cron runs'), $cronRunsTable],
             [_('Server'), $serverCard],
         ];
+        if ($mcpTable !== null) {
+            $tabs[] = [_('MCP'), $mcpTable];
+        }
         foreach (Extras::performanceTabs($scope->selected(), $f, $t) as $tab) {
             $tabs[] = $tab;
         }

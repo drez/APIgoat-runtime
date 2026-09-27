@@ -15,6 +15,8 @@ namespace ApiGoat\Ops;
  *   - ops_query_slow  every row
  *   - ops_sec_event   every row
  *   - ops_cron_run    failed runs only (ok = 0)
+ *   - ops_mcp_hour    like ops_req_hour (MCP calls/errors/ms per tool +
+ *                     client), when the project has it (with_mcp)
  *   - ops_server_snap alert snapshots only (disk or mem >= 90 % or a
  *                     service down)
  *
@@ -42,8 +44,15 @@ final class Forwarder
             "AND (disk_pct >= 90 OR mem_pct >= 90 OR services LIKE '%:false%')"],
     ];
 
-    private const REQ_HOUR_COLUMNS = ['hour', 'route', 'method', 'n', 'sum_ms', 'max_ms', 'n_4xx', 'n_5xx',
-        'b100', 'b250', 'b500', 'b1000', 'b2500', 'b_inf', 'created_at'];
+    /** Hourly rollups, re-sent as absolute values (table => columns). */
+    private const HOUR_TABLES = [
+        'ops_req_hour' => ['hour', 'route', 'method', 'n', 'sum_ms', 'max_ms', 'n_4xx', 'n_5xx',
+            'b100', 'b250', 'b500', 'b1000', 'b2500', 'b_inf', 'created_at'],
+        'ops_mcp_hour' => ['hour', 'tool', 'client', 'n', 'n_err', 'n_denied', 'sum_ms', 'max_ms', 'created_at'],
+    ];
+
+    /** Tables only some projects have (with_mcp): skipped when absent. */
+    private const OPTIONAL_TABLES = ['ops_mcp_hour'];
 
     /**
      * @param ?callable(string $url, string $key, string $gzBody): int $send test seam — returns the HTTP status
@@ -126,19 +135,24 @@ final class Forwarder
         // been filling at the last send) — or the backfill window on the
         // first run. A truncated batch resumes from its last hour.
         $currentHour = \intdiv($now, 3600) * 3600;
-        $from = isset($state['ops_req_hour']) ? (int) $state['ops_req_hour'] : $now - self::REQ_HOUR_BACKFILL;
-        $st = $pdo->prepare(
-            'SELECT ' . \implode(', ', self::REQ_HOUR_COLUMNS) . ' FROM ops_req_hour
-             WHERE hour >= ? AND site_id = 0 ORDER BY hour LIMIT ' . self::BATCH
-        );
-        $st->execute([$from]);
-        $rows = $st->fetchAll(\PDO::FETCH_ASSOC);
-        if ($rows !== []) {
-            $payload['ops_req_hour'] = $rows;
+        foreach (self::HOUR_TABLES as $table => $cols) {
+            if (\in_array($table, self::OPTIONAL_TABLES, true) && !self::tableExists($pdo, $table)) {
+                continue;
+            }
+            $from = isset($state[$table]) ? (int) $state[$table] : $now - self::REQ_HOUR_BACKFILL;
+            $st = $pdo->prepare(
+                'SELECT ' . \implode(', ', $cols) . " FROM {$table}
+                 WHERE hour >= ? AND site_id = 0 ORDER BY hour LIMIT " . self::BATCH
+            );
+            $st->execute([$from]);
+            $rows = $st->fetchAll(\PDO::FETCH_ASSOC);
+            if ($rows !== []) {
+                $payload[$table] = $rows;
+            }
+            $next[$table] = \count($rows) === self::BATCH
+                ? (int) $rows[self::BATCH - 1]['hour']
+                : $currentHour - 3600;
         }
-        $next['ops_req_hour'] = \count($rows) === self::BATCH
-            ? (int) $rows[self::BATCH - 1]['hour']
-            : $currentHour - 3600;
 
         return [$payload, $next];
     }
@@ -164,6 +178,15 @@ final class Forwarder
         \curl_close($ch);
 
         return $status;
+    }
+
+    private static function tableExists(\PDO $pdo, string $table): bool
+    {
+        try {
+            return (bool) $pdo->query('SHOW TABLES LIKE ' . $pdo->quote($table))->fetchColumn();
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private static function defaultStateFile(): string

@@ -32,6 +32,9 @@ class McpEndpoint
             return $this->unauthorized();
         }
 
+        // Ops telemetry: which OAuth client is calling (ops_mcp_hour).
+        \ApiGoat\Ops\McpRecorder::setClientFromBearer($this->request->getHeaderLine('Authorization'));
+
         // 3. Parse JSON-RPC, dispatch. Stash request/response for in-process service dispatch.
         $GLOBALS['__mcp_request'] = $this->request;
         $GLOBALS['__mcp_response'] = $this->response;

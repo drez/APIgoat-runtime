@@ -503,6 +503,46 @@ final class Stats
         ], $rows);
     }
 
+    /**
+     * MCP usage per tool + OAuth client over the range (ops_mcp_hour, only
+     * on with_mcp projects). Null when the project has no such table.
+     *
+     * @return ?list<array{site_id:int, tool:string, client:string, n:int, n_err:int, n_denied:int, avg_ms:float, max_ms:int}>
+     */
+    public function mcpUsage(int $from, int $to, int $limit): ?array
+    {
+        $limit = self::clampLimit($limit);
+        try {
+            $rows = $this->all(
+                'SELECT site_id, tool, client, COALESCE(SUM(n), 0) n, COALESCE(SUM(n_err), 0) n_err,
+                        COALESCE(SUM(n_denied), 0) n_denied, COALESCE(SUM(sum_ms), 0) sum_ms, COALESCE(MAX(max_ms), 0) max_ms
+                 FROM ops_mcp_hour
+                 WHERE hour BETWEEN ? AND ? /*SITE*/
+                 GROUP BY site_id, tool, client
+                 ORDER BY n DESC
+                 LIMIT ' . $limit,
+                [$from, $to]
+            );
+        } catch (\PDOException $e) {
+            return null; // no ops_mcp_hour table (with_mcp off)
+        }
+
+        return \array_map(static function (array $r) {
+            $n = (int) $r['n'];
+
+            return [
+                'site_id'  => (int) $r['site_id'],
+                'tool'     => (string) $r['tool'],
+                'client'   => (string) $r['client'],
+                'n'        => $n,
+                'n_err'    => (int) $r['n_err'],
+                'n_denied' => (int) $r['n_denied'],
+                'avg_ms'   => $n > 0 ? \round(((int) $r['sum_ms']) / $n, 1) : 0.0,
+                'max_ms'   => (int) $r['max_ms'],
+            ];
+        }, $rows);
+    }
+
     /** @return list<array{table:string, rows:int, data_bytes:int, index_bytes:int, total_bytes:int}> */
     public function tableSizes(int $limit): array
     {

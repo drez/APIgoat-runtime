@@ -75,11 +75,11 @@ final class RetentionTest extends TestCase
         $this->assertArrayNotHasKey('ops_report', $c);
     }
 
-    public function test_cutoffs_covers_exactly_the_six_pruned_tables(): void
+    public function test_cutoffs_covers_exactly_the_pruned_tables(): void
     {
         $expected = [
             'ops_req_slow', 'ops_query_slow', 'ops_sec_event',
-            'ops_req_hour', 'ops_cron_run', 'ops_server_snap',
+            'ops_req_hour', 'ops_cron_run', 'ops_server_snap', 'ops_mcp_hour',
         ];
         $actual = \array_keys(Retention::cutoffs(1_000_000, 14, 180));
         \sort($expected);

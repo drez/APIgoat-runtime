@@ -266,6 +266,16 @@ final class RequestRecorder
     }
 
     /**
+     * Run $hook after the response has been sent (the same shutdown pass as
+     * this request's own record). For other ops recorders (McpRecorder).
+     */
+    public static function deferHook(callable $hook): void
+    {
+        self::$shutdownHooks[] = $hook;
+        self::registerShutdown();
+    }
+
+    /**
      * $_SESSION[_AUTH_VAR]->getIdAuthy(), read as defensively as every other
      * RT call site touching this session (see ApiGoat\Auth\AccountSecurity):
      * _AUTH_VAR may be undefined, the session slot unset, or the object not

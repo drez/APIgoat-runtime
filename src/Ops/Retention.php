@@ -51,7 +51,11 @@ final class Retention
         'ops_req_hour'    => 'hour',
         'ops_cron_run'    => 'created_at',
         'ops_server_snap' => 'created_at',
+        'ops_mcp_hour'    => 'hour',
     ];
+
+    /** Tables emitted only on some projects (with_mcp): skipped quietly when absent. */
+    private const OPTIONAL_TABLES = ['ops_mcp_hour'];
 
     /**
      * table => cutoff timestamp (exclusive lower bound to KEEP; anything
@@ -73,6 +77,7 @@ final class Retention
             'ops_req_hour'    => $rollup,
             'ops_cron_run'    => $rollup,
             'ops_server_snap' => $rollup,
+            'ops_mcp_hour'    => $rollup,
         ];
     }
 
@@ -110,6 +115,9 @@ final class Retention
         foreach ($cutoffs as $table => $cutoff) {
             $column = self::PRUNE_COLUMN[$table];
             $total = 0;
+            if (\in_array($table, self::OPTIONAL_TABLES, true) && !self::tableExists($pdo, $table)) {
+                continue;
+            }
             try {
                 $stmt = $pdo->prepare("DELETE FROM {$table} WHERE {$column} < :cutoff LIMIT {$batchSize}");
                 for ($batch = 0; $batch < self::MAX_BATCHES_PER_TABLE; $batch++) {
@@ -130,5 +138,14 @@ final class Retention
         }
 
         return $deleted;
+    }
+
+    private static function tableExists(\PDO $pdo, string $table): bool
+    {
+        try {
+            return (bool) $pdo->query('SHOW TABLES LIKE ' . $pdo->quote($table))->fetchColumn();
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 }

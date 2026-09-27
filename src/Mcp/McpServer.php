@@ -12,6 +12,28 @@ class McpServer
     /** @return array|null JSON-RPC response, or null for a notification (no id). */
     public function handle(array $message, AuthySession $session): ?array
     {
+        // Ops telemetry (ops_mcp_hour): time every request; tools/call is
+        // keyed by the tool, the protocol methods by their own name.
+        $t0 = \hrtime(true);
+        $response = $this->dispatch($message, $session);
+        if ($this->outcome === 'ok' && (($response['result']['isError'] ?? false) === true)) {
+            $this->outcome = 'error'; // a tool that returned an error result instead of throwing
+        }
+        $method = (string) ($message['method'] ?? '');
+        if ($method !== '' && !\str_starts_with($method, 'notifications/')) {
+            $tool = $method === 'tools/call' ? (string) ($message['params']['name'] ?? '') : $method;
+            \ApiGoat\Ops\McpRecorder::record($tool, (int) ((\hrtime(true) - $t0) / 1e6), $this->outcome);
+        }
+
+        return $response;
+    }
+
+    /** ok | error | denied of the request being handled, for McpRecorder. */
+    private string $outcome = 'ok';
+
+    private function dispatch(array $message, AuthySession $session): ?array
+    {
+        $this->outcome = 'ok';
         $id = $message['id'] ?? null;
         $method = $message['method'] ?? '';
         $isNotification = !array_key_exists('id', $message);
@@ -28,12 +50,14 @@ class McpServer
                     try {
                         return $this->ok($id, $this->call($message['params'] ?? [], $session));
                     } catch (\DomainException $e) {
+                        $this->outcome = 'error';
                         return $this->err($id, (int) $e->getCode(), $e->getMessage());
                     }
                 default:
                     if ($isNotification) {
                         return null;
                     }
+                    $this->outcome = 'error';
                     return $this->err($id, -32601, "Method not found: {$method}");
             }
         } catch (\League\OAuth2\Server\Exception\OAuthServerException $e) {
@@ -41,6 +65,7 @@ class McpServer
             // swallowed into a -32603 JSON-RPC internal error.
             throw $e;
         } catch (\Throwable $e) {
+            $this->outcome = 'error';
             return $this->err($id, -32603, 'Internal error');
         }
     }
@@ -207,6 +232,7 @@ class McpServer
 
             return $result;
         } catch (ToolError $te) {
+            $this->outcome = ($te->kind ?? null) === 'not_permitted' ? 'denied' : 'error';
             $msgs = $te->messages;
             array_unshift($msgs, $te->getMessage());
             return ['content' => [['type' => 'text', 'text' => implode('; ', $msgs)]], 'isError' => true];
