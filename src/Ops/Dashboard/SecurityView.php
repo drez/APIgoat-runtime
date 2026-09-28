@@ -82,7 +82,11 @@ final class SecurityView
                 . '</td>';
         };
 
-        $kpi = fn ($label, $val) => '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . $e($val) . '</div></div>';
+        // KPI sparklines: one point per day over the range, 0 on quiet days.
+        $days = Kpi::days($f, $t);
+        $loginsByDay = array_column($trend, null, 'day');
+        $secByDay = $st->secEventTrend($f, $t);
+        $daily = fn (array $byDay, string $k) => [$days, array_map(fn ($d) => (int) ($byDay[$d][$k] ?? 0), $days)];
 
         $typeOptions = '<option value="">' . $e(_('All types')) . '</option>';
         foreach (SecEvent::TYPES as $tp) {
@@ -197,11 +201,11 @@ final class SecurityView
             . '<select class="dash-input" name="type">' . $typeOptions . '</select>'
             . '<button type="submit" class="dash-btn dash-btn--primary"><i class="ri-equalizer-line"></i><span>' . $e(_('Apply')) . '</span></button></form>'
             . '<div class="ops-kpis">'
-            . $kpi(_('Failed logins'), $na ?? $o['failed_logins'])
-            . $kpi(_('OK logins'), $na ?? $o['ok_logins'])
-            . $kpi(_('RBAC denies'), $o['rbac_denies'])
-            . $kpi(_('Security events'), $o['sec_events'])
-            . $kpi(_('Active tokens (now)'), $na ?? $o['active_tokens'])
+            . Kpi::tile(_('Failed logins'), $na ?? $o['failed_logins'], $na === null ? $daily($loginsByDay, 'failed') : null)
+            . Kpi::tile(_('OK logins'), $na ?? $o['ok_logins'], $na === null ? $daily($loginsByDay, 'ok') : null)
+            . Kpi::tile(_('RBAC denies'), $o['rbac_denies'], $daily($secByDay, 'rbac'))
+            . Kpi::tile(_('Security events'), $o['sec_events'], $daily($secByDay, 'n'))
+            . Kpi::tile(_('Active tokens (now)'), $na ?? $o['active_tokens'])
             . '</div>'
             . $trendCard
             . Tabs::render('security', [

@@ -6,8 +6,8 @@ namespace ApiGoat\Ops\Dashboard;
  * Chart drawing for the shared dashboards, from the `data-series` attributes
  * the views write: Security's #ops-trend (failed / ok logins per day);
  * Performance's #perf-latency-trend (avg + p95 ms per bucket) and
- * #perf-server-trend (24h load1 / disk_pct), plus a sparkline in each
- * top KPI tile (canvas.ops-spark: data-ts / data-v / data-unit). Chart.js ships with the runtime
+ * #perf-server-trend (24h load1 / disk_pct). The KPI tiles' sparklines
+ * come from Kpi::js(), appended to both. Chart.js ships with the runtime
  * (assets/chart.umd.min.js, served by Page::chartJs at Ops/chart.js) so an
  * app needs no vendored copy of its own.
  *
@@ -25,7 +25,8 @@ final class Scripts
             . 'new Chart(c,{type:"line",data:{labels:labels,datasets:['
             . '{label:"Failed",data:s.map(function(r){return r.failed}),tension:.3},'
             . '{label:"OK",data:s.map(function(r){return r.ok}),tension:.3}'
-            . ']},options:{responsive:true,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});})();</script>';
+            . ']},options:{responsive:true,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});})();</script>'
+            . Kpi::js();
     }
 
     public static function performance(): string
@@ -50,15 +51,6 @@ if(t){
     {label:"p95 ms",data:s.map(function(r){return r.p95_ms}),tension:.3}
   ]},options:{responsive:true,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{y:{beginAtZero:true}}}});
 }
-document.querySelectorAll("canvas.ops-spark").forEach(function(c){
-  var ts=JSON.parse(c.getAttribute("data-ts")||"[]"),v=JSON.parse(c.getAttribute("data-v")||"[]"),u=c.getAttribute("data-unit")||"";
-  var dly=ts.length>1&&(ts[1]-ts[0])>=86400&&ts.every(function(x){return x%86400===0});
-  var col=getComputedStyle(c).color;
-  new Chart(c,{type:"line",data:{labels:ts.map(function(x){return fmtTs(x,dly)}),datasets:[{data:v,borderColor:col,backgroundColor:col,borderWidth:2,pointRadius:0,pointHoverRadius:4,tension:.3,spanGaps:true}]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,layout:{padding:3},interaction:{mode:"index",intersect:false},
-      plugins:{legend:{display:false},tooltip:{displayColors:false,callbacks:{label:function(i){return i.formattedValue+u}}}},
-      scales:{x:{display:false},y:{display:false,grace:"10%"}}}});
-});
 var sv=document.getElementById("perf-server-trend");
 if(sv){
   var r=JSON.parse(sv.getAttribute("data-series")||"[]"),lbl=r.map(function(x){return fmtTs(x.created_at,false)});
@@ -67,7 +59,8 @@ if(sv){
     {label:"Disk %",data:r.map(function(x){return x.disk_pct}),tension:.3,pointRadius:0}
   ]},options:{responsive:true,plugins:{legend:{position:"bottom"}},scales:{x:{display:false},y:{beginAtZero:true}}}});
 }
-})();</script>';
+})();</script>'
+            . Kpi::js();
     }
 
     private static function chartTag(): string

@@ -61,13 +61,6 @@ final class PerformanceView
         $server = $serverSt->serverLatest();
         $serverTrend = $serverSt->serverTrend(time() - 86400, time());
 
-        // A KPI tile; $spark = [timestamps, values, unit] adds a sparkline of
-        // the tile's history over the selected range (drawn by Scripts).
-        $kpi = fn ($label, $val, ?array $spark = null) => '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . $e($val) . '</div>'
-            . ($spark !== null && \count($spark[1]) > 1
-                ? '<canvas class="ops-spark" height="36" aria-label="' . $e(sprintf(_('%s trend'), $label)) . '" role="img" data-ts="' . $e(json_encode($spark[0])) . '" data-v="' . $e(json_encode($spark[1])) . '" data-unit="' . $e($spark[2]) . '"></canvas>'
-                : '')
-            . '</div>';
         $ts = array_column($trend, 'hour');
         $slowByBucket = array_column($st->slowQueryTrend($f, $t), 'n', 'hour');
         $serverRange = $serverSt->serverTrend($f, $t);
@@ -214,14 +207,14 @@ final class PerformanceView
             . '<input class="dash-input" type="date" name="from" value="' . $e($from) . '"> <input class="dash-input" type="date" name="to" value="' . $e($to) . '">'
             . '<button type="submit" class="dash-btn dash-btn--primary"><i class="ri-equalizer-line"></i><span>' . $e(_('Apply')) . '</span></button></form>'
             . '<div class="ops-kpis">'
-            . $kpi(_('Requests'), $o['requests'], [$ts, array_column($trend, 'n'), ''])
-            . $kpi(_('Avg latency'), $o['avg_ms'] . ' ms', [$ts, array_column($trend, 'avg_ms'), ' ms'])
-            . $kpi(_('p95 latency'), self::fmtP95($o['p95_ms']), [$ts, array_column($trend, 'p95_ms'), ' ms'])
-            . $kpi(_('5xx rate'), round($o['rate_5xx'] * 100, 2) . '%', [$ts, array_map(fn ($r) => round($r['rate_5xx'] * 100, 2), $trend), '%'])
-            . $kpi(_('Slow queries'), $o['slow_queries'], [$ts, array_map(fn ($h) => $slowByBucket[$h] ?? 0, $ts), ''])
-            . $kpi(_('Load (1m)'), $server !== null && $server['load1'] !== null ? $server['load1'] : $unavailable, $sparkServer('load1', ''))
-            . $kpi(_('Memory'), $server !== null && $server['mem_pct'] !== null ? $server['mem_pct'] . '%' : $unavailable, $sparkServer('mem_pct', '%'))
-            . $kpi(_('Disk'), $server !== null && $server['disk_pct'] !== null ? $server['disk_pct'] . '%' : $unavailable, $sparkServer('disk_pct', '%'))
+            . Kpi::tile(_('Requests'), $o['requests'], [$ts, array_column($trend, 'n'), ''])
+            . Kpi::tile(_('Avg latency'), $o['avg_ms'] . ' ms', [$ts, array_column($trend, 'avg_ms'), ' ms'])
+            . Kpi::tile(_('p95 latency'), self::fmtP95($o['p95_ms']), [$ts, array_column($trend, 'p95_ms'), ' ms'])
+            . Kpi::tile(_('5xx rate'), round($o['rate_5xx'] * 100, 2) . '%', [$ts, array_map(fn ($r) => round($r['rate_5xx'] * 100, 2), $trend), '%'])
+            . Kpi::tile(_('Slow queries'), $o['slow_queries'], [$ts, array_map(fn ($h) => $slowByBucket[$h] ?? 0, $ts), ''])
+            . Kpi::tile(_('Load (1m)'), $server !== null && $server['load1'] !== null ? $server['load1'] : $unavailable, $sparkServer('load1', ''))
+            . Kpi::tile(_('Memory'), $server !== null && $server['mem_pct'] !== null ? $server['mem_pct'] . '%' : $unavailable, $sparkServer('mem_pct', '%'))
+            . Kpi::tile(_('Disk'), $server !== null && $server['disk_pct'] !== null ? $server['disk_pct'] . '%' : $unavailable, $sparkServer('disk_pct', '%'))
             . '</div>'
             . '<div class="ops-card"><h3>' . $e(_('Latency trend')) . '</h3>'
             . '<canvas id="perf-latency-trend" height="90" data-series="' . $e(json_encode($trend)) . '"></canvas></div>'

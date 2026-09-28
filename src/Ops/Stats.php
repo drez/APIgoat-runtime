@@ -121,6 +121,28 @@ final class Stats
         ], $rows);
     }
 
+    /**
+     * Security events per day (server time, like loginTrend()): all events
+     * and the rbac_deny subset — the Security dashboard's KPI sparklines.
+     *
+     * @return array<string, array{n:int, rbac:int}> keyed by Y-m-d
+     */
+    public function secEventTrend(int $from, int $to): array
+    {
+        $out = [];
+        foreach ($this->all(
+            "SELECT DATE(FROM_UNIXTIME(created_at)) day, COUNT(*) n, SUM(type = 'rbac_deny') rbac
+             FROM ops_sec_event
+             WHERE created_at BETWEEN ? AND ? /*SITE*/
+             GROUP BY day",
+            [$from, $to]
+        ) as $r) {
+            $out[(string) $r['day']] = ['n' => (int) $r['n'], 'rbac' => (int) $r['rbac']];
+        }
+
+        return $out;
+    }
+
     /** @return list<array{ip:string, login:string, failures:int}> */
     public function topFailing(int $from, int $to, int $limit): array
     {
