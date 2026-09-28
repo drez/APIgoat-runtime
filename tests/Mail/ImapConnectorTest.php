@@ -307,4 +307,31 @@ final class ImapConnectorTest extends TestCase
         $this->assertSame('INBOX', $h['folder_at_fetch']);
         $this->assertSame('T-9', $h['thread_id']);
     }
+
+    public function testListIdsIsOneSearchWithNoHeaderFetch(): void
+    {
+        foreach ([3, 7, 9] as $uid) {
+            $this->imap->store['INBOX'][$uid] = ['uid' => $uid, 'date' => '2020-01-01 00:00:00', 'seen' => false];
+        }
+        $l = $this->connector()->listIds('');
+        $this->assertTrue($l->complete);
+        $this->assertSame('1000', $l->generation, 'the UIDVALIDITY the ids belong to');
+        $this->assertSame(['3:INBOX', '7:INBOX', '9:INBOX'], array_keys($l->ids), 'same form as provider_message_id');
+        $this->assertSame([], array_values(array_filter($this->imap->log, fn ($e) => str_starts_with($e, 'headers:'))), 'no per-message FETCH');
+    }
+
+    public function testListIdsIsIncompleteWhenUidvalidityMovesMidListing(): void
+    {
+        $imap = new class extends FakeImapTransport {
+            public function status(string $folder): array
+            {
+                $s = parent::status($folder);
+                $this->uidvalidity++;
+                return $s;
+            }
+        };
+        $imap->store = ['INBOX' => [4 => ['uid' => 4, 'date' => '2020-01-01 00:00:00']]];
+        $l = (new ImapConnector(['host' => 'h', 'username' => 'u', 'password' => 'p'], $imap))->listIds('INBOX');
+        $this->assertFalse($l->complete, 'ids from two id spaces prove nothing');
+    }
 }

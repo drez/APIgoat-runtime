@@ -6,6 +6,8 @@ use ApiGoat\Google\ErrorMapper;
 use ApiGoat\Google\HttpTransport;
 use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
+use ApiGoat\Mail\FolderLister;
+use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\HeaderRecord;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
@@ -33,10 +35,12 @@ use ApiGoat\Sync\Exceptions\TransientError;
  *                                        'history_expired', coldStart=true — surface it.
  *   - otherwise                       → history.list startHistoryId, messageAdded only.
  */
-class GmailConnector extends BaseConnector
+class GmailConnector extends BaseConnector implements FolderLister
 {
     public const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
     public const METADATA_HEADERS = ['From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To'];
+    /** listIds() page cap: 200 x 500 ids. A folder bigger than that is reported incomplete, never truncated silently. */
+    public const LIST_IDS_MAX_PAGES = 200;
 
     /** @var callable */
     private $http;
@@ -135,6 +139,34 @@ class GmailConnector extends BaseConnector
     {
         $this->call('POST', '/messages/' . rawurlencode($providerId) . '/trash', []);
         return $providerId;
+    }
+
+    /**
+     * messages.list over the label, ids only (500 per call, no
+     * messages.get). Spam and Trash are excluded by the API default, so a
+     * trashed message is absent — which is the point. Gmail ids never
+     * renumber: generation is null.
+     */
+    public function listIds(string $folder): FolderListing
+    {
+        $folder = $folder !== '' ? $folder : 'INBOX';
+        $ids    = [];
+        $token  = null;
+        for ($page = 0; $page < self::LIST_IDS_MAX_PAGES; $page++) {
+            $params = ['labelIds' => $folder, 'maxResults' => '500', 'fields' => 'messages/id,nextPageToken'];
+            if ($token !== null) {
+                $params['pageToken'] = $token;
+            }
+            $list = $this->call('GET', '/messages?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986));
+            foreach ($list['messages'] ?? [] as $m) {
+                if (!empty($m['id'])) $ids[(string) $m['id']] = true;
+            }
+            $token = (string) ($list['nextPageToken'] ?? '');
+            if ($token === '') {
+                return new FolderListing($ids, null, true);
+            }
+        }
+        return new FolderListing($ids, null, false);
     }
 
     // ------------------------------------------------------------------ fetch internals

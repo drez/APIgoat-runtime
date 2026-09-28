@@ -286,4 +286,30 @@ final class GmailConnectorTest extends TestCase
         $this->assertStringEndsWith('/messages/m/trash', end($this->calls)['url']);
         $this->assertSame('POST', end($this->calls)['method']);
     }
+
+    public function testListIdsPagesTheLabelWithIdsOnly(): void
+    {
+        $this->routes['/messages?'] = function ($m, $url) {
+            parse_str((string) parse_url($url, PHP_URL_QUERY), $q);
+            $this->assertSame('INBOX', $q['labelIds']);
+            $this->assertSame('500', $q['maxResults']);
+            $this->assertArrayNotHasKey('q', $q, 'the whole label, no newer_than window');
+            return isset($q['pageToken'])
+                ? ['status' => 200, 'body' => ['messages' => [['id' => 'c']]]]
+                : ['status' => 200, 'body' => ['messages' => [['id' => 'a'], ['id' => 'b']], 'nextPageToken' => 'p2']];
+        };
+        $l = $this->connector()->listIds('');
+        $this->assertTrue($l->complete);
+        $this->assertNull($l->generation, 'Gmail ids never renumber');
+        $this->assertSame(['a', 'b', 'c'], array_keys($l->ids));
+        $this->assertSame([], $this->urls('/messages/'), 'no messages.get');
+    }
+
+    public function testListIdsOfAnEmptyLabelIsCompleteAndEmpty(): void
+    {
+        $this->routes['/messages?'] = ['status' => 200, 'body' => ['resultSizeEstimate' => 0]];
+        $l = $this->connector()->listIds('SENT');
+        $this->assertTrue($l->complete);
+        $this->assertSame(0, $l->count());
+    }
 }

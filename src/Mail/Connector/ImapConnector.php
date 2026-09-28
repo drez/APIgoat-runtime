@@ -5,6 +5,8 @@ namespace ApiGoat\Mail\Connector;
 use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
+use ApiGoat\Mail\FolderLister;
+use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\HeaderRecord;
 use ApiGoat\Mail\Imap\ImapTransport;
 use ApiGoat\Mail\Imap\WebklexTransport;
@@ -30,7 +32,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  * was returned (uidnext = last returned uid + 1, or the server's UIDNEXT
  * once the window is drained), so the next call is a plain increment.
  */
-class ImapConnector extends BaseConnector
+class ImapConnector extends BaseConnector implements FolderLister
 {
     private ImapTransport $imap;
     private string $folder;
@@ -175,6 +177,26 @@ class ImapConnector extends BaseConnector
         $rows     = $this->rows($folder, $picked);
         $next     = $picked === [] ? null : $uidvalidity . ':' . min($picked);
         return new BackfillResult($rows, $next, $complete, $restarted);
+    }
+
+    /**
+     * One `UID SEARCH ALL`, no header FETCH. UIDVALIDITY is read before AND
+     * after the search: if it moved in between, the UIDs belong to two
+     * different id spaces and the listing is reported incomplete rather than
+     * guessed at.
+     */
+    public function listIds(string $folder): FolderListing
+    {
+        $this->connect();
+        $folder = $folder !== '' ? $folder : $this->folder;
+        $before = (int) $this->imap->status($folder)['uidvalidity'];
+        $uids   = $this->imap->uids($folder, null, null);
+        $after  = (int) $this->imap->status($folder)['uidvalidity'];
+        $ids = [];
+        foreach ($uids as $uid) {
+            $ids[self::makeId((int) $uid, $folder)] = true;
+        }
+        return new FolderListing($ids, (string) $after, $before === $after && $after > 0);
     }
 
     public function fetchBody(string $providerId): MailBody
