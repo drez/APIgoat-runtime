@@ -362,6 +362,9 @@ final class ImapConnectorTest extends TestCase
         $c = $this->connector();
         $this->assertSame('INBOX.Spam.Old', $c->ensureFolder('inbox/Spam/Old'));
         $this->assertContains('create:INBOX.Spam.Old', $this->imap->log);
+        foreach (['INBOX', 'INBOX.Spam', 'INBOX.Spam.Old'] as $sub) {
+            $this->assertContains('subscribe:' . $sub, $this->imap->log, 'Thunderbird lists subscribed folders only');
+        }
         $this->assertArrayHasKey('INBOX.Spam.Old', $this->imap->store);
 
         $this->imap->log = [];

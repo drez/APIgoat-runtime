@@ -103,6 +103,16 @@ final class WebklexTransport implements ImapTransport
         }, "create folder {$path}");
     }
 
+    public function subscribe(string $path): void
+    {
+        $this->guard(function () use ($path) {
+            // Straight through the protocol: webklex's Folder::subscribe()
+            // needs a Folder object, which a \Noselect parent ("ai" above
+            // "ai.spam") may not yield.
+            $this->client->getConnection()->subscribeFolder($path)->validatedData();
+        }, "subscribe {$path}");
+    }
+
     /**
      * webklex's Folder::appendMessage() sends APPEND unparsed and hands back
      * the raw response lines; the tagged OK line carries the new UID as

@@ -45,6 +45,11 @@ class FakeImapTransport implements ImapTransport
         $this->store[$path] ??= [];
     }
 
+    public function subscribe(string $path): void
+    {
+        $this->log[] = "subscribe:$path";
+    }
+
     public function append(string $folder, string $raw, bool $seen): int
     {
         $this->log[] = "append:$folder:" . ($seen ? '1' : '0');

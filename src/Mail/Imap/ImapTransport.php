@@ -39,6 +39,13 @@ interface ImapTransport
     public function createFolder(string $path): void;
 
     /**
+     * SUBSCRIBE $path. A folder that exists but is not subscribed is
+     * invisible in Thunderbird and most desktop clients, which list only
+     * subscribed folders (LSUB) by default.
+     */
+    public function subscribe(string $path): void;
+
+    /**
      * APPEND $raw (full RFC 822 source) to $folder, flagged \Seen when $seen.
      *
      * @return int the new UID from the APPENDUID response code (RFC 4315 UIDPLUS), 0 when the server does not report it

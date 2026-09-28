@@ -276,6 +276,17 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter
         if (strcasecmp($parts[0], 'INBOX') === 0) $parts[0] = 'INBOX';
         $path = implode($delimiter, $parts);
         $this->imap->createFolder($path);
+        // Subscribe it, and every parent the CREATE implied: desktop clients
+        // (Thunderbird) list subscribed folders only, so a folder we create
+        // and never subscribe is mail the user cannot see.
+        for ($i = 1; $i <= count($parts); $i++) {
+            try {
+                $this->imap->subscribe(implode($delimiter, array_slice($parts, 0, $i)));
+            } catch (\Throwable) {
+                // Best effort: INBOX may refuse, a parent may not exist as a
+                // real folder. The folder itself was created either way.
+            }
+        }
         return $path;
     }
 
