@@ -38,7 +38,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
 class GmailConnector extends BaseConnector implements FolderLister
 {
     public const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
-    public const METADATA_HEADERS = ['From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To'];
+    public const METADATA_HEADERS = ['From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To', 'Authentication-Results'];
     /** listIds() page cap: 200 x 500 ids. A folder bigger than that is reported incomplete, never truncated silently. */
     public const LIST_IDS_MAX_PAGES = 200;
 
@@ -282,6 +282,10 @@ class GmailConnector extends BaseConnector implements FolderLister
             'folder_at_fetch'     => $folder,
             'was_read_at_fetch'   => !in_array('UNREAD', $labels, true),
             'labels'              => $labels,
+            // header() returns the first match and Gmail lists headers in
+            // message order, so this is the TOPMOST one — mx.google.com's own
+            // verdict, not a copy the sender typed further down.
+            'auth_results'        => self::header($h, HeaderRecord::AUTH_RESULTS_HEADER),
         ]);
     }
 

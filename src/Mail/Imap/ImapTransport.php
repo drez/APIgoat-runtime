@@ -17,7 +17,8 @@ namespace ApiGoat\Mail\Imap;
  *   uid:int, message_id:string, in_reply_to:string, from:string (raw header),
  *   to:string, cc:string, subject:string, date:string|int|\DateTimeInterface,
  *   size:int, has_attachments:bool, seen:bool, flags:string[], snippet?:string,
- *   thread_id?:string (Gmail X-GM-THRID; '' or absent elsewhere)
+ *   thread_id?:string (Gmail X-GM-THRID; '' or absent elsewhere),
+ *   auth_results?:string (the TOPMOST Authentication-Results value only, unfolded; '' when none)
  */
 interface ImapTransport
 {
@@ -25,8 +26,24 @@ interface ImapTransport
 
     public function disconnect(): void;
 
-    /** @return array<int,array{id:string, name:string, type?:string}> */
+    /**
+     * Every folder, flat (sub-folders included). `delimiter` is the server's
+     * hierarchy separator for that folder ("/" or "." in practice) when the
+     * transport knows it.
+     *
+     * @return array<int,array{id:string, name:string, type?:string, delimiter?:string}>
+     */
     public function folders(): array;
+
+    /** CREATE $path (a full path, already in the server's delimiter). */
+    public function createFolder(string $path): void;
+
+    /**
+     * APPEND $raw (full RFC 822 source) to $folder, flagged \Seen when $seen.
+     *
+     * @return int the new UID from the APPENDUID response code (RFC 4315 UIDPLUS), 0 when the server does not report it
+     */
+    public function append(string $folder, string $raw, bool $seen): int;
 
     /** @return array{uidvalidity:int, uidnext:int, exists:int} */
     public function status(string $folder): array;

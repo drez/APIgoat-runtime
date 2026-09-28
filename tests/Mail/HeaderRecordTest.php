@@ -19,6 +19,32 @@ final class HeaderRecordTest extends TestCase
         $this->assertFalse($r['has_attachments']);
         $this->assertFalse($r['was_read_at_fetch']);
         $this->assertSame(0, $r['size_bytes']);
+        $this->assertSame('', $r['auth_results'], 'no Authentication-Results header → empty, never null');
+    }
+
+    public function testAuthResultsIsCarriedOnOneLine(): void
+    {
+        $r = HeaderRecord::normalise(['auth_results' => "mx.google.com;\r\n       dkim=pass header.i=@id.apple.com;\r\n\tspf=pass"]);
+        $this->assertSame('mx.google.com; dkim=pass header.i=@id.apple.com; spf=pass', $r['auth_results']);
+    }
+
+    public function testTopmostHeaderReturnsTheFirstOccurrenceUnfolded(): void
+    {
+        $raw = "Return-Path: <bounce@id.apple.com>\r\n"
+            . "Authentication-Results: mail.apigoat.com;\r\n"
+            . "\tdkim=pass (2048-bit key) header.d=id.apple.com header.i=@id.apple.com\r\n"
+            . "Received: from mx by mail.apigoat.com\r\n"
+            . "authentication-results: forged.example; dkim=pass header.d=apple.com\r\n"
+            . "Subject: Hi\r\n"
+            . "\r\n"
+            . "Authentication-Results: in the body, never read\r\n";
+        $this->assertSame(
+            'mail.apigoat.com; dkim=pass (2048-bit key) header.d=id.apple.com header.i=@id.apple.com',
+            HeaderRecord::topmostHeader($raw, HeaderRecord::AUTH_RESULTS_HEADER),
+            'the receiving server\'s header wins; the lower (sender-supplied) one is ignored'
+        );
+        $this->assertSame('', HeaderRecord::topmostHeader("Subject: x\n\nAuthentication-Results: body", 'Authentication-Results'));
+        $this->assertSame('Hi', HeaderRecord::topmostHeader("subject: Hi\nX: y", 'Subject'), 'LF-only and case-insensitive');
     }
 
     public function testSnippetIsWhitespaceCollapsedAndClampedTo255(): void

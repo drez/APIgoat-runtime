@@ -16,7 +16,20 @@ final class HeaderRecord
         'provider_message_id', 'thread_id', 'message_id_header', 'in_reply_to',
         'from_addr', 'from_name', 'to', 'cc', 'subject', 'date_sent', 'snippet',
         'size_bytes', 'has_attachments', 'folder_at_fetch', 'was_read_at_fetch', 'labels',
+        'auth_results',
     ];
+
+    /**
+     * The one Authentication-Results header (RFC 8601) worth reading.
+     *
+     * Every receiving hop PREPENDS its own header, so the topmost one was
+     * written by the server that handed the message to our mailbox — the
+     * only hop we trust. Anything below it arrived inside the message, and a
+     * sender can put whatever it likes there ("dkim=pass header.d=apple.com"
+     * costs nothing to type). Connectors therefore carry the FIRST occurrence
+     * and nothing else; '' when the server stamped none.
+     */
+    public const AUTH_RESULTS_HEADER = 'Authentication-Results';
 
     /**
      * Fill every key with a typed default, coerce what's present, clamp the snippet.
@@ -45,7 +58,38 @@ final class HeaderRecord
             'folder_at_fetch'     => (string) ($in['folder_at_fetch'] ?? ''),
             'was_read_at_fetch'   => (bool) ($in['was_read_at_fetch'] ?? false),
             'labels'              => array_values(array_map('strval', (array) ($in['labels'] ?? []))),
+            'auth_results'        => trim((string) preg_replace('/\s+/', ' ', (string) ($in['auth_results'] ?? ''))),
         ];
+    }
+
+    /**
+     * The value of the FIRST (topmost) $name header in a raw RFC 822 header
+     * block, unfolded (continuation lines joined with one space); '' when
+     * absent. Reading the raw text instead of a library's parsed header is
+     * deliberate: parsers merge repeated headers into a list whose order is
+     * theirs, and for Authentication-Results the order IS the trust (see
+     * AUTH_RESULTS_HEADER). Stops at the first blank line, so a body that
+     * happens to be passed along is never searched.
+     */
+    public static function topmostHeader(string $raw, string $name): string
+    {
+        $head  = preg_split('/\r?\n\r?\n/', $raw, 2)[0] ?? '';
+        $lines = preg_split('/\r?\n/', $head) ?: [];
+        $want  = strtolower($name) . ':';
+        $value = null;
+        foreach ($lines as $line) {
+            if ($value !== null) {
+                if ($line !== '' && ($line[0] === ' ' || $line[0] === "\t")) {
+                    $value .= ' ' . trim($line);
+                    continue;
+                }
+                break;
+            }
+            if (strncasecmp($line, $want, strlen($want)) === 0) {
+                $value = trim(substr($line, strlen($want)));
+            }
+        }
+        return $value === null ? '' : trim((string) preg_replace('/\s+/', ' ', $value));
     }
 
     /** Whitespace-collapsed, ≤ SNIPPET_MAX chars (multibyte-safe). */

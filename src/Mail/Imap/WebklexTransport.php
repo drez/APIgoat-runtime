@@ -2,6 +2,7 @@
 
 namespace ApiGoat\Mail\Imap;
 
+use ApiGoat\Mail\HeaderRecord;
 use ApiGoat\Sync\Exceptions\TransientError;
 use ApiGoat\Sync\Exceptions\ValidationRejected;
 
@@ -68,15 +69,64 @@ final class WebklexTransport implements ImapTransport
         }
     }
 
+    /**
+     * One flat `LIST "" *`. The hierarchical form (getFolders(true)) nests
+     * sub-folders under their parent's `children`, so iterating it only saw
+     * the top level — "INBOX.Spam" on a Dovecot/Courier server was invisible
+     * to detectTrash() and to FolderWriter::ensureFolder(), which would then
+     * try to CREATE a folder that already exists. `delimiter` comes from the
+     * LIST response itself (webklex falls back to options.delimiter, "/",
+     * only when the server sends NIL).
+     */
     public function folders(): array
     {
         return $this->guard(function () {
             $out = [];
-            foreach ($this->client->getFolders(true) as $f) {
-                $out[] = ['id' => (string) $f->path, 'name' => (string) ($f->full_name ?? $f->name ?? $f->path)];
+            foreach ($this->client->getFolders(false) as $f) {
+                $out[] = [
+                    'id'        => (string) $f->path,
+                    'name'      => (string) ($f->full_name ?? $f->name ?? $f->path),
+                    'delimiter' => (string) ($f->delimiter ?? '/'),
+                ];
             }
             return $out;
         }, 'list folders');
+    }
+
+    public function createFolder(string $path): void
+    {
+        $this->guard(function () use ($path) {
+            // $expunge=false: CREATE has nothing to expunge, and webklex's
+            // expunge() acts on whatever folder happens to be selected.
+            $this->client->createFolder($path, false);
+            unset($this->folderCache[$path]);
+        }, "create folder {$path}");
+    }
+
+    /**
+     * webklex's Folder::appendMessage() sends APPEND unparsed and hands back
+     * the raw response lines; the tagged OK line carries the new UID as
+     * `[APPENDUID <uidvalidity> <uid>]` on UIDPLUS servers (Gmail, Dovecot,
+     * Cyrus, Exchange 2013+). Anything else → 0, and the caller re-finds the
+     * message by Message-ID if it needs to.
+     */
+    public function append(string $folder, string $raw, bool $seen): int
+    {
+        return $this->guard(function () use ($folder, $raw, $seen) {
+            $resp = $this->folder($folder)->appendMessage($raw, $seen ? ['\\Seen'] : null);
+            return self::appendUid($resp);
+        }, "append {$folder}");
+    }
+
+    /** @param mixed $resp webklex's validated APPEND response (nested arrays / strings) */
+    public static function appendUid(mixed $resp): int
+    {
+        $text    = '';
+        $wrapped = [$resp];
+        array_walk_recursive($wrapped, static function ($v) use (&$text) {
+            if (is_scalar($v)) $text .= ' ' . $v;
+        });
+        return preg_match('/APPENDUID\s+\d+\s+(\d+)/i', $text, $m) ? (int) $m[1] : 0;
     }
 
     public function status(string $folder): array
@@ -144,6 +194,11 @@ final class WebklexTransport implements ImapTransport
                     'seen'            => in_array('Seen', $flags, true),
                     'flags'           => $flags,
                     'thread_id'       => '',
+                    // The header fetch already carries the whole raw header
+                    // block; the TOPMOST Authentication-Results is read from
+                    // it by position, never from webklex's parsed get() (which
+                    // merges repeats, and the order is the trust).
+                    'auth_results'    => HeaderRecord::topmostHeader((string) ($m->getHeader()?->raw ?? ''), HeaderRecord::AUTH_RESULTS_HEADER),
                 ];
             }
             foreach ($this->gmailThreadIds($folder, array_keys($out)) as $uid => $thrid) {

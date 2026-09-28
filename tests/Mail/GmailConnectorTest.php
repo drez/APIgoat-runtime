@@ -153,6 +153,16 @@ final class GmailConnectorTest extends TestCase
         $this->assertTrue($h['was_read_at_fetch'], 'no UNREAD label ⇒ read');
         $this->assertSame(['INBOX'], $h['labels']);
         $this->assertSame('INBOX', $h['folder_at_fetch']);
+        $this->assertSame('', $h['auth_results'], 'no Authentication-Results header → empty');
+
+        $a = $this->msg('c');
+        $a['payload']['headers'][] = ['name' => 'Authentication-Results', 'value' => 'mx.google.com; dkim=pass header.i=@id.apple.com; dmarc=pass (p=REJECT) header.from=apple.com'];
+        $a['payload']['headers'][] = ['name' => 'Authentication-Results', 'value' => 'forged.example; dmarc=pass header.from=apple.com'];
+        $this->assertSame(
+            'mx.google.com; dkim=pass header.i=@id.apple.com; dmarc=pass (p=REJECT) header.from=apple.com',
+            GmailConnector::normalise($a, 'INBOX')['auth_results'],
+            'the topmost one — Google\'s own — never a copy further down'
+        );
 
         $m = $this->msg('b');
         $m['payload']['parts'][] = ['mimeType' => 'application/pdf', 'filename' => 'q.pdf', 'body' => ['attachmentId' => 'att', 'size' => 99]];

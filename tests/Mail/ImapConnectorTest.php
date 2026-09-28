@@ -97,6 +97,15 @@ final class ImapConnectorTest extends TestCase
         $this->assertNull($r->headers[1]['thread_id'], 'an empty X-GM-THRID (non-Gmail server) stays null');
     }
 
+    public function testTopmostAuthenticationResultsFromTheTransportIsPassedThrough(): void
+    {
+        $this->imap->add('INBOX', 3, ['auth_results' => "mail.apigoat.com;\r\n\tdkim=pass header.d=id.apple.com"]);
+        $this->imap->add('INBOX', 4);
+        $r = $this->connector()->fetchHeaders('INBOX', null, 50);
+        $this->assertSame('mail.apigoat.com; dkim=pass header.d=id.apple.com', $r->headers[0]['auth_results']);
+        $this->assertSame('', $r->headers[1]['auth_results'], 'a server that stamps none leaves it empty');
+    }
+
     public function testColdStartTakesTheNewestMaxOfTheWindow(): void
     {
         foreach ([1, 2, 3, 4] as $u) $this->imap->add('INBOX', $u);
@@ -333,5 +342,70 @@ final class ImapConnectorTest extends TestCase
         $imap->store = ['INBOX' => [4 => ['uid' => 4, 'date' => '2020-01-01 00:00:00']]];
         $l = (new ImapConnector(['host' => 'h', 'username' => 'u', 'password' => 'p'], $imap))->listIds('INBOX');
         $this->assertFalse($l->complete, 'ids from two id spaces prove nothing');
+    }
+
+    public function testEnsureFolderMatchesAcrossDelimitersAndCase(): void
+    {
+        $this->imap->store['INBOX.SPAM'] = [];
+        $this->imap->store['Archive/2026'] = [];
+        $c = $this->connector();
+        $this->assertSame('INBOX.SPAM', $c->ensureFolder('INBOX/SPAM'));
+        $this->assertSame('INBOX.SPAM', $c->ensureFolder('inbox/spam'));
+        $this->assertSame('Archive/2026', $c->ensureFolder('archive.2026'));
+        $this->assertSame('INBOX', $c->ensureFolder('Inbox'));
+        $this->assertStringNotContainsString('create:', implode(' ', $this->imap->log), 'existing folders are never re-created');
+    }
+
+    public function testEnsureFolderCreatesMissingPathInTheServersDelimiter(): void
+    {
+        $this->imap->delimiter = '.';
+        $c = $this->connector();
+        $this->assertSame('INBOX.Spam.Old', $c->ensureFolder('inbox/Spam/Old'));
+        $this->assertContains('create:INBOX.Spam.Old', $this->imap->log);
+        $this->assertArrayHasKey('INBOX.Spam.Old', $this->imap->store);
+
+        $this->imap->log = [];
+        $this->assertSame('INBOX.Spam.Old', $c->ensureFolder('INBOX/SPAM/OLD'), 'the created folder is found next time');
+        $this->assertNotContains('create:INBOX.Spam.Old', $this->imap->log);
+    }
+
+    public function testEnsureFolderDefaultsToSlashWhenNoDelimiterIsReported(): void
+    {
+        $this->imap->delimiter = '';
+        $this->assertSame('INBOX/Junk', $this->connector()->ensureFolder('INBOX.Junk'));
+        $this->assertContains('create:INBOX/Junk', $this->imap->log);
+    }
+
+    public function testFetchRawReturnsTheFullSource(): void
+    {
+        $this->imap->add('Archive', 4, ['raw' => "Subject: hi\r\n\r\nbody"]);
+        $this->assertSame("Subject: hi\r\n\r\nbody", $this->connector()->fetchRaw('4:Archive'));
+        $this->assertContains('raw:Archive:4', $this->imap->log);
+    }
+
+    public function testAppendReturnsTheNewProviderIdAndFlagsSeen(): void
+    {
+        $this->imap->add('INBOX', 3);
+        $c = $this->connector();
+        $this->assertSame('4:INBOX', $c->append('INBOX', "Subject: a\r\n\r\nx", true));
+        $this->assertContains('append:INBOX:1', $this->imap->log);
+        $this->assertTrue($this->imap->store['INBOX'][4]['seen']);
+        $this->assertSame("Subject: a\r\n\r\nx", $c->fetchRaw('4:INBOX'));
+
+        $this->assertSame('1:Trash', $c->append('Trash', 'raw', false));
+        $this->assertFalse($this->imap->store['Trash'][1]['seen']);
+    }
+
+    public function testAppendReturnsEmptyWhenTheServerReportsNoUid(): void
+    {
+        $imap = new class extends FakeImapTransport {
+            public function append(string $folder, string $raw, bool $seen): int
+            {
+                parent::append($folder, $raw, $seen);
+                return 0; // no UIDPLUS
+            }
+        };
+        $c = new ImapConnector(['host' => 'h', 'username' => 'u', 'password' => 'p'], $imap);
+        $this->assertSame('', $c->append('INBOX', 'raw', false));
     }
 }

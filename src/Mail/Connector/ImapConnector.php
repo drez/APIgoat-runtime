@@ -7,6 +7,7 @@ use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\FolderLister;
 use ApiGoat\Mail\FolderListing;
+use ApiGoat\Mail\FolderWriter;
 use ApiGoat\Mail\HeaderRecord;
 use ApiGoat\Mail\Imap\ImapTransport;
 use ApiGoat\Mail\Imap\WebklexTransport;
@@ -32,7 +33,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  * was returned (uidnext = last returned uid + 1, or the server's UIDNEXT
  * once the window is drained), so the next call is a plain increment.
  */
-class ImapConnector extends BaseConnector implements FolderLister
+class ImapConnector extends BaseConnector implements FolderLister, FolderWriter
 {
     private ImapTransport $imap;
     private string $folder;
@@ -234,6 +235,72 @@ class ImapConnector extends BaseConnector implements FolderLister
         return $providerId;
     }
 
+    /**
+     * Folder names are compared on a canonical form — '.' and '/' both read
+     * as the hierarchy separator, case folded — so "INBOX/SPAM" finds a
+     * Dovecot "INBOX.Spam" and "inbox.spam" finds a Gmail-style "INBOX/Spam".
+     * The first match wins (a server holding both "A.B" and "A/B" as distinct
+     * names is not one this can tell apart). When nothing matches the path is
+     * rebuilt in the server's own delimiter — INBOX's when the server lists
+     * it (sub-folders inherit it), else the first folder's, else "/" — with a
+     * leading "inbox" segment spelt "INBOX" (RFC 3501: INBOX is
+     * case-insensitive, the rest is not), then CREATEd.
+     */
+    public function ensureFolder(string $wanted): string
+    {
+        $this->connect();
+        $key = self::folderKey($wanted);
+        if ($key === '') {
+            throw new \InvalidArgumentException('ImapConnector::ensureFolder: empty folder name');
+        }
+        $folders = $this->imap->folders();
+        foreach ($folders as $f) {
+            if (self::folderKey((string) $f['id']) === $key) {
+                return (string) $f['id'];
+            }
+        }
+
+        $delimiter = null;
+        foreach ($folders as $f) {
+            $d = (string) ($f['delimiter'] ?? '');
+            if ($d === '') continue;
+            $delimiter ??= $d; // first folder's, unless INBOX says otherwise
+            if (strcasecmp((string) $f['id'], 'INBOX') === 0 || stripos((string) $f['id'], 'INBOX' . $d) === 0) {
+                $delimiter = $d;
+                break;
+            }
+        }
+        $delimiter ??= '/';
+
+        $parts = array_values(array_filter(array_map('trim', preg_split('#[./]#', $wanted)), static fn ($p) => $p !== ''));
+        if (strcasecmp($parts[0], 'INBOX') === 0) $parts[0] = 'INBOX';
+        $path = implode($delimiter, $parts);
+        $this->imap->createFolder($path);
+        return $path;
+    }
+
+    public function fetchRaw(string $providerId): string
+    {
+        $this->connect();
+        [$uid, $folder] = $this->parseId($providerId);
+        return $this->imap->raw($folder, $uid);
+    }
+
+    public function append(string $folder, string $raw, bool $seen): string
+    {
+        $this->connect();
+        $folder = $folder !== '' ? $folder : $this->folder;
+        $uid    = $this->imap->append($folder, $raw, $seen);
+        return $uid > 0 ? self::makeId($uid, $folder) : '';
+    }
+
+    /** "INBOX/Spam", "inbox.spam", " INBOX / SPAM " → "inbox/spam" */
+    private static function folderKey(string $name): string
+    {
+        $parts = array_filter(array_map('trim', preg_split('#[./]#', $name)), static fn ($p) => $p !== '');
+        return strtolower(implode('/', $parts));
+    }
+
     public static function makeId(int $uid, string $folder): string
     {
         return $uid . ':' . $folder;
@@ -289,6 +356,7 @@ class ImapConnector extends BaseConnector implements FolderLister
             'folder_at_fetch'     => $folder,
             'was_read_at_fetch'   => (bool) ($r['seen'] ?? false),
             'labels'              => (array) ($r['flags'] ?? []),
+            'auth_results'        => (string) ($r['auth_results'] ?? ''), // topmost Authentication-Results only
         ]);
     }
 

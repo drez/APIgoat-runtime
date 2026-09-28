@@ -14,6 +14,8 @@ class FakeImapTransport implements ImapTransport
     public array $log = [];
     public bool $connected = false;
     public ?\Throwable $connectError = null;
+    /** Hierarchy delimiter reported for every folder ('' = report none). */
+    public string $delimiter = '/';
 
     public function connect(): void
     {
@@ -31,7 +33,24 @@ class FakeImapTransport implements ImapTransport
     public function folders(): array
     {
         $this->log[] = 'folders';
-        return array_map(fn ($f) => ['id' => $f, 'name' => $f], array_keys($this->store));
+        return array_map(
+            fn ($f) => ['id' => (string) $f, 'name' => (string) $f] + ($this->delimiter !== '' ? ['delimiter' => $this->delimiter] : []),
+            array_keys($this->store)
+        );
+    }
+
+    public function createFolder(string $path): void
+    {
+        $this->log[] = "create:$path";
+        $this->store[$path] ??= [];
+    }
+
+    public function append(string $folder, string $raw, bool $seen): int
+    {
+        $this->log[] = "append:$folder:" . ($seen ? '1' : '0');
+        $new = ($this->store[$folder] ?? []) ? max(array_keys($this->store[$folder])) + 1 : 1;
+        $this->add($folder, $new, ['raw' => $raw, 'seen' => $seen, 'flags' => $seen ? ['Seen'] : []]);
+        return $new;
     }
 
     public function status(string $folder): array
@@ -98,6 +117,7 @@ class FakeImapTransport implements ImapTransport
             'message_id' => "<m{$uid}@x>", 'in_reply_to' => '', 'from' => "Sender {$uid} <s{$uid}@x.com>",
             'to' => 'me@x.com', 'cc' => '', 'subject' => "Subject {$uid}", 'date' => 'Mon, 31 Aug 2026 10:00:00 +0000',
             'size' => 100 + $uid, 'has_attachments' => false, 'seen' => false, 'flags' => [],
+            'auth_results' => '',
         ];
     }
 }
