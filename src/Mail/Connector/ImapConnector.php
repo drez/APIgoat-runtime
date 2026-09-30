@@ -15,7 +15,9 @@ use ApiGoat\Mail\Imap\WebklexTransport;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
 use ApiGoat\Mail\MailConnector;
+use ApiGoat\Mail\MessageState;
 use ApiGoat\Mail\MimeBodyParser;
+use ApiGoat\Mail\StateWriter;
 use ApiGoat\Sync\Exceptions\TransientError;
 
 /**
@@ -34,13 +36,15 @@ use ApiGoat\Sync\Exceptions\TransientError;
  * was returned (uidnext = last returned uid + 1, or the server's UIDNEXT
  * once the window is drained), so the next call is a plain increment.
  */
-class ImapConnector extends BaseConnector implements FolderLister, FolderWriter
+class ImapConnector extends BaseConnector implements FolderLister, FolderWriter, StateWriter
 {
     private ImapTransport $imap;
     private string $folder;
     private int $coldStartDays;
     private ?string $trashFolder;
     private bool $connected = false;
+    /** @var array{label_server:bool, all:?string, archive:?string}|null {@see FolderRole::imapLayout()}, read once per connector */
+    private ?array $layout = null;
 
     /**
      * @param array{host:string, port?:int, encryption?:string, username:string, password:string,
@@ -250,6 +254,109 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter
         [$uid, $folder] = $this->parseId($providerId);
         $this->imap->delete($folder, $uid);
         return $providerId;
+    }
+
+    // ------------------------------------------------------------ StateWriter
+
+    public function messageState(string $providerId): ?MessageState
+    {
+        self::assertResolved($providerId, 'messageState');
+        [$uid, $folder] = $this->parseId($providerId);
+        $this->connect();
+        $flags = $this->imap->flags($folder, $uid);
+        if ($flags === null) {
+            return null;
+        }
+        return new MessageState(self::hasFlag($flags, 'Seen'), self::hasFlag($flags, 'Flagged'), $folder, null, $flags);
+    }
+
+    public function setFlag(string $providerId, bool $flagged): void
+    {
+        self::assertResolved($providerId, 'setFlag');
+        [$uid, $folder] = $this->parseId($providerId);
+        $this->connect();
+        $this->imap->setFlagged($folder, $uid, $flagged);
+    }
+
+    /**
+     * MOVE to $archiveFolder, or — when '' — to the server's own \Archive
+     * folder, else its \All folder (never a folder guessed by name). Gmail
+     * over IMAP: MOVE to All Mail is how Gmail archives (the Inbox label
+     * goes), and a message already in All Mail is left where it is.
+     */
+    public function archive(string $providerId, string $archiveFolder = ''): string
+    {
+        self::assertResolved($providerId, 'archive');
+        [, $from] = $this->parseId($providerId);
+        $this->connect();
+        $to = $archiveFolder;
+        if ($to === '') {
+            $layout = $this->layout();
+            $to     = (string) ($layout['archive'] ?? $layout['all'] ?? '');
+            if ($to === '') {
+                throw $this->unsupported('archive without an Archive folder');
+            }
+        }
+        return $this->relocate($providerId, $from, $to);
+    }
+
+    /** Back to $toFolder ('' = the configured folder). Never trash()'s hard-delete path. */
+    public function untrash(string $providerId, string $toFolder = ''): string
+    {
+        self::assertResolved($providerId, 'untrash');
+        [, $from] = $this->parseId($providerId);
+        $this->connect();
+        return $this->relocate($providerId, $from, $toFolder !== '' ? $toFolder : $this->folder);
+    }
+
+    /**
+     * One message from $from to $to, the state-writer way:
+     *  - already there → nothing to do, same id;
+     *  - Gmail over IMAP, out of All Mail → UID COPY (adds the label). A MOVE
+     *    would expunge it from All Mail, which Gmail may turn into a delete
+     *    depending on the account's IMAP settings. Into All Mail stays a
+     *    MOVE (= archive: the source label goes);
+     *  - otherwise → UID MOVE.
+     * The new id comes from COPYUID only; '' when the server did not say.
+     */
+    private function relocate(string $providerId, string $from, string $to): string
+    {
+        if (self::sameFolder($from, $to)) {
+            return $providerId;
+        }
+        $layout = $this->layout();
+        if ($layout['label_server'] && $layout['all'] !== null && self::sameFolder($from, $layout['all'])) {
+            if (self::sameFolder($to, $layout['all'])) {
+                return $providerId;
+            }
+            [$uid] = $this->parseId($providerId);
+            $newUid = $this->imap->copy($from, $uid, $to);
+            return $newUid > 0 ? self::makeId($newUid, $to) : '';
+        }
+        return $this->move($providerId, $to);
+    }
+
+    /** @return array{label_server:bool, all:?string, archive:?string} */
+    private function layout(): array
+    {
+        return $this->layout ??= FolderRole::imapLayout($this->imap->folders());
+    }
+
+    /** INBOX is case-insensitive (RFC 3501); every other path is compared as is. */
+    private static function sameFolder(string $a, string $b): bool
+    {
+        return $a === $b || (strcasecmp($a, 'INBOX') === 0 && strcasecmp($b, 'INBOX') === 0);
+    }
+
+    /** 'Seen', '\Seen' and 'seen' name the same flag. */
+    private static function hasFlag(array $flags, string $want): bool
+    {
+        foreach ($flags as $f) {
+            if (strcasecmp(ltrim((string) $f, '\\'), $want) === 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

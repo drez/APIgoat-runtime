@@ -39,6 +39,21 @@ abstract class BaseConnector implements MailConnector
         throw $this->unsupported('send');
     }
 
+    /** Prefix of a stored provider id whose server copy is unknown (a move without COPYUID). */
+    public const UNRESOLVED_PREFIX = 'unresolved:';
+
+    /**
+     * Refuses an "unresolved:<id>" provider id before any server call: it
+     * names a database row, not a server message, and parsed loosely it
+     * would address some OTHER message (IMAP uid <id> of the default folder).
+     */
+    protected static function assertResolved(string $providerId, string $op): void
+    {
+        if (str_starts_with($providerId, self::UNRESOLVED_PREFIX)) {
+            throw new \InvalidArgumentException("{$op}: provider id '{$providerId}' is unresolved (its server copy is unknown); refusing to touch the server");
+        }
+    }
+
     protected function unsupported(string $op): UnsupportedOperation
     {
         return new UnsupportedOperation(static::class . " does not support {$op}()");

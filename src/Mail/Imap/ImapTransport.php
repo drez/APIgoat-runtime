@@ -77,6 +77,20 @@ interface ImapTransport
 
     public function setSeen(string $folder, int $uid, bool $seen): void;
 
+    /** The flags of one message ('Seen', 'Flagged', …), or null when $uid is not in $folder. */
+    public function flags(string $folder, int $uid): ?array;
+
+    public function setFlagged(string $folder, int $uid, bool $flagged): void;
+
+    /**
+     * UID COPY: the message stays in $folder. On Gmail over IMAP this is how a
+     * message leaves All Mail for INBOX — it ADDS the label, where a MOVE
+     * would expunge it from All Mail (which Gmail may treat as a delete).
+     *
+     * @return int the UID in $destination (0 when the server does not report COPYUID)
+     */
+    public function copy(string $folder, int $uid, string $destination): int;
+
     /** @return int the UID in $destination after the MOVE (0 when the server does not report it) */
     public function move(string $folder, int $uid, string $destination): int;
 

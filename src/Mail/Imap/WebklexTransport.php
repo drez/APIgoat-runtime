@@ -301,6 +301,47 @@ final class WebklexTransport implements ImapTransport
         }, "flag {$folder}/{$uid}");
     }
 
+    public function flags(string $folder, int $uid): ?array
+    {
+        return $this->guard(function () use ($folder, $uid) {
+            try {
+                $m = $this->folder($folder)->query()->setFetchBody(false)->setFetchFlags(true)->leaveUnread()->getMessageByUid($uid);
+            } catch (\Webklex\PHPIMAP\Exceptions\MessageNotFoundException | \Webklex\PHPIMAP\Exceptions\MessageHeaderFetchingException) {
+                // Moved or expunged: "not here" is an answer, not an error.
+                // webklex 6.2 reports a missing uid as MessageHeaderFetchingException
+                // ("no headers found"), measured live 2026-09-30 on UID 999999999.
+                return null;
+            }
+            if (!$m) return null;
+            $out = [];
+            foreach ($m->getFlags() as $flag) $out[] = (string) $flag;
+            return $out;
+        }, "flags {$folder}/{$uid}");
+    }
+
+    public function setFlagged(string $folder, int $uid, bool $flagged): void
+    {
+        $this->guard(function () use ($folder, $uid, $flagged) {
+            $m = $this->folder($folder)->query()->setFetchBody(false)->leaveUnread()->getMessageByUid($uid);
+            if (!$m) throw new TransientError("IMAP uid {$uid} not found in {$folder}", 404);
+            $flagged ? $m->setFlag('Flagged') : $m->unsetFlag('Flagged');
+        }, "flag {$folder}/{$uid}");
+    }
+
+    public function copy(string $folder, int $uid, string $destination): int
+    {
+        return $this->guard(function () use ($folder, $uid, $destination) {
+            // Existence first, as in move(): UID COPY of a missing uid is a silent no-op.
+            $m = $this->folder($folder)->query()->setFetchBody(false)->leaveUnread()->getMessageByUid($uid);
+            if (!$m) throw new TransientError("IMAP uid {$uid} not found in {$folder}", 404);
+            $this->client->openFolder($folder);
+            $resp = $this->client->getConnection()->copyMessage($destination, $uid, null, \Webklex\PHPIMAP\IMAP::ST_UID);
+            $resp->validatedData();
+            unset($this->folderCache[$destination]);
+            return self::copyUid([$resp->data(), $resp->getResponse()], $uid);
+        }, "copy {$folder}/{$uid}");
+    }
+
     public function move(string $folder, int $uid, string $destination): int
     {
         return $this->guard(function () use ($folder, $uid, $destination) {

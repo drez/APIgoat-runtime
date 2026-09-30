@@ -13,6 +13,8 @@ use ApiGoat\Mail\HeaderRecord;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
 use ApiGoat\Mail\MailConnector;
+use ApiGoat\Mail\MessageState;
+use ApiGoat\Mail\StateWriter;
 use ApiGoat\Mail\TokenSource;
 use ApiGoat\Sync\Exceptions\AuthFailed;
 use ApiGoat\Sync\Exceptions\TransientError;
@@ -36,7 +38,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  *                                        'history_expired', coldStart=true — surface it.
  *   - otherwise                       → history.list startHistoryId, messageAdded only.
  */
-class GmailConnector extends BaseConnector implements FolderLister
+class GmailConnector extends BaseConnector implements FolderLister, StateWriter
 {
     public const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
     public const METADATA_HEADERS = ['From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To', 'Authentication-Results'];
@@ -148,6 +150,78 @@ class GmailConnector extends BaseConnector implements FolderLister
     {
         $this->call('POST', '/messages/' . rawurlencode($providerId) . '/trash', []);
         return $providerId;
+    }
+
+    // ------------------------------------------------------------ StateWriter
+
+    public function messageState(string $providerId): ?MessageState
+    {
+        self::assertResolved($providerId, 'messageState');
+        try {
+            $labels = $this->labelsOf($providerId);
+        } catch (TransientError $e) {
+            if ($e->getCode() === 404) {
+                return null;
+            }
+            throw $e;
+        }
+        [$folder, $role] = self::locationOf($labels);
+        return new MessageState(!in_array('UNREAD', $labels, true), in_array('STARRED', $labels, true), $folder, $role, $labels);
+    }
+
+    /**
+     * Where a message IS, by its system labels: TRASH > SPAM > INBOX > DRAFT > SENT,
+     * otherwise archived ('' — All Mail has no label).
+     *
+     * @param string[] $labels
+     * @return array{0:string,1:string} [system label or '', role]
+     */
+    public static function locationOf(array $labels): array
+    {
+        foreach (['TRASH' => FolderRole::TRASH, 'SPAM' => FolderRole::SPAM, 'INBOX' => FolderRole::INBOX, 'DRAFT' => FolderRole::DRAFTS, 'SENT' => FolderRole::SENT] as $label => $role) {
+            if (in_array($label, $labels, true)) {
+                return [$label, $role];
+            }
+        }
+        return ['', FolderRole::ARCHIVE];
+    }
+
+    public function setFlag(string $providerId, bool $flagged): void
+    {
+        self::assertResolved($providerId, 'setFlag');
+        $this->modify($providerId, $flagged ? ['STARRED'] : [], $flagged ? [] : ['STARRED']);
+    }
+
+    /** Drop INBOX and SPAM; a trashed message is untrashed first. $archiveFolder is ignored: All Mail is not a label. */
+    public function archive(string $providerId, string $archiveFolder = ''): string
+    {
+        self::assertResolved($providerId, 'archive');
+        $labels = $this->labelsOf($providerId);
+        if (in_array('TRASH', $labels, true)) {
+            $this->call('POST', '/messages/' . rawurlencode($providerId) . '/untrash', []);
+        }
+        $this->modify($providerId, [], array_values(array_intersect(['INBOX', 'SPAM'], $labels)));
+        return $providerId;
+    }
+
+    public function untrash(string $providerId, string $toFolder = ''): string
+    {
+        self::assertResolved($providerId, 'untrash');
+        $to     = $toFolder !== '' ? $toFolder : 'INBOX';
+        $labels = $this->labelsOf($providerId);
+        if (in_array('TRASH', $labels, true)) {
+            $this->call('POST', '/messages/' . rawurlencode($providerId) . '/untrash', []);
+        }
+        $remove = ($to !== 'SPAM' && in_array('SPAM', $labels, true)) ? ['SPAM'] : [];
+        $this->modify($providerId, in_array($to, $labels, true) ? [] : [$to], $remove);
+        return $providerId;
+    }
+
+    /** @return string[] */
+    private function labelsOf(string $providerId): array
+    {
+        $m = $this->call('GET', '/messages/' . rawurlencode($providerId) . '?format=minimal');
+        return array_values(array_map('strval', (array) ($m['labelIds'] ?? [])));
     }
 
     /**

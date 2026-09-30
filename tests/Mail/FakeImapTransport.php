@@ -106,7 +106,35 @@ class FakeImapTransport implements ImapTransport
         $this->store[$folder][$uid]['seen'] = $seen;
     }
 
+    public function flags(string $folder, int $uid): ?array
+    {
+        $this->log[] = "flags:$folder:$uid";
+        if (!isset($this->store[$folder][$uid])) return null;
+        $row   = $this->store[$folder][$uid];
+        $flags = array_values(array_diff((array) ($row['flags'] ?? []), ['Seen']));
+        if (!empty($row['seen'])) $flags[] = 'Seen';
+        return $flags;
+    }
+
+    public function setFlagged(string $folder, int $uid, bool $flagged): void
+    {
+        $this->log[] = "flagged:$folder:$uid:" . ($flagged ? '1' : '0');
+        $flags = array_values(array_diff((array) ($this->store[$folder][$uid]['flags'] ?? []), ['Flagged', '\\Flagged']));
+        if ($flagged) $flags[] = 'Flagged';
+        $this->store[$folder][$uid]['flags'] = $flags;
+    }
+
+    /** Reported by move() AND copy(): false = a server without UIDPLUS (no COPYUID). */
     public bool $reportMoveUid = true;
+
+    public function copy(string $folder, int $uid, string $destination): int
+    {
+        $this->log[] = "copy:$folder:$uid:$destination";
+        $row = $this->store[$folder][$uid];
+        $new = ($this->store[$destination] ?? []) ? max(array_keys($this->store[$destination])) + 1 : 1;
+        $this->store[$destination][$new] = $row;
+        return $this->reportMoveUid ? $new : 0;
+    }
 
     public function move(string $folder, int $uid, string $destination): int
     {

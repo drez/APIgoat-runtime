@@ -69,6 +69,9 @@ final class FolderRole
     /** Leaf names (lower-case) of Gmail's virtual folders, for listings that carry no attributes. */
     private const GMAIL_VIEW_NAMES = ['all mail', 'tous les messages', 'starred', 'important'];
 
+    /** Leaf names (lower-case) of Gmail's All Mail, for listings that carry no attributes. */
+    private const GMAIL_ALL_NAMES = ['all mail', 'tous les messages'];
+
     /** Gmail system labels that are places. */
     private const GMAIL_SYSTEM = ['INBOX' => self::INBOX, 'SENT' => self::SENT, 'DRAFT' => self::DRAFTS, 'SPAM' => self::SPAM, 'TRASH' => self::TRASH];
 
@@ -146,6 +149,50 @@ final class FolderRole
             ];
         }
         return $out;
+    }
+
+    /**
+     * The folders a state writer needs to know about on ONE IMAP account,
+     * on the raw (wire) ids it must MOVE / COPY to:
+     *  - label_server  Gmail-style: a \All folder, or a [Gmail] / [Google Mail]
+     *                  root (same detection as {@see assignImap()});
+     *  - all           the \All folder; on a label server without attributes,
+     *                  "[Gmail]/All Mail" (or its localised leaf) by name;
+     *  - archive       the \Archive folder (a real one, never guessed by name).
+     *
+     * @param array<int,array{id:string,delimiter?:string,attributes?:string[]}> $folders
+     * @return array{label_server:bool, all:?string, archive:?string}
+     */
+    public static function imapLayout(array $folders): array
+    {
+        $label = false;
+        $all   = null;
+        $arch  = null;
+        foreach ($folders as $f) {
+            $id    = (string) ($f['id'] ?? '');
+            $attrs = self::attrs((array) ($f['attributes'] ?? []));
+            if (self::isGoogleRoot($id, $f['delimiter'] ?? null)) {
+                $label = true;
+            }
+            if (in_array('all', $attrs, true)) {
+                $label = true;
+                $all ??= $id;
+            }
+            if (in_array('archive', $attrs, true)) {
+                $arch ??= $id;
+            }
+        }
+        if ($label && $all === null) {
+            foreach ($folders as $f) {
+                $id    = (string) ($f['id'] ?? '');
+                $delim = isset($f['delimiter']) && $f['delimiter'] !== '' ? (string) $f['delimiter'] : null;
+                if (self::isGoogleRoot($id, $delim) && in_array(self::leaf($id, $delim), self::GMAIL_ALL_NAMES, true)) {
+                    $all = $id;
+                    break;
+                }
+            }
+        }
+        return ['label_server' => $label, 'all' => $all, 'archive' => $arch];
     }
 
     /** The role a folder NAME suggests; Other when the name proves nothing. */
