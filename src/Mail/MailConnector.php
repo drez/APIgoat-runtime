@@ -72,10 +72,10 @@ interface MailConnector
 
     public function markRead(string $providerId, bool $read): void;
 
-    /** @return string the provider id after the move — IMAP MOVE reassigns the UID, so it may differ */
+    /** @return string the provider id after the move — IMAP MOVE reassigns the UID; '' when the server did not report it (no UIDPLUS/COPYUID), never a guess */
     public function move(string $providerId, string $folder): string;
 
-    /** @return string the provider id after trashing (see move()) */
+    /** @return string the provider id after trashing (see move(): may be '') */
     public function trash(string $providerId): string;
 
     // ---- phase 3 ----

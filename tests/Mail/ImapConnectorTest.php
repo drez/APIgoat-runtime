@@ -442,4 +442,15 @@ final class ImapConnectorTest extends TestCase
         $this->assertArrayHasKey($raw, $rows, 'the id stays what SELECT takes');
         $this->assertSame('Sent', $rows[$raw]['role']);
     }
+
+    public function testMoveReturnsEmptyWhenTheServerReportsNoUid(): void
+    {
+        $this->imap->add('INBOX', 5);
+        $this->imap->add('INBOX', 6);
+        $this->imap->store['Archive'] = [];
+        $this->imap->reportMoveUid = false;
+        $this->assertSame('', $this->connector()->move('5:INBOX', 'Archive'), 'never the old uid dressed up as the new one');
+        $this->assertSame('', $this->connector()->trash('6:INBOX'), 'trash goes through move() into the detected Trash');
+        $this->assertArrayHasKey(1, $this->imap->store['Archive'], 'the move itself happened');
+    }
 }

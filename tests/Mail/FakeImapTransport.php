@@ -106,6 +106,8 @@ class FakeImapTransport implements ImapTransport
         $this->store[$folder][$uid]['seen'] = $seen;
     }
 
+    public bool $reportMoveUid = true;
+
     public function move(string $folder, int $uid, string $destination): int
     {
         $this->log[] = "move:$folder:$uid:$destination";
@@ -113,7 +115,7 @@ class FakeImapTransport implements ImapTransport
         unset($this->store[$folder][$uid]);
         $new = ($this->store[$destination] ?? []) ? max(array_keys($this->store[$destination])) + 1 : 1;
         $this->store[$destination][$new] = $row;
-        return $new;
+        return $this->reportMoveUid ? $new : 0;
     }
 
     public function delete(string $folder, int $uid): void

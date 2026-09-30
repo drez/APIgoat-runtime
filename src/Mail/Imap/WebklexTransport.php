@@ -304,13 +304,57 @@ final class WebklexTransport implements ImapTransport
     public function move(string $folder, int $uid, string $destination): int
     {
         return $this->guard(function () use ($folder, $uid, $destination) {
+            // Existence first: UID MOVE of a missing uid is a silent no-op, and
+            // callers rely on "not found" (404) to stop retrying an undo.
             $m = $this->folder($folder)->query()->setFetchBody(false)->leaveUnread()->getMessageByUid($uid);
             if (!$m) throw new TransientError("IMAP uid {$uid} not found in {$folder}", 404);
-            $moved = $m->move($destination);
-            // MOVE/COPYUID responses give the new uid; the library returns the moved Message when it can.
-            if (is_object($moved) && method_exists($moved, 'getUid')) return (int) $moved->getUid();
-            return 0;
+            // Raw MOVE: webklex's Message::move() re-fetches the destination's
+            // pre-move UIDNEXT and returned the SOURCE uid on Dovecot and Gmail
+            // (measured on every recorded move). Only COPYUID proves the new uid.
+            // Safe by construction: any failure throws (validatedData) and an
+            // unreported uid is 0, which ImapConnector maps to ''.
+            // Known limit: when the server refuses MOVE, webklex falls back to
+            // COPY+STORE+EXPUNGE and returns the EXPUNGE response, so COPYUID is
+            // lost and this returns 0 ('' upstream) -- the safe outcome. Reaching
+            // the COPY response would mean re-implementing that fallback here.
+            $this->client->openFolder($folder);
+            $resp = $this->client->getConnection()->moveMessage($destination, $uid, null, \Webklex\PHPIMAP\IMAP::ST_UID);
+            $resp->validatedData();
+            unset($this->folderCache[$destination]);
+            return self::copyUid([$resp->data(), $resp->getResponse()], $uid);
         }, "move {$folder}/{$uid}");
+    }
+
+    /** [COPYUID <uidvalidity> <src-set> <dst-set>] (RFC 4315) -> the destination uid of $srcUid; 0 when not reported. */
+    public static function copyUid(mixed $resp, int $srcUid): int
+    {
+        $text    = '';
+        $wrapped = [$resp];
+        array_walk_recursive($wrapped, static function ($v) use (&$text) {
+            if (is_scalar($v)) $text .= ' ' . $v;
+        });
+        if (!preg_match('/COPYUID\s+\d+\s+([\d:,]+)\s+([\d:,]+)/i', $text, $m)) {
+            return 0;
+        }
+        $src = self::expandSet($m[1]);
+        $dst = self::expandSet($m[2]);
+        $i   = array_search($srcUid, $src, true);
+        return ($i !== false && isset($dst[$i])) ? $dst[$i] : 0;
+    }
+
+    /** "4,7:9" -> [4,7,8,9] @return int[] */
+    private static function expandSet(string $set): array
+    {
+        $out = [];
+        foreach (explode(',', $set) as $part) {
+            if (str_contains($part, ':')) {
+                [$a, $b] = array_map('intval', explode(':', $part, 2));
+                for ($x = min($a, $b); $x <= max($a, $b); $x++) $out[] = $x;
+            } else {
+                $out[] = (int) $part;
+            }
+        }
+        return $out;
     }
 
     public function delete(string $folder, int $uid): void

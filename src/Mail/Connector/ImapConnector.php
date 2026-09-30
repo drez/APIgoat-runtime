@@ -235,7 +235,9 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter
         $this->connect();
         [$uid, $from] = $this->parseId($providerId);
         $newUid = $this->imap->move($from, $uid, $folder);
-        return self::makeId($newUid > 0 ? $newUid : $uid, $folder);
+        // No COPYUID: the new uid is unknown. '' says so; a guess would be a
+        // provider id that points at nothing (or at another message).
+        return $newUid > 0 ? self::makeId($newUid, $folder) : '';
     }
 
     public function trash(string $providerId): string
