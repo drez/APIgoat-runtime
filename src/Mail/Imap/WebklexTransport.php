@@ -30,6 +30,70 @@ final class WebklexTransport implements ImapTransport
     {
     }
 
+    /**
+     * What webklex substitutes for a Date header it cannot parse. Without it
+     * webklex throws InvalidMessageDateException from inside the header
+     * FETCH, so ONE message ("Date: 09-16-2026/09-16-2026", seen live in
+     * [Gmail]/Spam) failed the whole folder on every poll. {@see headerDate()}
+     * turns it back into "unknown", and headers() then asks the server for
+     * the message's INTERNALDATE instead.
+     */
+    public const FALLBACK_DATE = '1970-01-01 00:00:00 +0000';
+
+    /** ClientManager config: webklex defaults plus {@see FALLBACK_DATE}. @return array<string,mixed> */
+    public static function managerConfig(): array
+    {
+        return ['options' => ['fallback_date' => self::FALLBACK_DATE]];
+    }
+
+    /**
+     * A webklex date attribute → the header row's `date`; '' when the header
+     * had none or webklex fell back to {@see FALLBACK_DATE} (an epoch-0 date
+     * is never a real Date header worth trusting).
+     */
+    public static function headerDate(mixed $date): string
+    {
+        $v = (is_object($date) && method_exists($date, 'first')) ? $date->first() : $date;
+        if ($v === null || $v === false || $v === '') {
+            return '';
+        }
+        if ($v instanceof \DateTimeInterface) {
+            return $v->getTimestamp() === 0 ? '' : (string) $date;
+        }
+        return (string) $date;
+    }
+
+    /**
+     * One message's INTERNALDATE out of a webklex FETCH response → "d-M-Y H:i:s +zzzz"
+     * (or just the day when that is all there is); '' when absent.
+     *
+     * webklex 6.2 tokenizes the quoted date-time on its spaces, so a
+     * `UID FETCH (UID INTERNALDATE)` comes back per uid as
+     * ['UID' => '11648', 'INTERNALDATE' => '"24-Sep-2026', '17:43:16' => '+0000"']
+     * (measured live 2026-09-30). The pieces are re-joined in order, keys
+     * and values alike, and the date-time is read from that text.
+     */
+    public static function internalDate(mixed $v): string
+    {
+        $parts = [];
+        $walk  = static function (mixed $x) use (&$walk, &$parts): void {
+            if (is_array($x)) {
+                foreach ($x as $k => $y) {
+                    if (is_string($k)) $parts[] = $k;
+                    $walk($y);
+                }
+            } elseif (is_scalar($x)) {
+                $parts[] = (string) $x;
+            }
+        };
+        $walk($v);
+        $text = str_replace('"', ' ', implode(' ', $parts));
+        if (!preg_match('/(\d{1,2}-[A-Za-z]{3}-\d{4})(?:\s+(\d{1,2}:\d{2}:\d{2}))?(?:\s+([+-]\d{4}))?/', $text, $m)) {
+            return '';
+        }
+        return implode(' ', array_filter([$m[1], $m[2] ?? '', $m[3] ?? ''], static fn ($p) => $p !== ''));
+    }
+
     public static function available(): bool
     {
         return class_exists(\Webklex\PHPIMAP\ClientManager::class);
@@ -44,7 +108,7 @@ final class WebklexTransport implements ImapTransport
             return;
         }
         $this->guard(function () {
-            $cm = new \Webklex\PHPIMAP\ClientManager([]);
+            $cm = new \Webklex\PHPIMAP\ClientManager(self::managerConfig());
             $this->client = $cm->make([
                 'host'           => (string) $this->config['host'],
                 'port'           => (int) ($this->config['port'] ?? 993),
@@ -233,7 +297,7 @@ final class WebklexTransport implements ImapTransport
                     'to'              => self::addr($m->getTo()),
                     'cc'              => self::addr($m->getCc()),
                     'subject'         => (string) $m->getSubject(),
-                    'date'            => (string) $m->getDate(),
+                    'date'            => self::headerDate($m->getDate()),
                     'size'            => (int) $m->getSize(),
                     'has_attachments' => (bool) $m->hasAttachments(),
                     'seen'            => in_array('Seen', $flags, true),
@@ -248,6 +312,10 @@ final class WebklexTransport implements ImapTransport
             }
             foreach ($this->gmailThreadIds($folder, array_keys($out)) as $uid => $thrid) {
                 $out[$uid]['thread_id'] = $thrid;
+            }
+            $undated = array_keys(array_filter($out, static fn ($r) => $r['date'] === ''));
+            foreach ($this->internalDates($folder, $undated) as $uid => $date) {
+                $out[$uid]['date'] = $date;
             }
             return $out;
         }, "fetch headers {$folder}");
@@ -279,6 +347,33 @@ final class WebklexTransport implements ImapTransport
             return $out;
         } catch (\Throwable) {
             return []; // not Gmail (or a transient hiccup): thread_id stays ''
+        }
+    }
+
+    /**
+     * INTERNALDATE (when the server received it) for messages whose Date
+     * header was missing or unparseable — one read-only batch FETCH, best
+     * effort: on any failure those rows keep date '' (stored as null).
+     *
+     * @param int[] $uids
+     * @return array<int,string> uid => INTERNALDATE
+     */
+    private function internalDates(string $folder, array $uids): array
+    {
+        if ($uids === []) return [];
+        try {
+            $this->client->openFolder($folder);
+            $resp = $this->client->getConnection()->fetch(['UID', 'INTERNALDATE'], array_values(array_map('intval', $uids)), null, \Webklex\PHPIMAP\IMAP::ST_UID);
+            $out  = [];
+            // Two items on purpose: with one, webklex keeps only the first
+            // token of the quoted date-time ("24-Sep-2026", no time, no zone).
+            foreach ((array) $resp->data() as $uid => $v) {
+                $d = self::internalDate($v);
+                if ($d !== '') $out[(int) $uid] = $d;
+            }
+            return $out;
+        } catch (\Throwable) {
+            return [];
         }
     }
 
