@@ -97,6 +97,63 @@ final class FolderRoleTest extends TestCase
         }
     }
 
+    public function testGmailWithAllMailHiddenStillNeverDoubleIngests(): void
+    {
+        $out = self::byId(FolderRole::assignImap([
+            ['id' => 'INBOX', 'delimiter' => '/'],
+            ['id' => '[Gmail]', 'delimiter' => '/', 'attributes' => ['\\Noselect']],
+            ['id' => '[Gmail]/All Mail', 'delimiter' => '/', 'attributes' => []],
+            ['id' => '[Gmail]/Sent Mail', 'delimiter' => '/', 'attributes' => ['\\Sent']],
+            ['id' => '[Gmail]/Drafts', 'delimiter' => '/', 'attributes' => ['\\Drafts']],
+            ['id' => '[Gmail]/Trash', 'delimiter' => '/', 'attributes' => ['\\Trash']],
+            ['id' => '[Gmail]/Spam', 'delimiter' => '/', 'attributes' => ['\\Junk']],
+            ['id' => '[Gmail]/Starred', 'delimiter' => '/', 'attributes' => []],
+            ['id' => '[Gmail]/Important', 'delimiter' => '/', 'attributes' => []],
+            ['id' => 'Clients', 'delimiter' => '/', 'attributes' => []],
+        ]));
+        $this->assertOnlyRealLocationsPollable($out);
+    }
+
+    public function testGmailListingWithNoAttributesAtAll(): void
+    {
+        $out = self::byId(FolderRole::assignImap([
+            ['id' => 'INBOX', 'delimiter' => '/'],
+            ['id' => '[Google Mail]/All Mail', 'delimiter' => '/'],
+            ['id' => '[Google Mail]/Sent Mail', 'delimiter' => '/'],
+            ['id' => '[Google Mail]/Drafts', 'delimiter' => '/'],
+            ['id' => '[Google Mail]/Trash', 'delimiter' => '/'],
+            ['id' => '[Google Mail]/Spam', 'delimiter' => '/'],
+            ['id' => '[Google Mail]/Starred', 'delimiter' => '/'],
+            ['id' => '[Google Mail]/Important', 'delimiter' => '/'],
+            ['id' => 'Clients', 'delimiter' => '/'],
+        ]));
+        $this->assertOnlyRealLocationsPollable($out, '[Google Mail]');
+    }
+
+    /** @param array<string,array<string,mixed>> $out */
+    private function assertOnlyRealLocationsPollable(array $out, string $root = '[Gmail]'): void
+    {
+        foreach (['INBOX', "$root/Sent Mail", "$root/Drafts", "$root/Trash", "$root/Spam"] as $id) {
+            $this->assertTrue($out[$id]['pollable'], $id);
+        }
+        $this->assertSame('Archive', $out["$root/All Mail"]['role']);
+        foreach (["$root/All Mail", "$root/Starred", "$root/Important", 'Clients'] as $id) {
+            $this->assertFalse($out[$id]['pollable'], $id);
+        }
+    }
+
+    public function testNonExistentAndNoselectRoleFoldersAreNotPolled(): void
+    {
+        $out = self::byId(FolderRole::assignImap([
+            ['id' => 'Ghost', 'attributes' => ['\\NonExistent']],
+            ['id' => 'Trash', 'attributes' => ['\\Trash', '\\Noselect']],
+        ]));
+        $this->assertFalse($out['Ghost']['pollable']);
+        $this->assertSame('not selectable', $out['Ghost']['reason']);
+        $this->assertSame('Trash', $out['Trash']['role']);
+        $this->assertFalse($out['Trash']['pollable']);
+    }
+
     public function testAnUnsubscribedOtherFolderIsNotPolled(): void
     {
         $out = self::byId(FolderRole::assignImap([

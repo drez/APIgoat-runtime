@@ -66,6 +66,9 @@ final class FolderRole
     /** Parents under which a name fallback is trusted (the provider's own namespace). */
     private const TRUSTED_ROOTS = ['inbox', '[gmail]', '[google mail]'];
 
+    /** Leaf names (lower-case) of Gmail's virtual folders, for listings that carry no attributes. */
+    private const GMAIL_VIEW_NAMES = ['all mail', 'tous les messages', 'starred', 'important'];
+
     /** Gmail system labels that are places. */
     private const GMAIL_SYSTEM = ['INBOX' => self::INBOX, 'SENT' => self::SENT, 'DRAFT' => self::DRAFTS, 'SPAM' => self::SPAM, 'TRASH' => self::TRASH];
 
@@ -82,6 +85,9 @@ final class FolderRole
         $claimed     = [];
         $labelServer = false;
         foreach ($folders as $f) {
+            if (self::isGoogleRoot((string) ($f['id'] ?? ''), $f['delimiter'] ?? null)) {
+                $labelServer = true;
+            }
             foreach (self::attrs((array) ($f['attributes'] ?? [])) as $a) {
                 if ($a === 'all') {
                     $labelServer = true;
@@ -125,6 +131,8 @@ final class FolderRole
             if (in_array('noselect', $attrs, true) || in_array('nonexistent', $attrs, true)) {
                 $reason = 'not selectable';
             } elseif (array_intersect($attrs, self::VIEW_ATTRS) !== []) {
+                $reason = 'virtual folder (a view of mail stored in other folders)';
+            } elseif ($labelServer && self::isGoogleRoot($id, $delim) && in_array(self::leaf($id, $delim), self::GMAIL_VIEW_NAMES, true)) {
                 $reason = 'virtual folder (a view of mail stored in other folders)';
             } elseif ($role === self::OTHER && $labelServer) {
                 $reason = 'label folder on a label server (would duplicate mail)';
@@ -173,6 +181,26 @@ final class FolderRole
             return ['role' => self::OTHER, 'role_source' => self::SOURCE_PROVIDER, 'pollable' => false, 'reason' => 'Gmail label (labels are not folders)'];
         }
         return ['role' => self::OTHER, 'role_source' => self::SOURCE_PROVIDER, 'pollable' => false, 'reason' => 'not a location'];
+    }
+
+    /** True when the folder is [Gmail] / [Google Mail] or sits under it (delimiter-aware first segment). */
+    private static function isGoogleRoot(string $id, ?string $delimiter): bool
+    {
+        $first = self::segments($id, $delimiter)[0] ?? '';
+        return in_array(mb_strtolower($first), ['[gmail]', '[google mail]'], true);
+    }
+
+    private static function leaf(string $id, ?string $delimiter): string
+    {
+        $parts = self::segments($id, $delimiter);
+        return mb_strtolower((string) end($parts));
+    }
+
+    /** @return string[] */
+    private static function segments(string $id, ?string $delimiter): array
+    {
+        $raw = $delimiter !== null && $delimiter !== '' ? explode($delimiter, $id) : (preg_split('#[./]#', $id) ?: []);
+        return array_values(array_filter(array_map('trim', $raw), static fn ($p) => $p !== ''));
     }
 
     /** @param array<int,mixed> $attrs @return string[] lower-case, no backslash */
