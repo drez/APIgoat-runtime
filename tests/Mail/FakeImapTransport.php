@@ -16,6 +16,10 @@ class FakeImapTransport implements ImapTransport
     public ?\Throwable $connectError = null;
     /** Hierarchy delimiter reported for every folder ('' = report none). */
     public string $delimiter = '/';
+    /** @var array<string,string[]> folder => LIST attributes as the server sends them ("\\Sent") */
+    public array $attributes = [];
+    /** @var array<string,bool> folder => LSUB membership; absent = unknown */
+    public array $subscribed = [];
 
     public function connect(): void
     {
@@ -34,7 +38,9 @@ class FakeImapTransport implements ImapTransport
     {
         $this->log[] = 'folders';
         return array_map(
-            fn ($f) => ['id' => (string) $f, 'name' => (string) $f] + ($this->delimiter !== '' ? ['delimiter' => $this->delimiter] : []),
+            fn ($f) => ['id' => (string) $f, 'name' => (string) $f]
+                + ($this->delimiter !== '' ? ['delimiter' => $this->delimiter] : [])
+                + ['attributes' => $this->attributes[$f] ?? [], 'subscribed' => $this->subscribed[$f] ?? null],
             array_keys($this->store)
         );
     }

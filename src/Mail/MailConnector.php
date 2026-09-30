@@ -37,7 +37,8 @@ interface MailConnector
     public function verify(): void;
 
     /**
-     * @return array<int,array{id:string, name:string, type?:string}> id is what fetchHeaders()/move() take as $folder
+     * @return array<int,array{id:string, name:string, type?:string, role?:string, role_source?:string, pollable?:bool, reason?:?string}>
+     *         id is what fetchHeaders()/move() take as $folder; role/pollable per {@see FolderRole}
      */
     public function listFolders(): array;
 

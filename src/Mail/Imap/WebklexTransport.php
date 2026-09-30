@@ -81,16 +81,51 @@ final class WebklexTransport implements ImapTransport
     public function folders(): array
     {
         return $this->guard(function () {
-            $out = [];
-            foreach ($this->client->getFolders(false) as $f) {
+            // Straight through the protocol: webklex's Folder object keeps
+            // \Noselect/\Marked/\HasChildren and DROPS the RFC 6154
+            // special-use attributes (\Sent \Junk \Trash \All …), which are
+            // the whole point here.
+            $conn = $this->client->getConnection();
+            $list = (array) $conn->folders('', '*')->validatedData();
+            $subs = $this->subscribedPaths();
+            $out  = [];
+            foreach ($list as $path => $item) {
+                $path  = (string) $path;
                 $out[] = [
-                    'id'        => (string) $f->path,
-                    'name'      => (string) ($f->full_name ?? $f->name ?? $f->path),
-                    'delimiter' => (string) ($f->delimiter ?? '/'),
+                    'id'         => $path,
+                    'name'       => self::decodeName($path),
+                    'delimiter'  => (string) ($item['delimiter'] ?? '/'),
+                    'attributes' => array_values(array_map('strval', (array) ($item['flags'] ?? []))),
+                    'subscribed' => $subs === null ? null : isset($subs[$path]),
                 ];
             }
             return $out;
         }, 'list folders');
+    }
+
+    /** LSUB "" "*" → path => true; null when the server refuses (unknown, not "none"). @return array<string,true>|null */
+    private function subscribedPaths(): ?array
+    {
+        try {
+            $conn = $this->client->getConnection();
+            $resp = $conn->requestAndResponse('LSUB', $conn->escapeString('', '*'))->setCanBeEmpty(true);
+            $out  = [];
+            foreach ((array) $resp->data() as $item) {
+                if (is_array($item) && count($item) === 4 && strtoupper((string) $item[0]) === 'LSUB') {
+                    $out[str_replace(['\\\\', '\\"'], ['\\', '"'], (string) $item[3])] = true;
+                }
+            }
+            return $out;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** Modified UTF-7 (RFC 3501 §5.1.3) → UTF-8 for display; the raw path stays the id. */
+    private static function decodeName(string $path): string
+    {
+        $d = @mb_convert_encoding($path, 'UTF-8', 'UTF7-IMAP');
+        return is_string($d) && $d !== '' ? $d : $path;
     }
 
     public function createFolder(string $path): void

@@ -81,8 +81,20 @@ final class GmailConnectorTest extends TestCase
         $this->routes['/labels']  = ['status' => 200, 'body' => ['labels' => [['id' => 'INBOX', 'name' => 'INBOX', 'type' => 'system'], ['id' => 'Label_1', 'name' => 'Clients', 'type' => 'user']]]];
         $c = $this->connector();
         $c->verify();
-        $this->assertSame([['id' => 'INBOX', 'name' => 'INBOX', 'type' => 'system'], ['id' => 'Label_1', 'name' => 'Clients', 'type' => 'user']], $c->listFolders());
+        $this->assertSame([
+            ['id' => 'INBOX', 'name' => 'INBOX', 'type' => 'system', 'role' => 'Inbox', 'role_source' => 'provider', 'pollable' => true, 'reason' => null],
+            ['id' => 'Label_1', 'name' => 'Clients', 'type' => 'user', 'role' => 'Other', 'role_source' => 'provider', 'pollable' => false, 'reason' => 'Gmail label (labels are not folders)'],
+        ], $c->listFolders());
         $this->assertSame('Authorization: Bearer tok-1', $this->calls[0]['headers'][0]);
+    }
+
+    public function testSpamAndTrashListingsAskForSpamAndTrash(): void
+    {
+        $this->routes['/messages?'] = ['status' => 200, 'body' => ['messages' => [['id' => 'a']]]];
+        $this->connector()->listIds('TRASH');
+        $this->connector()->listIds('INBOX');
+        $this->assertStringContainsString('includeSpamTrash=true', $this->calls[0]['url']);
+        $this->assertStringNotContainsString('includeSpamTrash', $this->calls[1]['url']);
     }
 
     public function testVerifyWithoutEmailIsAuthFailed(): void

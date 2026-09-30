@@ -8,6 +8,7 @@ use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\FolderLister;
 use ApiGoat\Mail\FolderListing;
+use ApiGoat\Mail\FolderRole;
 use ApiGoat\Mail\HeaderRecord;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
@@ -79,9 +80,17 @@ class GmailConnector extends BaseConnector implements FolderLister
     {
         $out = [];
         foreach ($this->call('GET', '/labels')['labels'] ?? [] as $l) {
-            $out[] = ['id' => (string) ($l['id'] ?? ''), 'name' => (string) ($l['name'] ?? ''), 'type' => (string) ($l['type'] ?? '')];
+            $id   = (string) ($l['id'] ?? '');
+            $type = (string) ($l['type'] ?? '');
+            $out[] = ['id' => $id, 'name' => (string) ($l['name'] ?? ''), 'type' => $type] + FolderRole::fromGmailLabel($id, $type);
         }
         return $out;
+    }
+
+    /** messages.list leaves SPAM and TRASH out unless asked: asking for those labels means asking for them. @return array<string,string> */
+    private static function labelParams(string $folder): array
+    {
+        return in_array($folder, ['SPAM', 'TRASH'], true) ? ['includeSpamTrash' => 'true'] : [];
     }
 
     public function fetchHeaders(string $folder, ?MailboxState $cursor, int $max): FetchResult
@@ -153,7 +162,7 @@ class GmailConnector extends BaseConnector implements FolderLister
         $ids    = [];
         $token  = null;
         for ($page = 0; $page < self::LIST_IDS_MAX_PAGES; $page++) {
-            $params = ['labelIds' => $folder, 'maxResults' => '500', 'fields' => 'messages/id,nextPageToken'];
+            $params = ['labelIds' => $folder, 'maxResults' => '500', 'fields' => 'messages/id,nextPageToken'] + self::labelParams($folder);
             if ($token !== null) {
                 $params['pageToken'] = $token;
             }
@@ -184,7 +193,7 @@ class GmailConnector extends BaseConnector implements FolderLister
             'labelIds'   => $folder,
             'q'          => 'newer_than:' . $this->coldStartDays . 'd',
             'maxResults' => (string) $max,
-        ];
+        ] + self::labelParams($folder);
         if ($cursor?->pageToken()) {
             $params['pageToken'] = $cursor->pageToken();
         }

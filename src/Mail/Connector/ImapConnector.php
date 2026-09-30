@@ -6,6 +6,7 @@ use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\FolderLister;
+use ApiGoat\Mail\FolderRole;
 use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\FolderWriter;
 use ApiGoat\Mail\HeaderRecord;
@@ -82,10 +83,24 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter
         }
     }
 
+    /** Every folder with its role and whether a client should poll it ({@see FolderRole::assignImap()}). */
     public function listFolders(): array
     {
         $this->connect();
-        return $this->imap->folders();
+        $folders = $this->imap->folders();
+        // FolderRole matches names on the id, and the wire id is modified
+        // UTF-7 ("Envoy&AOk-s"): assign on the decoded path, hand back the raw id.
+        $raw = array_column($folders, 'id');
+        foreach ($folders as &$f) {
+            $d    = @mb_convert_encoding((string) ($f['id'] ?? ''), 'UTF-8', 'UTF7-IMAP');
+            $f['id'] = is_string($d) && $d !== '' ? $d : (string) ($f['id'] ?? '');
+        }
+        unset($f);
+        $rows = FolderRole::assignImap($folders);
+        foreach ($rows as $i => $r) {
+            $rows[$i]['id'] = (string) $raw[$i];
+        }
+        return $rows;
     }
 
     public function fetchHeaders(string $folder, ?MailboxState $cursor, int $max): FetchResult

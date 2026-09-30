@@ -411,4 +411,35 @@ final class ImapConnectorTest extends TestCase
         $c = new ImapConnector(['host' => 'h', 'username' => 'u', 'password' => 'p'], $imap);
         $this->assertSame('', $c->append('INBOX', 'raw', false));
     }
+
+    public function testListFoldersReportsRolesFromSpecialUseAndNames(): void
+    {
+        $this->imap->store = ['INBOX' => [], 'Sent Items' => [], 'Trash' => [], 'ai.spam' => [], '[Gmail]/All Mail' => []];
+        $this->imap->attributes = ['Sent Items' => ['\\Sent'], '[Gmail]/All Mail' => ['\\All']];
+        $this->imap->subscribed = ['ai.spam' => true];
+
+        $c    = $this->connector(); // held: the destructor would log a disconnect
+        $rows = array_column($c->listFolders(), null, 'id');
+
+        $this->assertSame('Inbox', $rows['INBOX']['role']);
+        $this->assertSame('Sent', $rows['Sent Items']['role']);
+        $this->assertSame('special_use', $rows['Sent Items']['role_source']);
+        $this->assertSame('Trash', $rows['Trash']['role']);
+        $this->assertSame('Other', $rows['ai.spam']['role']);
+        $this->assertFalse($rows['ai.spam']['pollable'], 'this fake server exposes \\All: Other folders are labels');
+        $this->assertFalse($rows['[Gmail]/All Mail']['pollable']);
+        $this->assertTrue($rows['ai.spam']['subscribed']);
+        $this->assertSame(['connect', 'folders'], $this->imap->log, 'one LIST, nothing else');
+    }
+
+    public function testListFoldersMatchesNamesOnDecodedIdsButKeepsTheRawId(): void
+    {
+        $raw = 'Envoy&AOk-s'; // modified UTF-7 "Envoyés"
+        $this->imap->store = ['INBOX' => [], $raw => []];
+
+        $rows = array_column($this->connector()->listFolders(), null, 'id');
+
+        $this->assertArrayHasKey($raw, $rows, 'the id stays what SELECT takes');
+        $this->assertSame('Sent', $rows[$raw]['role']);
+    }
 }

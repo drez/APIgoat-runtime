@@ -29,9 +29,12 @@ interface ImapTransport
     /**
      * Every folder, flat (sub-folders included). `delimiter` is the server's
      * hierarchy separator for that folder ("/" or "." in practice) when the
-     * transport knows it.
+     * transport knows it. `attributes` are the LIST flags exactly as the
+     * server sent them ("\\Sent", "\\Noselect", …: RFC 3501 + RFC 6154
+     * special-use). `subscribed` is LSUB membership, or null when the server
+     * would not say.
      *
-     * @return array<int,array{id:string, name:string, type?:string, delimiter?:string}>
+     * @return array<int,array{id:string, name:string, type?:string, delimiter?:string, attributes?:string[], subscribed?:bool|null}>
      */
     public function folders(): array;
 
