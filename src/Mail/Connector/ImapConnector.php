@@ -421,6 +421,18 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter,
         return $this->imap->raw($folder, $uid);
     }
 
+    /**
+     * Header block only (BODY.PEEK[HEADER]): no body, no attachments, \\Seen
+     * untouched. A provider id that is not an IMAP "uid:folder" (e.g. an
+     * "unresolved:" placeholder) is refused like every other method here.
+     */
+    public function fetchRawHeader(string $providerId): string
+    {
+        [$uid, $folder] = $this->parseId($providerId);
+        $this->connect();
+        return $this->imap->rawHeader($folder, $uid);
+    }
+
     public function append(string $folder, string $raw, bool $seen): string
     {
         $this->connect();

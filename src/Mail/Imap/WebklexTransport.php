@@ -380,12 +380,38 @@ final class WebklexTransport implements ImapTransport
 
     public function raw(string $folder, int $uid): string
     {
-        return $this->guard(function () use ($folder, $uid) {
-            $m = $this->folder($folder)->query()->setFetchBody(true)->leaveUnread()->getMessageByUid($uid);
+        return $this->peek($folder, $uid, 'BODY[]');
+    }
+
+    public function rawHeader(string $folder, int $uid): string
+    {
+        return $this->peek($folder, $uid, 'BODY[HEADER]');
+    }
+
+    /**
+     * UID FETCH of BODY.PEEK[<section>] straight through the protocol. PEEK
+     * never sets \Seen. (webklex's own content fetch sends RFC822.TEXT, which
+     * does, and its peek() then un-sets it: a crash or a concurrent client in
+     * between left the user's mail read.) Two items are requested on purpose:
+     * with one, webklex's fetch() looks for the literal name "BODY.PEEK[]",
+     * which servers never echo (they answer "BODY[]").
+     */
+    private function peek(string $folder, int $uid, string $section): string
+    {
+        return $this->guard(function () use ($folder, $uid, $section) {
+            $this->client->openFolder($folder);
+            $conn = $this->client->getConnection();
+            $item = str_replace('BODY[', 'BODY.PEEK[', $section);
+            try {
+                $rows = (array) $conn->fetch(['UID', $item], [$uid], null, \Webklex\PHPIMAP\IMAP::ST_UID)->validatedData();
+            } catch (\RuntimeException) {
+                $rows = [];
+            }
+            $text = $rows[$uid][$section] ?? null;
             // Gone (deleted/archived/expunged), not a transient hiccup: never retry.
-            if (!$m) throw new ValidationRejected("IMAP uid {$uid} not found in {$folder}", 404);
-            return (string) $m->getHeader()->raw . "\r\n\r\n" . (string) $m->getRawBody();
-        }, "fetch body {$folder}/{$uid}");
+            if (!is_string($text)) throw new ValidationRejected("IMAP uid {$uid} not found in {$folder}", 404);
+            return $text;
+        }, "fetch {$section} {$folder}/{$uid}");
     }
 
     public function setSeen(string $folder, int $uid, bool $seen): void

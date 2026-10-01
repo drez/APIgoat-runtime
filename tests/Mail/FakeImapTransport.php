@@ -100,6 +100,14 @@ class FakeImapTransport implements ImapTransport
         return (string) ($this->store[$folder][$uid]['raw'] ?? '');
     }
 
+    public function rawHeader(string $folder, int $uid): string
+    {
+        $this->log[] = "rawheader:$folder:$uid";
+        $raw = (string) ($this->store[$folder][$uid]['raw'] ?? '');
+        $p = strpos($raw, "\r\n\r\n");
+        return $p === false ? $raw : substr($raw, 0, $p);
+    }
+
     public function setSeen(string $folder, int $uid, bool $seen): void
     {
         $this->log[] = "seen:$folder:$uid:" . ($seen ? '1' : '0');

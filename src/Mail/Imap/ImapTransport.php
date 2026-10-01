@@ -73,8 +73,11 @@ interface ImapTransport
      */
     public function headers(string $folder, array $uids): array;
 
-    /** The full RFC 822 message. */
+    /** The full RFC 822 message, fetched with BODY.PEEK (never touches \\Seen). */
     public function raw(string $folder, int $uid): string;
+
+    /** The RFC 822 header block only (BODY.PEEK[HEADER]); no body, no attachments. */
+    public function rawHeader(string $folder, int $uid): string;
 
     public function setSeen(string $folder, int $uid, bool $seen): void;
 

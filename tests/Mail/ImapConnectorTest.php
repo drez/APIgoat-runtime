@@ -386,6 +386,25 @@ final class ImapConnectorTest extends TestCase
         $this->assertContains('raw:Archive:4', $this->imap->log);
     }
 
+    public function testFetchRawHeaderPeeksTheHeaderOnlyAndTouchesNoFlag(): void
+    {
+        $this->imap->add('Archive', 4, ['raw' => "Subject: hi\r\nList-Id: <a.b>\r\n\r\nSECRETBODY", 'seen' => false]);
+        $h = $this->connector()->fetchRawHeader('4:Archive');
+        $this->assertStringContainsString('List-Id: <a.b>', $h);
+        $this->assertStringNotContainsString('SECRETBODY', $h);
+        $this->assertContains('rawheader:Archive:4', $this->imap->log);
+        $this->assertFalse($this->imap->store['Archive'][4]['seen']);
+        foreach ($this->imap->log as $l) {
+            $this->assertStringNotContainsString('seen', $l);
+        }
+    }
+
+    public function testFetchRawHeaderRefusesAnUnresolvedId(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->connector()->fetchRawHeader('unresolved:abc');
+    }
+
     public function testAppendReturnsTheNewProviderIdAndFlagsSeen(): void
     {
         $this->imap->add('INBOX', 3);
