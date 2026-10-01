@@ -240,7 +240,7 @@ final class RequestRecorder
         self::$shutdownHooks[] = static function () use ($r): void {
             try {
                 $pdo = \Propel::getConnection(_DATA_SRC);
-                self::safeRecord($pdo, $r, (int) Config::get('slow_ms'));
+                self::safeRecord($pdo, $r, Config::slowMsFor(self::routeKey($r['route'] ?? null)));
             } catch (\Throwable $e) {
                 \error_log('[ops] record failed: ' . $e->getMessage());
             }

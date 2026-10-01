@@ -33,6 +33,9 @@ final class Config
         'report_to'     => 'Admin',
         'snapshot_path' => '',
         'hub'           => false,
+        // route => ms: routes slow by design (LLM, MCP) only count as slow
+        // above their own threshold; a key ending in '*' is a prefix.
+        'slow_routes'   => [],
     ];
 
     /** Cached manifest contents (without defaults merged in), or null = not loaded yet. */
@@ -79,6 +82,37 @@ final class Config
     public static function get(string $k)
     {
         return self::all()[$k] ?? (self::DEFAULTS[$k] ?? null);
+    }
+
+    /**
+     * The slow threshold for $route (a matched route pattern): its exact
+     * slow_routes entry, else the longest matching 'prefix*' entry, else
+     * slow_ms. Non-positive / non-integer entries are ignored.
+     */
+    public static function slowMsFor(?string $route): int
+    {
+        $default = (int) self::get('slow_ms');
+        $routes = self::get('slow_routes');
+        if ($route === null || !\is_array($routes) || $routes === []) {
+            return $default;
+        }
+        $best = null;
+        $bestLen = -1;
+        foreach ($routes as $key => $ms) {
+            $key = (string) $key;
+            if (!\is_int($ms) || $ms <= 0) {
+                continue;
+            }
+            if ($key === $route) {
+                return $ms;
+            }
+            if (\str_ends_with($key, '*') && \str_starts_with($route, \substr($key, 0, -1)) && \strlen($key) > $bestLen) {
+                $best = $ms;
+                $bestLen = \strlen($key);
+            }
+        }
+
+        return $best ?? $default;
     }
 
     /** @return array<string,mixed> */
