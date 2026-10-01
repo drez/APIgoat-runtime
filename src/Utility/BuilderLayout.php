@@ -75,6 +75,11 @@ class BuilderLayout
     let _SITE_URL = '" . addslashes(_SITE_URL) . "';
     let _VAPID_PUBLIC_KEY = '" . addslashes($vapidPublicKey) . "';
     window.gcNotifPillOff = " . $pillOffLiteral . ";
+    window.gcReauthI18n = " . json_encode([
+            'title' => _('Session expired'), 'msg' => _('Please sign in again to continue.'),
+            'user' => _('Username'), 'pass' => _('Password'),
+            'reload' => _('Reload page'), 'signin' => _('Sign in'),
+        ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) . ";
 " . ($gcUserKey !== '' ? "    window.gcUserKey = " . json_encode($gcUserKey) . ";\n" : '') . "
     (function () {
         var ok = " . json_encode(array_values($this->validThemes())) . ";
@@ -93,14 +98,7 @@ class BuilderLayout
         // apple-mobile-web-app-title is per-project — prefer the
         // configured _SITE_TITLE, fall back to ucfirst(_PROJECT_NAME),
         // and only default to "App" when neither is defined.
-        $pwaTitle = '';
-        if (defined('_SITE_TITLE') && _SITE_TITLE !== '') {
-            $pwaTitle = (string) _SITE_TITLE;
-        } elseif (defined('_PROJECT_NAME') && _PROJECT_NAME !== '') {
-            $pwaTitle = ucfirst((string) _PROJECT_NAME);
-        } else {
-            $pwaTitle = 'App';
-        }
+        $pwaTitle = Branding::productName();
         $pwaHeaders = '
 <style>html{background-color:var(--bg,#ffffff)}</style>
 <link rel="manifest" href="' . _SITE_URL . 'manifest.webmanifest">
@@ -119,6 +117,15 @@ class BuilderLayout
 <meta name="msapplication-TileColor" content="#ffffff">
 ';
 
+        // No page set a title (login, confirm, reset…): the tab shows the
+        // product name instead of the bare URL.
+        if (trim((string) $this->title) === '') {
+            $this->title = htmlspecialchars($pwaTitle, ENT_QUOTES);
+        }
+        // htmlHeader() prefixes _SITE_URL itself, so pass the relative path.
+        if ($favicon === '' && Branding::faviconUrl() !== '') {
+            $favicon = 'public/img/fav-2.1.png';
+        }
         $this->htmlHeader = htmlHeader($this->title, $this->incCss, $siteDescription, $siteKeywords, $pwaHeaders . $headjs . $AssetsHead->js() . $AssetsAdmin->js() . $Assets->js(), $favicon, $headAuthor);
 
     }
