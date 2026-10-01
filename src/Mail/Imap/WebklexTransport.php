@@ -172,7 +172,7 @@ final class WebklexTransport implements ImapTransport
     {
         try {
             $conn = $this->client->getConnection();
-            $resp = $conn->requestAndResponse('LSUB', $conn->escapeString('', '*'))->setCanBeEmpty(true);
+            $resp = $conn->requestAndResponse('LSUB', $conn->escapeString('', '*'));
             $out  = [];
             foreach ((array) $resp->data() as $item) {
                 if (is_array($item) && count($item) === 4 && strtoupper((string) $item[0]) === 'LSUB') {
@@ -402,11 +402,9 @@ final class WebklexTransport implements ImapTransport
             $this->client->openFolder($folder);
             $conn = $this->client->getConnection();
             $item = str_replace('BODY[', 'BODY.PEEK[', $section);
-            try {
-                $rows = (array) $conn->fetch(['UID', $item], [$uid], null, \Webklex\PHPIMAP\IMAP::ST_UID)->validatedData();
-            } catch (\RuntimeException) {
-                $rows = [];
-            }
+            // A missing uid is an OK answer with no FETCH line (empty result):
+            // allow empty so it reaches the 404 below, while NO/BAD still throw.
+            $rows = (array) $conn->fetch(['UID', $item], [$uid], null, \Webklex\PHPIMAP\IMAP::ST_UID)->setCanBeEmpty(true)->validatedData();
             $text = $rows[$uid][$section] ?? null;
             // Gone (deleted/archived/expunged), not a transient hiccup: never retry.
             if (!is_string($text)) throw new ValidationRejected("IMAP uid {$uid} not found in {$folder}", 404);

@@ -23,4 +23,30 @@ final class WebklexCopyUidTest extends TestCase
         $this->assertSame(0, WebklexTransport::copyUid(['A5 OK Move completed.'], 11727));
         $this->assertSame(0, WebklexTransport::copyUid(['OK [COPYUID 9 4 30] Done'], 5), 'another uid moved: not ours');
     }
+
+    public function testAMissingUidIsGoneNotTransient(): void
+    {
+        $t = new WebklexTransport(['host' => 'x', 'username' => 'u', 'password' => 'p']);
+        $conn = new class {
+            public function fetch(): \Webklex\PHPIMAP\Connection\Protocols\Response
+            {
+                return \Webklex\PHPIMAP\Connection\Protocols\Response::empty()->setResult([]);
+            }
+        };
+        $client = new class($conn) {
+            public function __construct(private object $c) {}
+            public function openFolder(string $f): void {}
+            public function getConnection(): object { return $this->c; }
+        };
+        $p = new \ReflectionProperty($t, 'client');
+        $p->setValue($t, $client);
+        foreach (['raw', 'rawHeader'] as $m) {
+            try {
+                $t->$m('INBOX', 999999999);
+                $this->fail("$m must throw");
+            } catch (\ApiGoat\Sync\Exceptions\ValidationRejected $e) {
+                $this->assertSame(404, $e->getCode());
+            }
+        }
+    }
 }
