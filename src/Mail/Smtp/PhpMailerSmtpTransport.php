@@ -43,6 +43,11 @@ class PhpMailerSmtpTransport implements SmtpTransport
                     throw self::fail($smtp, SmtpFailure::PHASE_CONNECT, 'EHLO after STARTTLS');
                 }
             }
+            if ($s->username !== '' && !array_key_exists('AUTH', $smtp->getServerExtList() ?? [])) {
+                // PHPMailer would fail client-side with no code (retried 24 h); a server that
+                // never offers AUTH will not start offering it, so this is permanent.
+                throw new SmtpFailure("SMTP server {$s->host} does not offer AUTH" . ($s->security === SmtpSettings::STARTTLS ? ' (even after STARTTLS)' : ''), SmtpFailure::PHASE_AUTH, 504);
+            }
             if ($s->username !== '' && !$smtp->authenticate($s->username, $s->password())) {
                 throw self::fail($smtp, SmtpFailure::PHASE_AUTH, 'AUTH');
             }

@@ -107,6 +107,22 @@ final class WireSmtpTest extends TestCase
         $this->assertStringNotContainsString("DATA\r\n", $wire);
     }
 
+    public function testAServerThatDoesNotOfferAuthIsAPermanentFailureAndNothingIsSent(): void
+    {
+        $e = null;
+        try {
+            $this->transport([...self::HELLO, '221 bye'])->send(new SmtpSettings('smtp.fx.example', 25, SmtpSettings::NONE, 'fred', 'pw'), 'fred@fx.example', ['ada@fx.example'], "Subject: x\r\n\r\nbody\r\n");
+        } catch (SmtpFailure $e) {
+        }
+        $this->assertNotNull($e);
+        $this->assertSame(SmtpFailure::PHASE_AUTH, $e->phase);
+        $this->assertTrue($e->permanent());
+        $wire = $this->wire();
+        $this->assertStringNotContainsString('AUTH', $wire);
+        $this->assertStringNotContainsString('MAIL FROM', $wire);
+        $this->assertStringNotContainsString("DATA\r\n", $wire);
+    }
+
     public function testAClosedConnectionBeforeTheGreetingIsTransient(): void
     {
         $e = $this->send([]);

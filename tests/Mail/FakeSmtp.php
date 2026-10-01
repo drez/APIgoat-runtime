@@ -33,6 +33,7 @@ class FakeSmtp extends SMTP
 
     public function connect($host, $port = null, $timeout = 30, $options = []) { $this->options = $options; return $this->step('connect', [$host, $port]); }
     public function hello($host = '') { return $this->step('hello', []); }
+    public function getServerExtList() { return ['AUTH' => ['PLAIN', 'LOGIN']]; }
     public function startTLS() { return $this->step('startTLS', []); }
     public function authenticate($username, $password, $authtype = null, $OAuth = null) { return $this->step('authenticate', [$username]); }
     public function mail($from) { return $this->step('mail', [$from]); }
