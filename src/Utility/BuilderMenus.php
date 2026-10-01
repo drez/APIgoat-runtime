@@ -18,6 +18,8 @@ class BuilderMenus
     private $Menu;
     private $args;
     private $built = false;
+    /** @var array<string,string> model name / route => its menu label */
+    private $labels = [];
 
 
     public function __construct($args)
@@ -65,6 +67,11 @@ class BuilderMenus
         }
 
         foreach ($menus as $item) {
+            $label = _($item['desc']);
+            $this->labels[(string) $item['name']] ??= $label;
+            if (!empty($item['route'])) {
+                $this->labels[(string) $item['route']] ??= $label;
+            }
             if ($item['parent_menu']) {
                 $Menu->addUnder($item['parent_menu'], _($item['desc']), $item['name'], $item['index'], $item['subtitle'] ?? null, $item['icon'] ?? null, $item['route'] ?? null);
                 $parents[$item['parent_menu']] = true;
@@ -105,5 +112,27 @@ class BuilderMenus
     {
         $this->build();
         return $this->Menu->getRequested();
+    }
+
+    /**
+     * What the topbar shows for the current page: the menu label of the
+     * requested model or route ("Billings", "Finance Dashboard"), else the
+     * route made readable ("Dashboard/yearEnd" -> "Dashboard › YearEnd") —
+     * never a raw route key.
+     */
+    public function requestedLabel(): string
+    {
+        $this->build();
+        $req = (string) ($this->Menu->getRequested() ?: '');
+        if ($req === '') {
+            return '';
+        }
+        return $this->labels[$req] ?? self::readableRoute($req);
+    }
+
+    public static function readableRoute(string $route): string
+    {
+        $parts = array_filter(explode('/', trim($route, '/')), 'strlen');
+        return implode(' › ', array_map(static fn ($p) => ucfirst($p), $parts));
     }
 }

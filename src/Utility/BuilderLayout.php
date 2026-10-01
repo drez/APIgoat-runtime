@@ -407,7 +407,7 @@ if("serviceWorker"in navigator&&navigator.serviceWorker.controller){navigator.se
             // .menu-btn; SCSS hides this bar there to avoid two
             // hamburgers). Without this, non-list pages (home, full-page
             // edit) had no way to open #appDrawer.
-            $gcEntity = (string) ($this->builderMenus->getRequested() ?: '');
+            $gcEntity = $this->builderMenus->requestedLabel();
             $gcCrumb = $gcEntity !== '' ? $gcEntity : _('Home');
             $topbar = div(
                 button("<i class='ri-menu-line'></i>", "type='button' class='menu-btn' aria-label='" . _('Menu') . "'")
