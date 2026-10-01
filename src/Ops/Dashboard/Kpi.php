@@ -18,8 +18,9 @@ final class Kpi
     /**
      * @param ?array{0:list<int|string>, 1:list<int|float|null>, 2?:string} $spark
      *        [x labels (unix timestamps or ready-made strings like a date), values, unit suffix]
+     * @param ?string $level Level::of() result: the value shows as an amber/red pill
      */
-    public static function tile(string $label, string|int|float $value, ?array $spark = null): string
+    public static function tile(string $label, string|int|float $value, ?array $spark = null, ?string $level = null): string
     {
         $e = static fn ($s) => \htmlspecialchars((string) $s, \ENT_QUOTES);
         $line = $spark !== null && \count($spark[1]) > 1
@@ -28,7 +29,7 @@ final class Kpi
                 . ' data-unit="' . $e($spark[2] ?? '') . '"></canvas>'
             : '<div class="ops-spark ops-spark--none"></div>';
 
-        return '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . $e($value) . '</div>' . $line . '</div>';
+        return '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . Level::pill((string) $value, $level) . '</div>' . $line . '</div>';
     }
 
     /**

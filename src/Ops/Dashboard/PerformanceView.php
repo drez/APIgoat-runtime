@@ -49,6 +49,9 @@ final class PerformanceView
         $siteTd = fn (array $r) => $siteCol ? '<td>' . $e($scope->label((int) $r['site_id'])) . '</td>' : '';
         $siteTh = $siteCol ? '<th>' . htmlspecialchars(_('Site'), ENT_QUOTES) . '</th>' : '';
         $st = new Stats($pdo, $scope->statsSites());
+        // Amber/red pills on problem numbers; normal values stay plain.
+        $lv = Level::fromConfig($pdo);
+        $pill = fn (string $metric, mixed $value, ?string $text = null) => Level::pill($text ?? (string) $value, $lv->level($metric, $value));
 
         $o = $st->perfOverview($f, $t);
         $trend = $st->latencyTrend($f, $t);
@@ -78,7 +81,7 @@ final class PerformanceView
         $slowestRoutesRows = '';
         foreach ($slowestRoutes as $r) {
             $slowestRoutesRows .= '<tr>' . $siteTd($r) . $routeCell($r['route']) . '<td>' . $e($r['method']) . '</td><td>' . (int) $r['n'] . '</td>'
-                . '<td>' . $e($r['avg_ms']) . '</td><td>' . $e(self::fmtP95($r['p95_ms'])) . '</td><td>' . (int) $r['n_5xx'] . '</td></tr>';
+                . '<td>' . $pill('avg_ms', $r['avg_ms']) . '</td><td>' . $pill('p95_ms', $r['p95_ms'], self::fmtP95($r['p95_ms'])) . '</td><td>' . $pill('count_5xx', (int) $r['n_5xx']) . '</td></tr>';
         }
         $slowestRoutesTable = '<div class="ops-card"><h3>' . $e(_('Slowest routes')) . '</h3>'
             . '<table class="ops-t"><tr>' . $siteTh . $th(_('Route'), _('Matched route pattern (e.g. /Client/edit/{id}); all URLs of one pattern are summed. (unmatched) = requests no route handled.')) . '<th>' . $e(_('Method')) . '</th><th>' . $e(_('Requests')) . '</th><th>' . $e(_('Avg ms')) . '</th><th>' . $e(_('p95')) . '</th><th>' . $e(_('5xx')) . '</th></tr>'
@@ -88,8 +91,8 @@ final class PerformanceView
         $slowRequestsRows = '';
         foreach ($slowRequests as $r) {
             $slowRequestsRows .= '<tr>' . $siteTd($r) . $routeCell($r['route']) . '<td>' . $e($r['method']) . '</td><td>' . (int) $r['n'] . '</td>'
-                . '<td>' . $e($r['avg_ms']) . '</td><td>' . (int) $r['max_ms'] . '</td>'
-                . '<td>' . ($r['avg_queries'] !== null ? $e($r['avg_queries']) : '') . '</td><td>' . (int) $r['n_5xx'] . '</td>'
+                . '<td>' . $pill('slow_req_ms', $r['avg_ms']) . '</td><td>' . $pill('slow_req_ms', (int) $r['max_ms']) . '</td>'
+                . '<td>' . ($r['avg_queries'] !== null ? $pill('queries', $r['avg_queries']) : '') . '</td><td>' . $pill('count_5xx', (int) $r['n_5xx']) . '</td>'
                 . '<td>' . $e(date('Y-m-d H:i:s', $r['last_at'])) . '</td></tr>';
         }
         $slowRequestsTable = '<div class="ops-card"><h3>' . $e(_('Slow requests')) . '</h3>'
@@ -102,7 +105,7 @@ final class PerformanceView
             $routes = $r['routes'];
             $routeCell = $e(implode(', ', \array_slice($routes, 0, 3))) . (\count($routes) > 3 ? ' ' . $e(sprintf(_('+%d more'), \count($routes) - 3)) : '');
             $slowQueriesRows .= '<tr>' . $siteTd($r) . '<td><code>' . $e($r['sql_text'] ?? '') . '</code></td><td>' . (int) $r['n'] . '</td>'
-                . '<td>' . $e($r['avg_ms']) . '</td><td>' . (int) $r['max_ms'] . '</td>'
+                . '<td>' . $pill('query_ms', $r['avg_ms']) . '</td><td>' . $pill('query_ms', (int) $r['max_ms']) . '</td>'
                 . '<td>' . $routeCell . '</td><td>' . $e(date('Y-m-d H:i:s', $r['last_at'])) . '</td></tr>';
         }
         $slowQueriesTable = '<div class="ops-card"><h3>' . $e(_('Slow queries')) . '</h3>'
@@ -168,8 +171,8 @@ final class PerformanceView
                 $mcpRows .= '<tr>' . $siteTd($r) . '<td>' . $e($r['tool']) . '</td><td>' . $e($r['client'] !== '' ? $r['client'] : '—') . '</td>'
                     . '<td>' . (int) $r['n'] . '</td>'
                     . '<td>' . ($r['n_err'] > 0 ? '<span class="cl-status cl-status-' . $errCls . '">' . (int) $r['n_err'] . '</span>' : '0') . '</td>'
-                    . '<td>' . (int) $r['n_denied'] . '</td>'
-                    . '<td>' . $e($r['avg_ms']) . '</td><td>' . (int) $r['max_ms'] . '</td></tr>';
+                    . '<td>' . $pill('denied', (int) $r['n_denied']) . '</td>'
+                    . '<td>' . $pill('mcp_ms', $r['avg_ms']) . '</td><td>' . (int) $r['max_ms'] . '</td></tr>';
             }
             $mcpTable = '<div class="ops-card"><h3>' . $e(_('MCP')) . '</h3>'
                 . '<table class="ops-t"><tr>' . $siteTh
@@ -208,13 +211,13 @@ final class PerformanceView
             . '<button type="submit" class="dash-btn dash-btn--primary"><i class="ri-equalizer-line"></i><span>' . $e(_('Apply')) . '</span></button></form>'
             . '<div class="ops-kpis">'
             . Kpi::tile(_('Requests'), $o['requests'], [$ts, array_column($trend, 'n'), ''])
-            . Kpi::tile(_('Avg latency'), $o['avg_ms'] . ' ms', [$ts, array_column($trend, 'avg_ms'), ' ms'])
-            . Kpi::tile(_('p95 latency'), self::fmtP95($o['p95_ms']), [$ts, array_column($trend, 'p95_ms'), ' ms'])
-            . Kpi::tile(_('5xx rate'), round($o['rate_5xx'] * 100, 2) . '%', [$ts, array_map(fn ($r) => round($r['rate_5xx'] * 100, 2), $trend), '%'])
+            . Kpi::tile(_('Avg latency'), $o['avg_ms'] . ' ms', [$ts, array_column($trend, 'avg_ms'), ' ms'], $lv->level('avg_ms', $o['avg_ms']))
+            . Kpi::tile(_('p95 latency'), self::fmtP95($o['p95_ms']), [$ts, array_column($trend, 'p95_ms'), ' ms'], $lv->level('p95_ms', $o['p95_ms']))
+            . Kpi::tile(_('5xx rate'), round($o['rate_5xx'] * 100, 2) . '%', [$ts, array_map(fn ($r) => round($r['rate_5xx'] * 100, 2), $trend), '%'], $lv->level('rate_5xx_pct', round($o['rate_5xx'] * 100, 2)))
             . Kpi::tile(_('Slow queries'), $o['slow_queries'], [$ts, array_map(fn ($h) => $slowByBucket[$h] ?? 0, $ts), ''])
-            . Kpi::tile(_('Load (1m)'), $server !== null && $server['load1'] !== null ? $server['load1'] : $unavailable, $sparkServer('load1', ''))
-            . Kpi::tile(_('Memory'), $server !== null && $server['mem_pct'] !== null ? $server['mem_pct'] . '%' : $unavailable, $sparkServer('mem_pct', '%'))
-            . Kpi::tile(_('Disk'), $server !== null && $server['disk_pct'] !== null ? $server['disk_pct'] . '%' : $unavailable, $sparkServer('disk_pct', '%'))
+            . Kpi::tile(_('Load (1m)'), $server !== null && $server['load1'] !== null ? $server['load1'] : $unavailable, $sparkServer('load1', ''), $lv->level('load1', $server['load1'] ?? null))
+            . Kpi::tile(_('Memory'), $server !== null && $server['mem_pct'] !== null ? $server['mem_pct'] . '%' : $unavailable, $sparkServer('mem_pct', '%'), $lv->level('mem_pct', $server['mem_pct'] ?? null))
+            . Kpi::tile(_('Disk'), $server !== null && $server['disk_pct'] !== null ? $server['disk_pct'] . '%' : $unavailable, $sparkServer('disk_pct', '%'), $lv->level('disk_pct', $server['disk_pct'] ?? null))
             . '</div>'
             . '<div class="ops-card"><h3>' . $e(_('Latency trend')) . '</h3>'
             . '<canvas id="perf-latency-trend" height="90" data-series="' . $e(json_encode($trend)) . '"></canvas></div>'
