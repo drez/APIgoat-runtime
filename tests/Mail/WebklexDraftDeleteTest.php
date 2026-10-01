@@ -132,4 +132,16 @@ final class WebklexDraftDeleteTest extends TestCase
             $this->assertSame([], $calls->getArrayCopy());
         }
     }
+
+    public function testAMessageIdDifferingOnlyInCaseIsNotOurs(): void
+    {
+        [$t, $calls] = $this->transport([42 => ['UID' => '42', 'BODY[HEADER]' => "Message-ID: <DRAFT.7.3.EF@draft.apigmail.invalid>\r\n"]]);
+        try {
+            $t->expungeUid('Drafts', 42, self::OURS);
+            $this->fail('a case-only difference must be refused');
+        } catch (ValidationRejected $e) {
+            $this->assertSame(409, $e->getCode());
+        }
+        $this->assertSame(['SELECT Drafts', 'UID FETCH 42 UID BODY.PEEK[HEADER]'], $calls->getArrayCopy(), 'no STORE / EXPUNGE');
+    }
 }
