@@ -189,14 +189,31 @@ class FakeImapTransport implements ImapTransport, ImapDraftTransport
         return $this->uidPlus;
     }
 
-    /** Models UID STORE +FLAGS.SILENT (\Deleted) + UID EXPUNGE <uid>: removes that uid only. */
-    public function expungeUid(string $folder, int $uid): void
+    /** @var string[] folders whose SELECT the fake answers [READ-ONLY] */
+    public array $readOnlyFolders = [];
+
+    /**
+     * Mirrors WebklexTransport::expungeUid(): forced SELECT (read-only →
+     * ValidationRejected 409), header fetch (empty → TransientError 404, like
+     * the real empty UID FETCH), exact Message-ID match (else
+     * ValidationRejected 409), then STORE \Deleted + UID EXPUNGE of that uid only.
+     */
+    public function expungeUid(string $folder, int $uid, string $expectedMessageId): void
     {
         if (!$this->uidPlus) {
             throw new \LogicException("forbidden deletion: expungeUid:$folder:$uid on a server without UIDPLUS");
         }
+        $this->log[] = "select:$folder";
+        if (in_array($folder, $this->readOnlyFolders, true)) {
+            throw new \ApiGoat\Sync\Exceptions\ValidationRejected("IMAP {$folder} opened read-only — draft uid {$uid} not deleted", 409);
+        }
+        $this->log[] = "fetchheader:$folder:$uid";
         if (!isset($this->store[$folder][$uid])) {
             throw new \ApiGoat\Sync\Exceptions\TransientError("IMAP uid {$uid} not found in {$folder}", 404);
+        }
+        $found = (string) ($this->store[$folder][$uid]['message_id'] ?? '');
+        if ($found !== $expectedMessageId) {
+            throw new \ApiGoat\Sync\Exceptions\ValidationRejected("IMAP uid {$uid} in {$folder} no longer holds our draft (Message-ID {$found}) — not deleted", 409);
         }
         $this->log[] = "expunge:$folder:$uid";
         unset($this->store[$folder][$uid]);

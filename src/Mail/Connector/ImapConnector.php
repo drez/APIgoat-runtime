@@ -20,6 +20,7 @@ use ApiGoat\Mail\MailConnector;
 use ApiGoat\Mail\MessageState;
 use ApiGoat\Mail\MimeBodyParser;
 use ApiGoat\Mail\StateWriter;
+use ApiGoat\Mail\UnsupportedOperation;
 use ApiGoat\Sync\Exceptions\TransientError;
 
 /**
@@ -459,35 +460,55 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter,
     /**
      * The only hard delete in the mail runtime. Every refusal below happens
      * before any server call: an "unresolved:" id, an id without an explicit
-     * folder (parseId() would default it to INBOX), uid 0, or a folder that is
-     * not EXACTLY $draftsFolder (no case folding, no delimiter normalising).
+     * folder (parseId() would default it to INBOX), uid 0, a folder that is
+     * not EXACTLY $draftsFolder (no case folding, no delimiter normalising),
+     * or an unusable $expectedMessageId. On the server the transport deletes
+     * only when that uid still carries $expectedMessageId (a UIDVALIDITY
+     * change can put another client's draft at our old uid).
      */
-    public function deleteDraft(string $providerId, string $draftsFolder): void
+    public function deleteDraft(string $providerId, string $draftsFolder, string $expectedMessageId): void
     {
         self::assertResolved($providerId, 'deleteDraft');
         if (!preg_match('/^(\d+):(.+)$/s', $providerId, $m) || (int) $m[1] <= 0
             || trim($draftsFolder) === '' || $m[2] !== $draftsFolder) {
             throw new \InvalidArgumentException(sprintf('ImapConnector::deleteDraft: %s is not a message of the Drafts folder "%s" — refused', $providerId, $draftsFolder));
         }
+        $expected = self::messageIdToken($expectedMessageId, 'deleteDraft');
         $t = $this->draftTransport('deleteDraft');
         $this->connect();
         if (!$t->hasUidPlus()) {
-            throw $this->unsupported('deleteDraft without UIDPLUS (a plain EXPUNGE would remove every \\Deleted message of the folder)');
+            throw new UnsupportedOperation(static::class . ': deleteDraft refused — the server lacks UIDPLUS, and a plain EXPUNGE would remove every \\Deleted message of the folder');
         }
-        $t->expungeUid($draftsFolder, (int) $m[1]);
+        $t->expungeUid($draftsFolder, (int) $m[1], $expected);
     }
 
     public function findByMessageId(string $folder, string $messageId): ?string
     {
-        $id = trim(trim($messageId), '<>');
-        if ($id === '' || preg_match('/["\\\\\s<>]/', $id)) {
-            throw new \InvalidArgumentException('ImapConnector::findByMessageId: unusable Message-ID');
+        if (trim($folder) === '') {
+            throw new \InvalidArgumentException('ImapConnector::findByMessageId: no folder');
         }
-        $t      = $this->draftTransport('findByMessageId');
-        $folder = $folder !== '' ? $folder : $this->folder;
+        $token = self::messageIdToken($messageId, 'findByMessageId');
+        $t     = $this->draftTransport('findByMessageId');
         $this->connect();
-        $uids = $t->searchHeader($folder, 'Message-ID', '<' . $id . '>');
+        $uids = $t->searchHeader($folder, 'Message-ID', $token);
         return $uids === [] ? null : self::makeId((int) max($uids), $folder);
+    }
+
+    /**
+     * "<a@b>" or "a@b" → "<a@b>". Allowlist: printable ASCII only, without
+     * <, >, " or \ inside (no whitespace, control, NUL or 8-bit byte reaches
+     * an IMAP command line).
+     */
+    public static function messageIdToken(string $messageId, string $op = 'messageId'): string
+    {
+        $id = trim($messageId);
+        if (str_starts_with($id, '<') && str_ends_with($id, '>')) {
+            $id = substr($id, 1, -1);
+        }
+        if (!preg_match('/^[\x21-\x7E]+$/', $id) || preg_match('/[<>"\\\\]/', $id)) {
+            throw new \InvalidArgumentException("ImapConnector::{$op}: unusable Message-ID");
+        }
+        return '<' . $id . '>';
     }
 
     private function draftTransport(string $op): ImapDraftTransport

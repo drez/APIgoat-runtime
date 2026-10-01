@@ -264,27 +264,74 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport
      * The only hard delete the mail runtime performs. RFC 4315 UID EXPUNGE
      * removes ONLY $uid, whatever else in the folder carries \Deleted; a
      * plain EXPUNGE (webklex Message::delete(true)) is never used here.
+     *
+     * Everything runs on the protocol inside ONE forced SELECT (never
+     * webklex's active-folder cache: status() may have EXAMINEd another
+     * folder behind it): a read-only SELECT is refused, then the uid's
+     * header is fetched with BODY.PEEK[HEADER] (the parse path raw-header
+     * reads already use; HEADER.FIELDS (…) comes back tokenised into nested
+     * lists) and the delete happens only when its Message-ID is ours.
      */
-    public function expungeUid(string $folder, int $uid): void
+    public function expungeUid(string $folder, int $uid, string $expectedMessageId): void
     {
         if ($uid <= 0) throw new \InvalidArgumentException("expungeUid: invalid uid {$uid}");
-        $this->guard(function () use ($folder, $uid) {
-            $m = $this->folder($folder)->query()->setFetchBody(false)->leaveUnread()->getMessageByUid($uid);
-            if (!$m) throw new TransientError("IMAP uid {$uid} not found in {$folder}", 404);
-            $this->client->openFolder($folder);
+        if (!preg_match('/^<[\x21-\x3B\x3D\x3F-\x7E]+>$/', $expectedMessageId) || preg_match('/["\\\\]/', $expectedMessageId)) {
+            throw new \InvalidArgumentException('expungeUid: unusable expected Message-ID');
+        }
+        $this->guard(function () use ($folder, $uid, $expectedMessageId) {
+            $this->client->checkConnection();
             $con = $this->client->getConnection();
+            $sel = $con->selectFolder($folder);
+            $this->client->setActiveFolder($folder);
+            $sel->validatedData();
+            if (self::selectIsReadOnly($sel->getResponse())) {
+                throw new ValidationRejected("IMAP {$folder} opened read-only — draft uid {$uid} not deleted", 409);
+            }
+            $rows = (array) $con->fetch(['UID', 'BODY.PEEK[HEADER]'], [$uid], null, \Webklex\PHPIMAP\IMAP::ST_UID)->setCanBeEmpty(true)->validatedData();
+            self::assertOurDraft($rows, $uid, $folder, $expectedMessageId);
             $con->store(['\\Deleted'], $uid, null, '+', true, \Webklex\PHPIMAP\IMAP::ST_UID)->validatedData();
             $con->requestAndResponse('UID EXPUNGE', [(string) $uid])->validatedData();
         }, "expunge {$folder}/{$uid}");
     }
 
+    /** @param mixed $lines a SELECT response's raw lines: true when the server answered [READ-ONLY]. */
+    public static function selectIsReadOnly(mixed $lines): bool
+    {
+        $text    = '';
+        $wrapped = [$lines];
+        array_walk_recursive($wrapped, static function ($v) use (&$text) {
+            if (is_scalar($v)) $text .= ' ' . $v;
+        });
+        return stripos($text, '[READ-ONLY]') !== false;
+    }
+
+    /**
+     * $rows = a UID FETCH (UID BODY.PEEK[HEADER]) result. No row → the uid is
+     * gone: TransientError 404 (B-R10, like setSeen). A row whose Message-ID
+     * is not exactly $expected → ValidationRejected 409: the uid no longer
+     * holds our draft, nothing may be deleted.
+     */
+    public static function assertOurDraft(array $rows, int $uid, string $folder, string $expected): void
+    {
+        $header = $rows[$uid]['BODY[HEADER]'] ?? null;
+        if (!is_string($header)) {
+            throw new TransientError("IMAP uid {$uid} not found in {$folder}", 404);
+        }
+        $unfolded = preg_replace('/\r?\n[ \t]+/', ' ', $header);
+        $found    = preg_match('/^Message-ID:[ \t]*(\S*)[ \t]*\r?$/mi', (string) $unfolded, $m) ? $m[1] : '';
+        if ($found !== $expected) {
+            throw new ValidationRejected("IMAP uid {$uid} in {$folder} no longer holds our draft (Message-ID " . ($found === '' ? 'none' : $found) . ") — not deleted", 409);
+        }
+    }
+
     public function searchHeader(string $folder, string $header, string $value): array
     {
-        if (!preg_match('/^[A-Za-z][A-Za-z0-9-]*$/', $header) || $value === '' || preg_match('/["\\\\\r\n]/', $value)) {
+        if (!preg_match('/^[A-Za-z][A-Za-z0-9-]*$/', $header) || !preg_match('/^[\x21-\x7E]+$/', $value) || preg_match('/["\\\\]/', $value)) {
             throw new \InvalidArgumentException('searchHeader: unusable header name or value');
         }
         return $this->guard(function () use ($folder, $header, $value) {
-            $this->client->openFolder($folder);
+            // Forced SELECT: the never-send-twice recheck must not search a folder status() EXAMINEd.
+            $this->client->openFolder($folder, true);
             $ids = $this->client->getConnection()->search(['HEADER', $header, '"' . $value . '"'], \Webklex\PHPIMAP\IMAP::ST_UID)->validatedData();
             $out = [];
             foreach ((array) $ids as $v) {

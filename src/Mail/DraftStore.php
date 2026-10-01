@@ -22,10 +22,16 @@ interface DraftStore
     public function appendDraft(string $draftsFolder, string $raw): string;
 
     /**
-     * Delete exactly $providerId, which must live in $draftsFolder.
-     * A uid that is already gone throws TransientError 404 (like setSeen).
+     * Delete exactly $providerId, which must live in $draftsFolder AND still
+     * carry $expectedMessageId (with or without <>); otherwise nothing is
+     * deleted. Throws:
+     *  - TransientError 404: the uid is already gone (like setSeen);
+     *  - ValidationRejected 409: the uid holds another message (UIDVALIDITY
+     *    change, another client's draft) or the folder opened read-only;
+     *  - UnsupportedOperation: no UIDPLUS (the caller logs it);
+     *  - InvalidArgumentException: refused before any server call.
      */
-    public function deleteDraft(string $providerId, string $draftsFolder): void;
+    public function deleteDraft(string $providerId, string $draftsFolder, string $expectedMessageId): void;
 
     /** The provider id of the newest message in $folder whose Message-ID header is $messageId (with or without <>), or null. */
     public function findByMessageId(string $folder, string $messageId): ?string;
