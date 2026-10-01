@@ -76,6 +76,10 @@ class PhpMailerSmtpTransport implements SmtpTransport
                 // e.g. an error handler turning a stream warning into an
                 // exception: the body may already be with the server.
                 throw new SmtpFailure('SMTP DATA failed: ' . $t->getMessage() . ' — no final answer: the message may have been accepted', SmtpFailure::PHASE_UNCERTAIN, 0, $t);
+            } finally {
+                // QUIT / RSET must not inherit the long DATA wait.
+                $smtp->Timeout   = $s->timeout;
+                $smtp->Timelimit = $s->timeout;
             }
             if (!$ok) {
                 $code = self::code($smtp);

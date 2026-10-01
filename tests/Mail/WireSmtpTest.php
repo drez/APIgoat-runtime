@@ -20,6 +20,8 @@ final class WireSmtpTest extends TestCase
     /** @var resource */
     private $server;
 
+    private ?SMTP $smtp = null;
+
     /** @param string[] $replies one SMTP reply per line, in order */
     private function transport(array $replies): PhpMailerSmtpTransport
     {
@@ -28,9 +30,13 @@ final class WireSmtpTest extends TestCase
         stream_socket_shutdown($server, STREAM_SHUT_WR);
         $this->server = $server;
         $smtp = new class ($client) extends SMTP {
+            /** [Timeout, Timelimit] when QUIT is issued */
+            public array $atQuit = [];
             public function __construct(private $stream) {}
             protected function getSMTPConnection($host, $port = null, $timeout = 30, $options = []) { return $this->stream; }
+            public function quit($close_on_error = true) { $this->atQuit = [$this->Timeout, $this->Timelimit]; return parent::quit($close_on_error); }
         };
+        $this->smtp = $smtp;
         return new class ($smtp) extends PhpMailerSmtpTransport {
             public function __construct(private SMTP $smtp) {}
             protected function client(): SMTP { return $this->smtp; }
@@ -106,5 +112,13 @@ final class WireSmtpTest extends TestCase
         $e = $this->send([]);
         $this->assertSame(SmtpFailure::PHASE_CONNECT, $e->phase);
         $this->assertFalse($e->permanent());
+    }
+
+    public function testQuitDoesNotInheritTheDataTimeout(): void
+    {
+        $this->assertNull($this->send([...self::HELLO, '250 ok', '250 ok', '354 go', '250 queued', '221 bye']));
+        $this->assertSame([30, 30], $this->smtp->atQuit, 'delivered: back to SmtpSettings::timeout');
+        $this->send([...self::HELLO, '250 ok', '250 ok', '354 go']);
+        $this->assertSame([30, 30], $this->smtp->atQuit, 'uncertain: back to SmtpSettings::timeout');
     }
 }
