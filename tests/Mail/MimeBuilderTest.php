@@ -118,6 +118,10 @@ final class MimeBuilderTest extends TestCase
         yield 'in-reply-to not a msg-id' => [['irt' => 'a@x.org']];
         yield 'references junk' => [['refs' => '<a@x.org> junk']];
         yield 'message-id' => [['mid' => "<a@x.org>\r\nBcc: evil@x.example"]];
+        yield 'references CTL byte' => [['refs' => "<a\x01b@x.org> <c@y.org>"]];
+        yield 'in-reply-to DEL byte' => [['irt' => "<a\x7fb@x.org>"]];
+        yield 'message-id 8-bit' => [['mid' => "<d\xc3\xa9j\xc3\xa0@fx.example>"]];
+        yield 'content-id bracket' => [['att' => [['filename' => 'a.png', 'mime' => 'image/png', 'content' => 'x', 'content_id' => "img1>X-Evil: 1"]]]];
         yield 'from address' => [['from' => "fred@fx.example\r\nBcc: evil@x.example"]];
         yield 'recipient address' => [['to' => [['addr' => "ada@fx.example\r\nBcc: evil@x.example", 'name' => '']]]];
     }
@@ -163,5 +167,61 @@ final class MimeBuilderTest extends TestCase
         $this->assertSame('Doe, Person 42', $parsed->getHeader('To')->getAddresses()[42]->getName());
         $this->assertCount(100, $parsed->getHeader('Bcc')->getAddresses(), 'a draft copy keeps every Bcc, folded');
         $this->assertSame('Zoë Ünïcode 7', $parsed->getHeader('Bcc')->getAddresses()[7]->getName());
+    }
+
+    public function testAHostileAttachmentTypeFallsBackToOctetStream(): void
+    {
+        $raw = MimeBuilder::build($this->msg(['att' => [
+            ['filename' => 'a.png', 'mime' => "image/png\r\nX-Evil: 1", 'content' => 'png'],
+            ['filename' => 'b.pdf', 'mime' => 'application/pdf', 'content' => 'pdf'],
+        ]]));
+        $this->assertDoesNotMatchRegularExpression('/^X-Evil:/mi', $raw);
+        $parsed = \ZBateson\MailMimeParser\Message::from($raw, false);
+        $this->assertSame('application/octet-stream', $parsed->getAttachmentPart(0)->getContentType());
+        $this->assertSame('application/pdf', $parsed->getAttachmentPart(1)->getContentType(), 'a well-formed type is kept');
+    }
+
+    public function testBareLineBreaksBecomeCrlfNotEncodedLf(): void
+    {
+        $raw = MimeBuilder::build($this->msg(['text' => "line1\nline2\r\n-- \nsig\rend", 'html' => "<p>a</p>\n<p>b</p>"]));
+        $this->assertStringNotContainsStringIgnoringCase('=0A', $raw);
+        $this->assertStringNotContainsStringIgnoringCase('=0D', $raw);
+        $parsed = \ZBateson\MailMimeParser\Message::from($raw, false);
+        $this->assertStringContainsString("line1\r\nline2\r\n-- \r\nsig\r\nend", (string) $parsed->getTextContent());
+        $this->assertStringContainsString("<p>a</p>\r\n<p>b</p>", (string) $parsed->getHtmlContent());
+    }
+
+    public function testABlankDraftBuildsWithAnEmptyTextPart(): void
+    {
+        $raw = MimeBuilder::build($this->msg(['to' => [], 'cc' => [], 'bcc' => [], 'text' => '', 'subject' => '']), true, true);
+        $parsed = \ZBateson\MailMimeParser\Message::from($raw, false);
+        $this->assertSame('text/plain', $parsed->getContentType());
+        $this->assertSame('', trim((string) $parsed->getTextContent()));
+    }
+
+    public function testHtmlWithoutTextStillCarriesATextPart(): void
+    {
+        $raw = MimeBuilder::build($this->msg(['text' => '', 'html' => '<style>p{}</style><p>Hello <b>there</b> &amp; you</p>']));
+        $this->assertStringContainsString('multipart/alternative', $raw);
+        $parsed = \ZBateson\MailMimeParser\Message::from($raw, false);
+        $this->assertSame('Hello there & you', trim((string) $parsed->getTextContent()), 'derived from the HTML');
+
+        $raw = MimeBuilder::build($this->msg(['text' => '', 'html' => '<img src="cid:x">']));
+        $this->assertStringContainsString('multipart/alternative', $raw, 'even an HTML with no text keeps a text part');
+    }
+
+    public function testVeryLongSubjectsAndNamesStayUnder998(): void
+    {
+        $subject = str_repeat('word ', 150) . str_repeat('x', 1200) . ' Déjà';
+        $name    = str_repeat('N', 1500);
+        $raw  = MimeBuilder::build($this->msg(['subject' => $subject, 'name' => $name, 'to' => [['addr' => 'ada@fx.example', 'name' => str_repeat('Ü', 900)]]]));
+        $head = preg_split('/\r\n\r\n/', $raw, 2)[0];
+        foreach (explode("\r\n", $head) as $line) {
+            $this->assertLessThanOrEqual(998, strlen($line), substr($line, 0, 40));
+        }
+        $parsed = \ZBateson\MailMimeParser\Message::from($raw, false);
+        $this->assertSame($subject, $parsed->getHeaderValue('Subject'), 'the subject survives intact');
+        $this->assertSame('ada@fx.example', $parsed->getHeader('To')->getAddresses()[0]->getEmail());
+        $this->assertSame('fred@fx.example', $parsed->getHeader('From')->getAddresses()[0]->getEmail());
     }
 }

@@ -29,15 +29,24 @@ final class MimeBuilder
     /** Envelope-only stand-in for a draft with no recipient yet: PHPMailer refuses zero recipients; Mailer=smtp keeps a Bcc out of the MIME. */
     private const NO_RECIPIENT = 'undisclosed@draft.apigmail.invalid';
 
-    /** One msg-id: angle brackets, no whitespace, no nested brackets. */
-    private const MSG_ID = '<[^<>\s]+>';
+    /** Printable US-ASCII except '<' and '>' (no space, no CTL, no 8-bit). */
+    private const ID_CHARS = '[\x21-\x3B\x3D\x3F-\x7E]';
+
+    /** One msg-id: angle brackets around ID_CHARS. */
+    private const MSG_ID = '<' . self::ID_CHARS . '+>';
+
+    /** RFC 2045 type/subtype token grammar; anything else becomes application/octet-stream. */
+    private const MIME_TYPE = '~^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$~i';
+
+    /** Display names are cut to this many characters (cosmetic; keeps header lines legal). */
+    private const NAME_MAX = 256;
 
     /** Longest single id accepted (a folded line holds one id plus a space). */
     private const MSG_ID_MAX = 900;
 
     public static function build(OutgoingMessage $m, bool $bccHeader = false, bool $allowNoRecipient = false): string
     {
-        if (!preg_match('/^<[^<>@\s]+@[^<>@\s]+>$/', $m->messageId)) {
+        if (!preg_match('/^<[\x21-\x3B\x3D\x3F\x41-\x7E]+@[\x21-\x3B\x3D\x3F\x41-\x7E]+>$/', $m->messageId)) {
             throw new \InvalidArgumentException('MimeBuilder: Message-ID must look like <local@domain>, got ' . json_encode($m->messageId));
         }
         $inReplyTo  = self::inReplyTo($m->inReplyTo);
@@ -45,21 +54,28 @@ final class MimeBuilder
         if ($m->envelope() === [] && !$allowNoRecipient) {
             throw new \InvalidArgumentException('MimeBuilder: no recipient');
         }
+        foreach ($m->attachments as $att) {
+            $cid = (string) ($att['content_id'] ?? '');
+            if ($cid !== '' && !preg_match('/^' . self::ID_CHARS . '+$/', $cid)) {
+                throw new \InvalidArgumentException('MimeBuilder: invalid Content-ID ' . json_encode($cid));
+            }
+        }
         try {
             $p = new PHPMailer(true);
             $p->isSMTP();
             $p->CharSet  = PHPMailer::CHARSET_UTF8;
             $p->Encoding = PHPMailer::ENCODING_QUOTED_PRINTABLE;
             $p->XMailer  = ' ';
-            $p->setFrom($m->fromAddr, $m->fromName, false);
+            $p->AllowEmpty = true;   // a blank draft is still a draft
+            $p->setFrom($m->fromAddr, self::name($m->fromName), false);
             foreach ($m->to as $a) {
-                $p->addAddress((string) $a['addr'], (string) ($a['name'] ?? ''));
+                $p->addAddress((string) $a['addr'], self::name($a['name'] ?? ''));
             }
             foreach ($m->cc as $a) {
-                $p->addCC((string) $a['addr'], (string) ($a['name'] ?? ''));
+                $p->addCC((string) $a['addr'], self::name($a['name'] ?? ''));
             }
             foreach ($m->bcc as $a) {
-                $p->addBCC((string) $a['addr'], (string) ($a['name'] ?? ''));
+                $p->addBCC((string) $a['addr'], self::name($a['name'] ?? ''));
             }
             if ($m->envelope() === []) {
                 $p->addBCC(self::NO_RECIPIENT);
@@ -70,20 +86,29 @@ final class MimeBuilder
             if ($inReplyTo !== null) {
                 $p->addCustomHeader('In-Reply-To', $inReplyTo);
             }
+            // Bodies are CRLF-canonical before encoding: QP would turn a bare
+            // LF / CR into =0A / =0D (RFC 2045 6.7).
+            $text = PHPMailer::normalizeBreaks($m->text, "\r\n");
             if ($m->html !== null && trim($m->html) !== '') {
                 $p->isHTML(true);
-                $p->Body    = $m->html;
-                $p->AltBody = $m->text;
+                $p->Body = PHPMailer::normalizeBreaks($m->html, "\r\n");
+                if (trim($text) === '') {
+                    $text = PHPMailer::normalizeBreaks($p->html2text($m->html), "\r\n");
+                }
+                // The text part is always present: PHPMailer drops the
+                // alternative when AltBody is empty.
+                $p->AltBody = trim($text) === '' ? ' ' : $text;
             } else {
                 $p->isHTML(false);
-                $p->Body = $m->text;
+                $p->Body = $text;
             }
             foreach ($m->attachments as $att) {
-                $cid = (string) ($att['content_id'] ?? '');
+                $cid  = (string) ($att['content_id'] ?? '');
+                $mime = preg_match(self::MIME_TYPE, (string) ($att['mime'] ?? '')) ? (string) $att['mime'] : 'application/octet-stream';
                 if ($cid !== '') {
-                    $p->addStringEmbeddedImage($att['content'], $cid, $att['filename'], PHPMailer::ENCODING_BASE64, $att['mime'], 'inline');
+                    $p->addStringEmbeddedImage($att['content'], $cid, $att['filename'], PHPMailer::ENCODING_BASE64, $mime, 'inline');
                 } else {
-                    $p->addStringAttachment($att['content'], $att['filename'], PHPMailer::ENCODING_BASE64, $att['mime']);
+                    $p->addStringAttachment($att['content'], $att['filename'], PHPMailer::ENCODING_BASE64, $mime);
                 }
             }
             $p->preSend();
@@ -109,7 +134,35 @@ final class MimeBuilder
                 $extra[] = self::fold('Bcc: ', $bcc, ',');
             }
         }
-        return self::finish($p->getSentMIMEMessage(), $extra);
+        return self::finish($p->getSentMIMEMessage(), $extra, $p->secureHeader($m->subject));
+    }
+
+    private static function name(mixed $v): string
+    {
+        $v = (string) $v;
+        return mb_strlen($v, 'UTF-8') > self::NAME_MAX ? mb_substr($v, 0, self::NAME_MAX, 'UTF-8') : $v;
+    }
+
+    /**
+     * Our own RFC 2047 encoding for a subject PHPMailer would leave on an
+     * over-long line: B encoded-words of at most 45 bytes (whole UTF-8
+     * characters), one per folded line. Decoders join adjacent words.
+     */
+    private static function encodeSubject(string $subject): string
+    {
+        $words = [];
+        $cur   = '';
+        foreach (mb_str_split($subject, 1, 'UTF-8') as $ch) {
+            if ($cur !== '' && strlen($cur) + strlen($ch) > 45) {
+                $words[] = '=?utf-8?B?' . base64_encode($cur) . '?=';
+                $cur     = '';
+            }
+            $cur .= $ch;
+        }
+        if ($cur !== '') {
+            $words[] = '=?utf-8?B?' . base64_encode($cur) . '?=';
+        }
+        return 'Subject: ' . implode("\r\n ", $words);
     }
 
     private static function inReplyTo(?string $v): ?string
@@ -179,7 +232,7 @@ final class MimeBuilder
      *
      * @param string[] $extra complete, folded header fields (no trailing CRLF)
      */
-    private static function finish(string $raw, array $extra): string
+    private static function finish(string $raw, array $extra, string $subject): string
     {
         [$head, $body] = explode("\r\n\r\n", $raw, 2);
         // Group physical lines into logical fields (a continuation starts with SP / HTAB).
@@ -196,6 +249,8 @@ final class MimeBuilder
         foreach ($fields as $f) {
             if (preg_match('/^(To|Cc): (.*)$/s', $f, $mm) && $mm[2] !== 'undisclosed-recipients:;') {
                 $f = self::fold($mm[1] . ': ', self::splitAddresses($mm[2]), ',');
+            } elseif (str_starts_with($f, 'Subject: ') && max(array_map('strlen', explode("\r\n", $f))) > 998) {
+                $f = self::encodeSubject($subject);
             }
             $out[] = $f;
             if (preg_match('/^(Message-ID|In-Reply-To):/i', $f)) {

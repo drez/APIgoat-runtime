@@ -154,4 +154,54 @@ final class PhpMailerSmtpTransportTest extends TestCase
         $this->assertTrue($opts['ssl']['verify_peer_name']);
         $this->assertFalse($opts['ssl']['allow_self_signed']);
     }
+
+    public function testTheFinalReplyToDataGetsAtLeastFiveMinutesOtherPhasesKeepTheSetting(): void
+    {
+        $this->send();
+        $this->assertSame([30, 30], $this->smtp->timeouts['authenticate']);
+        $this->assertSame([30, 30], $this->smtp->timeouts['recipient:ada@fx.example']);
+        $this->assertSame([300, 300], $this->smtp->timeouts['data'], 'RFC 5321 4.5.3.2.6: up to 10 min for the reply to "."; PHPMailer doubles Timelimit for DATA END');
+    }
+
+    public function testAnErrorEscapingTheDataPhaseIsUncertain(): void
+    {
+        $this->smtp->throws['data'] = new \ErrorException('fwrite(): broken pipe');
+        $e = $this->failure(fn () => $this->send());
+        $this->assertSame(SmtpFailure::PHASE_UNCERTAIN, $e->phase);
+        $this->assertTrue($e->mayHaveBeenSent());
+        $this->assertInstanceOf(\ErrorException::class, $e->getPrevious());
+    }
+
+    public function testEveryRefusedRecipientIsReportedAndA5xxWins(): void
+    {
+        $this->smtp->answers['recipient:b1@fx.example'] = false;
+        $this->smtp->codes['recipient:b1@fx.example'] = 452;
+        $this->smtp->answers['recipient:b2@fx.example'] = false;
+        $this->smtp->codes['recipient:b2@fx.example'] = 550;
+        $e = $this->failure(fn () => $this->send(SmtpSettings::STARTTLS, ['b1@fx.example', 'ada@fx.example', 'b2@fx.example']));
+        $this->assertSame(SmtpFailure::PHASE_ENVELOPE, $e->phase);
+        $this->assertSame(550, $e->smtpCode);
+        $this->assertTrue($e->permanent());
+        $this->assertStringContainsString('b1@fx.example', $e->getMessage());
+        $this->assertStringContainsString('b2@fx.example', $e->getMessage());
+        $this->assertNotContains('data', array_map(static fn ($c) => $c[0], $this->smtp->calls));
+    }
+
+    public function testA4xxRecipientIsTransient(): void
+    {
+        $this->smtp->answers['recipient:ada@fx.example'] = false;
+        $this->smtp->codes['recipient:ada@fx.example'] = 450;
+        $e = $this->failure(fn () => $this->send());
+        $this->assertFalse($e->permanent());
+        $this->assertFalse($e->mayHaveBeenSent());
+    }
+
+    public function testA5xxEhloIsAPermanentConnectFailure(): void
+    {
+        $this->smtp->answers['hello'] = false;
+        $this->smtp->codes['hello'] = 554;
+        $e = $this->failure(fn () => $this->send());
+        $this->assertSame(SmtpFailure::PHASE_CONNECT, $e->phase);
+        $this->assertTrue($e->permanent());
+    }
 }

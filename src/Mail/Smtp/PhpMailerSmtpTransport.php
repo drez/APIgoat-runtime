@@ -11,6 +11,9 @@ use PHPMailer\PHPMailer\SMTP;
  */
 class PhpMailerSmtpTransport implements SmtpTransport
 {
+    /** Minimum wait (s) for the DATA phase replies; the other phases use SmtpSettings::$timeout. */
+    public const DATA_TIMEOUT = 300;
+
     public function send(SmtpSettings $s, string $envelopeFrom, array $recipients, string $mime): void
     {
         if ($recipients === []) {
@@ -46,14 +49,35 @@ class PhpMailerSmtpTransport implements SmtpTransport
             if (!$smtp->mail($envelopeFrom)) {
                 throw self::fail($smtp, SmtpFailure::PHASE_ENVELOPE, 'MAIL FROM');
             }
+            // Every recipient is tried so the user sees every bad address at
+            // once; one refusal still aborts the whole submission before DATA.
+            $refused = [];
+            $worst   = 0;
             foreach ($recipients as $r) {
                 if (!$smtp->recipient($r)) {
-                    $f = self::fail($smtp, SmtpFailure::PHASE_ENVELOPE, 'RCPT TO ' . $r);
-                    $smtp->reset();
-                    throw $f;
+                    $c         = self::code($smtp);
+                    $refused[] = self::text($smtp, 'RCPT TO ' . $r);
+                    $worst     = ($c >= 500 || $worst === 0) ? max($worst, $c) : $worst;
                 }
             }
-            if (!$smtp->data($mime)) {
+            if ($refused !== []) {
+                $smtp->reset();
+                throw new SmtpFailure(implode('; ', $refused), SmtpFailure::PHASE_ENVELOPE, $worst);
+            }
+            // RFC 5321 4.5.3.2.6: the reply to the final "." may take up to
+            // 10 minutes (large message, server-side scanning). Giving up
+            // earlier turns a delivered message into a false "may have been
+            // sent". PHPMailer doubles Timelimit for DATA END.
+            $smtp->Timeout   = max($s->timeout, self::DATA_TIMEOUT);
+            $smtp->Timelimit = max($s->timeout, self::DATA_TIMEOUT);
+            try {
+                $ok = $smtp->data($mime);
+            } catch (\Throwable $t) {
+                // e.g. an error handler turning a stream warning into an
+                // exception: the body may already be with the server.
+                throw new SmtpFailure('SMTP DATA failed: ' . $t->getMessage() . ' — no final answer: the message may have been accepted', SmtpFailure::PHASE_UNCERTAIN, 0, $t);
+            }
+            if (!$ok) {
                 $code = self::code($smtp);
                 throw $code >= 400
                     ? new SmtpFailure(self::text($smtp, 'DATA'), SmtpFailure::PHASE_DATA, $code)

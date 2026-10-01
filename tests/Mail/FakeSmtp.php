@@ -11,11 +11,19 @@ class FakeSmtp extends SMTP
     public array $answers = [];
     public array $codes = [];
     public array $options = [];
+    /** method => \Throwable to throw instead of answering */
+    public array $throws = [];
+    /** method => [Timeout, Timelimit] at call time */
+    public array $timeouts = [];
     private array $err = ['error' => '', 'detail' => '', 'smtp_code' => '', 'smtp_code_ex' => ''];
 
     private function step(string $name, array $args): bool
     {
         $this->calls[] = array_merge([$name], $args);
+        $this->timeouts[$name] = [$this->Timeout, $this->Timelimit];
+        if (isset($this->throws[$name])) {
+            throw $this->throws[$name];
+        }
         $ok = $this->answers[$name] ?? true;
         if (!$ok) {
             $this->err = ['error' => "{$name} failed", 'detail' => '', 'smtp_code' => (string) ($this->codes[$name] ?? ''), 'smtp_code_ex' => ''];

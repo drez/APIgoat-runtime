@@ -11,6 +11,9 @@ namespace ApiGoat\Mail\Smtp;
  *   data      the server ANSWERED the DATA phase with 4xx/5xx: not accepted
  *   uncertain the body was handed over and no final answer came back: the
  *             message MAY have been accepted. Never retried automatically.
+ *             (The transport waits at least PhpMailerSmtpTransport::DATA_TIMEOUT
+ *             — doubled by PHPMailer for the final reply — before concluding
+ *             this, so a slow-but-successful server is not misread.)
  */
 final class SmtpFailure extends \RuntimeException
 {
