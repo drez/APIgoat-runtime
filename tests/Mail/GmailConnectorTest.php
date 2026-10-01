@@ -335,9 +335,22 @@ final class GmailConnectorTest extends TestCase
         $this->assertSame(0, $l->count());
     }
 
+    public function testReferencesAndReplyToAreNormalisedIntoTheRecord(): void
+    {
+        $m = $this->msg('c');
+        $m['payload']['headers'][] = ['name' => 'References', 'value' => "<a@x>\r\n <b@y>"];
+        $m['payload']['headers'][] = ['name' => 'Reply-To', 'value' => 'List <list@x.org>'];
+        $h = GmailConnector::normalise($m, 'INBOX');
+        $this->assertSame('<a@x> <b@y>', $h['references']);
+        $this->assertSame([['addr' => 'list@x.org', 'name' => 'List']], $h['reply_to']);
+        $none = GmailConnector::normalise($this->msg('d'), 'INBOX');
+        $this->assertSame('', $none['references']);
+        $this->assertSame([], $none['reply_to']);
+    }
+
     public function testBulkHeadersAreRequestedAndMapped(): void
     {
-        foreach (['List-Id', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted'] as $h) {
+        foreach (['List-Id', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted', 'References', 'Reply-To'] as $h) {
             $this->assertContains($h, GmailConnector::METADATA_HEADERS);
         }
         $m = $this->msg('c');
