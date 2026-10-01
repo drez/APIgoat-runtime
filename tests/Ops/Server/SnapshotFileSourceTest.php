@@ -138,7 +138,7 @@ final class SnapshotFileSourceTest extends TestCase
 
         $this->assertIsArray($snap);
         $this->assertSame(
-            ['load1', 'mem_pct', 'disk_pct', 'services', 'f2b_banned', 'f2b', 'auth', 'at'],
+            ['load1', 'mem_pct', 'disk_pct', 'services', 'f2b_banned', 'f2b', 'auth', 'at', 'swap_used_mb', 'swap_total_mb'],
             \array_keys($snap)
         );
         $this->assertIsFloat($snap['load1']);
@@ -156,6 +156,20 @@ final class SnapshotFileSourceTest extends TestCase
         $this->assertIsInt($snap['auth']['ssh_failed']);
         $this->assertIsInt($snap['at']);
         $this->assertSame($at, $snap['at']);
+    }
+
+    public function test_swap_passes_through_as_int_mb(): void
+    {
+        $snap = SnapshotFileSource::normalize($this->validPayload(['swap_used_mb' => '1310', 'swap_total_mb' => 4095.0]));
+        $this->assertSame(1310, $snap['swap_used_mb']);
+        $this->assertSame(4095, $snap['swap_total_mb']);
+    }
+
+    public function test_swap_is_null_from_a_collector_that_does_not_report_it(): void
+    {
+        $snap = SnapshotFileSource::normalize($this->validPayload());
+        $this->assertNull($snap['swap_used_mb']);
+        $this->assertNull($snap['swap_total_mb']);
     }
 
     public function test_stale_at_is_still_returned_not_dropped(): void

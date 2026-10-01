@@ -95,6 +95,9 @@ final class OpsCollectShTest extends TestCase
             $this->assertArrayHasKey($key, $decoded['auth']);
             $this->assertIsInt($decoded['auth'][$key], "auth.{$key} is not a JSON integer");
         }
+        $this->assertIsInt($decoded['swap_used_mb'] ?? null, "swap_used_mb is not a JSON integer in: {$raw}");
+        $this->assertIsInt($decoded['swap_total_mb'] ?? null, "swap_total_mb is not a JSON integer in: {$raw}");
+        $this->assertLessThanOrEqual($decoded['swap_total_mb'], $decoded['swap_used_mb']);
         $this->assertIsInt($decoded['at']);
         $this->assertGreaterThan(0, $decoded['at']);
         $this->assertLessThanOrEqual(\time() + 5, $decoded['at']);

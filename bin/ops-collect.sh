@@ -130,6 +130,20 @@ if [ -r /proc/meminfo ]; then
 fi
 
 # ---------------------------------------------------------------------
+# swap_used_mb / swap_total_mb — from /proc/meminfo (SwapTotal - SwapFree),
+# whole MiB. The app can't read /proc itself (open_basedir), and a swap
+# that keeps growing is the early sign of memory pressure.
+# ---------------------------------------------------------------------
+swap_used_mb=0
+swap_total_mb=0
+if [ -r /proc/meminfo ]; then
+    swap_used_mb="$(awk '/^SwapTotal:/ { t = $2 } /^SwapFree:/ { f = $2 } END { printf "%d", (t - f) / 1024 }' /proc/meminfo 2>/dev/null || true)"
+    swap_total_mb="$(awk '/^SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || true)"
+    case "$swap_used_mb" in ''|*[!0-9]*) swap_used_mb=0 ;; esac
+    case "$swap_total_mb" in ''|*[!0-9]*) swap_total_mb=0 ;; esac
+fi
+
+# ---------------------------------------------------------------------
 # disk_pct — percent of `/` in use, from `df -P /`.
 # ---------------------------------------------------------------------
 disk_pct="0.00"
@@ -312,8 +326,8 @@ at="$(date +%s)"
 # the instant between that re-check and mktemp/mv can still redirect this
 # root write — install util-linux (runuser) to close it.
 # ---------------------------------------------------------------------
-payload="$(printf '{"load1":%s,"mem_pct":%s,"disk_pct":%s,"services":%s,"f2b_banned":%s,"f2b":%s,"f2b_logs":%s,"auth":{"ssh_failed":%s,"ssh_accepted":%s,"window_h":%s},"at":%s}' \
-    "$load1" "$mem_pct" "$disk_pct" "$services_json" "$f2b_banned" "$f2b_json" "$f2b_logs_json" \
+payload="$(printf '{"load1":%s,"mem_pct":%s,"disk_pct":%s,"swap_used_mb":%s,"swap_total_mb":%s,"services":%s,"f2b_banned":%s,"f2b":%s,"f2b_logs":%s,"auth":{"ssh_failed":%s,"ssh_accepted":%s,"window_h":%s},"at":%s}' \
+    "$load1" "$mem_pct" "$disk_pct" "$swap_used_mb" "$swap_total_mb" "$services_json" "$f2b_banned" "$f2b_json" "$f2b_logs_json" \
     "$ssh_failed" "$ssh_accepted" "$window_h" "$at")"
 
 # The same steps in both branches; $1 = directory, $2 = output path, the

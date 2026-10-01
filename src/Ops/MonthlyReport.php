@@ -520,7 +520,7 @@ final class MonthlyReport
      *
      * @return list<string>
      */
-    private static function recipients(\PDO $pdo, string $group): array
+    public static function recipients(\PDO $pdo, string $group): array
     {
         $stmt = $pdo->prepare(
             'SELECT a.email

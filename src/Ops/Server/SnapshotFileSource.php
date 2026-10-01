@@ -70,7 +70,7 @@ final class SnapshotFileSource implements Source
      * so its keys are untrusted input, not just its values.
      *
      * @param array<mixed,mixed> $d
-     * @return array{load1:float,mem_pct:float,disk_pct:float,services:array<string,bool>,f2b_banned:int,f2b:array<string,int>,auth:array{ssh_failed:int,ssh_accepted:int,window_h:int},at:int}|null
+     * @return array{load1:float,mem_pct:float,disk_pct:float,services:array<string,bool>,f2b_banned:int,f2b:array<string,int>,auth:array{ssh_failed:int,ssh_accepted:int,window_h:int},at:int,swap_used_mb:?int,swap_total_mb:?int}|null
      */
     public static function normalize(array $d): ?array
     {
@@ -119,6 +119,9 @@ final class SnapshotFileSource implements Source
                 'window_h'     => (int) $d['auth']['window_h'],
             ],
             'at'         => (int) $d['at'],
+            // Optional: a collector older than the swap fields reports none.
+            'swap_used_mb'  => isset($d['swap_used_mb']) && \is_numeric($d['swap_used_mb']) ? (int) $d['swap_used_mb'] : null,
+            'swap_total_mb' => isset($d['swap_total_mb']) && \is_numeric($d['swap_total_mb']) ? (int) $d['swap_total_mb'] : null,
         ];
     }
 }
