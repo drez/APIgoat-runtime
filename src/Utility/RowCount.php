@@ -13,14 +13,30 @@ namespace ApiGoat\Utility;
  * the ORM behavior (basePreSelect) applies: the cache is keyed per
  * TableVersion::tenantToken() ('all' for root/anonymous, 't<id>' per tenant,
  * 'tnone' for a tenant-less non-root user) so one tenant never sees
- * another's count. Failures (missing class, no DB column, exception, unwritable
+ * another's count.
+ *
+ * Freshness: with a shared cache (APCu) each disk entry carries the table's
+ * TableVersion and stays valid until a write bumps it, with VERSIONED_TTL as
+ * the safety net for raw-SQL writers that never bump (analytics/ops tables).
+ * The menu then costs ~0 queries per page instead of one COUNT per item
+ * (63 on apigoatacc) every 30 s. Without APCu the version never moves, so
+ * the plain TTL applies. Failures (missing class, no DB column, exception, unwritable
  * cache dir) yield null/no-cache and the caller omits the chip. Never
  * fatal, never unbounded slow queries.
  */
 class RowCount
 {
-    /** Seconds a cached count stays fresh. */
+    /** Seconds a cached count stays fresh without a shared table version. */
     private const TTL = 30;
+    /** Seconds a count stays fresh while its table version is unchanged. */
+    private const VERSIONED_TTL = 600;
+
+    /** @var (callable(): int)|null test seam */
+    private static $clock = null;
+    /** @var bool|null test seam: force the versioned path on/off */
+    private static $versions = null;
+    /** @var string|null test seam: cache file path */
+    private static $file = null;
 
     /** @var array<string, int|null> per-request memo */
     private static $cache = [];
@@ -42,9 +58,15 @@ class RowCount
             return self::$cache[$key];
         }
 
+        $now = self::now();
+        $version = self::versions() ? TableVersion::get(self::tableFor($Model)) : null;
         $disk = self::loadDisk();
-        if (isset($disk[$key]) && (time() - $disk[$key][1]) < self::TTL) {
-            return self::$cache[$key] = $disk[$key][0];
+        if (isset($disk[$key])) {
+            $age = $now - $disk[$key][1];
+            $sameVersion = $version !== null && ($disk[$key][2] ?? null) === $version;
+            if ($age < self::TTL || ($sameVersion && $age < self::VERSIONED_TTL)) {
+                return self::$cache[$key] = $disk[$key][0];
+            }
         }
 
         $count = null;
@@ -58,8 +80,63 @@ class RowCount
         }
 
         self::$cache[$key] = $count;
-        self::storeDisk($key, $count);
+        self::storeDisk($key, $count, $now, $version);
         return $count;
+    }
+
+    private static function now(): int
+    {
+        return self::$clock !== null ? (int) (self::$clock)() : time();
+    }
+
+    private static function versions(): bool
+    {
+        return self::$versions ?? MicroCache::shared();
+    }
+
+    private static function tableFor(string $Model): string
+    {
+        $peer = '\\App\\' . $Model . 'Peer';
+        return class_exists($peer) && defined($peer . '::TABLE_NAME') ? constant($peer . '::TABLE_NAME') : $Model;
+    }
+
+    /** Test seam: the clock (null = time()). */
+    public static function clock(?callable $fn): void
+    {
+        self::$clock = $fn;
+    }
+
+    /** Test seam: force table-version freshness on/off (null = MicroCache::shared()). */
+    public static function useVersions(?bool $on): void
+    {
+        self::$versions = $on;
+    }
+
+    /** Test seam: set the cache file (null keeps it); returns the current one. */
+    public static function cacheFileForTest(?string $path): ?string
+    {
+        if ($path !== null) {
+            self::$file = $path;
+            self::$disk = null;
+        }
+        return self::$file;
+    }
+
+    /** Test seam: forget the per-request memo (a new request). */
+    public static function dropMemo(): void
+    {
+        self::$cache = [];
+        self::$disk = null;
+    }
+
+    /** Test seam: back to defaults. */
+    public static function reset(): void
+    {
+        self::$cache = [];
+        self::$disk = null;
+        self::$clock = null;
+        self::$versions = null;
+        self::$file = null;
     }
 
     /**
@@ -92,14 +169,14 @@ class RowCount
         return self::$disk;
     }
 
-    private static function storeDisk($key, $count)
+    private static function storeDisk($key, $count, int $now, ?string $version)
     {
         $file = self::cacheFile();
         if ($file === null) {
             return;
         }
         $map = self::loadDisk();
-        $map[$key] = [$count, time()];
+        $map[$key] = [$count, $now, $version];
         self::$disk = $map;
         try {
             $tmp = $file . '.' . getmypid() . '.tmp';
@@ -114,6 +191,9 @@ class RowCount
 
     private static function cacheFile()
     {
+        if (self::$file !== null) {
+            return self::$file;
+        }
         $base = defined('_BASE_DIR') ? _BASE_DIR : (sys_get_temp_dir() . DIRECTORY_SEPARATOR);
         $dir  = rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'tmp';
         if (!is_dir($dir)) {

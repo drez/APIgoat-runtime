@@ -152,6 +152,12 @@ final class MicroCache
         self::$counters = [];
     }
 
+    /** True when entries are shared across requests (APCu), not per-process only. */
+    public static function shared(): bool
+    {
+        return self::apcuUsable();
+    }
+
     private static function apcuUsable(): bool
     {
         return \function_exists('apcu_store')
