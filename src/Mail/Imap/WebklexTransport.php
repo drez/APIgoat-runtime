@@ -16,7 +16,7 @@ use ApiGoat\Sync\Exceptions\ValidationRejected;
  * Library-dependent — exercised only against a live server (the apigmail
  * project's smoke), never in the runtime unit tests.
  */
-final class WebklexTransport implements ImapTransport
+final class WebklexTransport implements ImapTransport, ImapDraftTransport
 {
     private ?object $client = null;
     /** @var array<string,object> */
@@ -236,6 +236,63 @@ final class WebklexTransport implements ImapTransport
             if (is_scalar($v)) $text .= ' ' . $v;
         });
         return preg_match('/APPENDUID\s+\d+\s+(\d+)/i', $text, $m) ? (int) $m[1] : 0;
+    }
+
+    // ---------------------------------------------------- ImapDraftTransport
+
+    public function appendWithFlags(string $folder, string $raw, array $flags): int
+    {
+        return $this->guard(function () use ($folder, $raw, $flags) {
+            $resp = $this->folder($folder)->appendMessage($raw, $flags === [] ? null : array_values($flags));
+            return self::appendUid($resp);
+        }, "append {$folder}");
+    }
+
+    public function hasUidPlus(): bool
+    {
+        return $this->guard(function () {
+            $text    = '';
+            $wrapped = [$this->client->getConnection()->getCapabilities()->validatedData()];
+            array_walk_recursive($wrapped, static function ($v) use (&$text) {
+                if (is_scalar($v)) $text .= ' ' . $v;
+            });
+            return preg_match('/(^|\s)UIDPLUS(\s|$)/i', $text) === 1;
+        }, 'capability');
+    }
+
+    /**
+     * The only hard delete the mail runtime performs. RFC 4315 UID EXPUNGE
+     * removes ONLY $uid, whatever else in the folder carries \Deleted; a
+     * plain EXPUNGE (webklex Message::delete(true)) is never used here.
+     */
+    public function expungeUid(string $folder, int $uid): void
+    {
+        if ($uid <= 0) throw new \InvalidArgumentException("expungeUid: invalid uid {$uid}");
+        $this->guard(function () use ($folder, $uid) {
+            $m = $this->folder($folder)->query()->setFetchBody(false)->leaveUnread()->getMessageByUid($uid);
+            if (!$m) throw new TransientError("IMAP uid {$uid} not found in {$folder}", 404);
+            $this->client->openFolder($folder);
+            $con = $this->client->getConnection();
+            $con->store(['\\Deleted'], $uid, null, '+', true, \Webklex\PHPIMAP\IMAP::ST_UID)->validatedData();
+            $con->requestAndResponse('UID EXPUNGE', [(string) $uid])->validatedData();
+        }, "expunge {$folder}/{$uid}");
+    }
+
+    public function searchHeader(string $folder, string $header, string $value): array
+    {
+        if (!preg_match('/^[A-Za-z][A-Za-z0-9-]*$/', $header) || $value === '' || preg_match('/["\\\\\r\n]/', $value)) {
+            throw new \InvalidArgumentException('searchHeader: unusable header name or value');
+        }
+        return $this->guard(function () use ($folder, $header, $value) {
+            $this->client->openFolder($folder);
+            $ids = $this->client->getConnection()->search(['HEADER', $header, '"' . $value . '"'], \Webklex\PHPIMAP\IMAP::ST_UID)->validatedData();
+            $out = [];
+            foreach ((array) $ids as $v) {
+                if (is_numeric($v) && (int) $v > 0) $out[] = (int) $v;
+            }
+            sort($out);
+            return array_values(array_unique($out));
+        }, "search {$folder}");
     }
 
     public function status(string $folder): array

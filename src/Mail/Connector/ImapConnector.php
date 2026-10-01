@@ -4,12 +4,14 @@ namespace ApiGoat\Mail\Connector;
 
 use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
+use ApiGoat\Mail\DraftStore;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\FolderLister;
 use ApiGoat\Mail\FolderRole;
 use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\FolderWriter;
 use ApiGoat\Mail\HeaderRecord;
+use ApiGoat\Mail\Imap\ImapDraftTransport;
 use ApiGoat\Mail\Imap\ImapTransport;
 use ApiGoat\Mail\Imap\WebklexTransport;
 use ApiGoat\Mail\MailBody;
@@ -36,7 +38,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  * was returned (uidnext = last returned uid + 1, or the server's UIDNEXT
  * once the window is drained), so the next call is a plain increment.
  */
-class ImapConnector extends BaseConnector implements FolderLister, FolderWriter, StateWriter
+class ImapConnector extends BaseConnector implements FolderLister, FolderWriter, StateWriter, DraftStore
 {
     private ImapTransport $imap;
     private string $folder;
@@ -439,6 +441,61 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter,
         $folder = $folder !== '' ? $folder : $this->folder;
         $uid    = $this->imap->append($folder, $raw, $seen);
         return $uid > 0 ? self::makeId($uid, $folder) : '';
+    }
+
+    // ------------------------------------------------------------ DraftStore
+
+    public function appendDraft(string $draftsFolder, string $raw): string
+    {
+        if (trim($draftsFolder) === '') {
+            throw new \InvalidArgumentException('ImapConnector::appendDraft: no Drafts folder');
+        }
+        $t = $this->draftTransport('appendDraft');
+        $this->connect();
+        $uid = $t->appendWithFlags($draftsFolder, $raw, ['\\Seen', '\\Draft']);
+        return $uid > 0 ? self::makeId($uid, $draftsFolder) : '';
+    }
+
+    /**
+     * The only hard delete in the mail runtime. Every refusal below happens
+     * before any server call: an "unresolved:" id, an id without an explicit
+     * folder (parseId() would default it to INBOX), uid 0, or a folder that is
+     * not EXACTLY $draftsFolder (no case folding, no delimiter normalising).
+     */
+    public function deleteDraft(string $providerId, string $draftsFolder): void
+    {
+        self::assertResolved($providerId, 'deleteDraft');
+        if (!preg_match('/^(\d+):(.+)$/s', $providerId, $m) || (int) $m[1] <= 0
+            || trim($draftsFolder) === '' || $m[2] !== $draftsFolder) {
+            throw new \InvalidArgumentException(sprintf('ImapConnector::deleteDraft: %s is not a message of the Drafts folder "%s" — refused', $providerId, $draftsFolder));
+        }
+        $t = $this->draftTransport('deleteDraft');
+        $this->connect();
+        if (!$t->hasUidPlus()) {
+            throw $this->unsupported('deleteDraft without UIDPLUS (a plain EXPUNGE would remove every \\Deleted message of the folder)');
+        }
+        $t->expungeUid($draftsFolder, (int) $m[1]);
+    }
+
+    public function findByMessageId(string $folder, string $messageId): ?string
+    {
+        $id = trim(trim($messageId), '<>');
+        if ($id === '' || preg_match('/["\\\\\s<>]/', $id)) {
+            throw new \InvalidArgumentException('ImapConnector::findByMessageId: unusable Message-ID');
+        }
+        $t      = $this->draftTransport('findByMessageId');
+        $folder = $folder !== '' ? $folder : $this->folder;
+        $this->connect();
+        $uids = $t->searchHeader($folder, 'Message-ID', '<' . $id . '>');
+        return $uids === [] ? null : self::makeId((int) max($uids), $folder);
+    }
+
+    private function draftTransport(string $op): ImapDraftTransport
+    {
+        if (!$this->imap instanceof ImapDraftTransport) {
+            throw $this->unsupported($op);
+        }
+        return $this->imap;
     }
 
     /** "INBOX/Spam", "inbox.spam", " INBOX / SPAM " → "inbox/spam" */

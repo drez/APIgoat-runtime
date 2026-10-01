@@ -2,10 +2,11 @@
 
 namespace ApiGoat\Tests\Mail;
 
+use ApiGoat\Mail\Imap\ImapDraftTransport;
 use ApiGoat\Mail\Imap\ImapTransport;
 
 /** In-memory IMAP server: folders → uid → row. Records every call. */
-class FakeImapTransport implements ImapTransport
+class FakeImapTransport implements ImapTransport, ImapDraftTransport
 {
     public int $uidvalidity = 1000;
     /** @var array<string,array<int,array<string,mixed>>> */
@@ -147,6 +148,9 @@ class FakeImapTransport implements ImapTransport
     public function move(string $folder, int $uid, string $destination): int
     {
         $this->log[] = "move:$folder:$uid:$destination";
+        if ($this->onlyUidExpunge) {
+            throw new \LogicException("forbidden removal: move:$folder:$uid:$destination (only expungeUid may delete here)");
+        }
         $row = $this->store[$folder][$uid];
         unset($this->store[$folder][$uid]);
         $new = ($this->store[$destination] ?? []) ? max(array_keys($this->store[$destination])) + 1 : 1;
@@ -157,7 +161,57 @@ class FakeImapTransport implements ImapTransport
     public function delete(string $folder, int $uid): void
     {
         $this->log[] = "delete:$folder:$uid";
+        if ($this->onlyUidExpunge) {
+            throw new \LogicException("forbidden deletion: delete:$folder:$uid (only expungeUid may delete here)");
+        }
         unset($this->store[$folder][$uid]);
+    }
+
+    // ---------------------------------------------------- ImapDraftTransport
+
+    public bool $uidPlus = true;
+    public bool $reportAppendUid = true;
+    /** true = delete()/move() throw: any removal other than expungeUid() fails the test. */
+    public bool $onlyUidExpunge = false;
+
+    public function appendWithFlags(string $folder, string $raw, array $flags): int
+    {
+        $this->log[] = "appendf:$folder:" . implode(' ', $flags);
+        $new = ($this->store[$folder] ?? []) ? max(array_keys($this->store[$folder])) + 1 : 1;
+        $mid = preg_match('/^Message-ID:\s*(<[^>]+>)/mi', $raw, $m) ? $m[1] : '';
+        $this->add($folder, $new, ['raw' => $raw, 'flags' => array_values($flags), 'message_id' => $mid, 'seen' => in_array('\\Seen', $flags, true)]);
+        return $this->reportAppendUid ? $new : 0;
+    }
+
+    public function hasUidPlus(): bool
+    {
+        $this->log[] = 'capability';
+        return $this->uidPlus;
+    }
+
+    /** Models UID STORE +FLAGS.SILENT (\Deleted) + UID EXPUNGE <uid>: removes that uid only. */
+    public function expungeUid(string $folder, int $uid): void
+    {
+        if (!$this->uidPlus) {
+            throw new \LogicException("forbidden deletion: expungeUid:$folder:$uid on a server without UIDPLUS");
+        }
+        if (!isset($this->store[$folder][$uid])) {
+            throw new \ApiGoat\Sync\Exceptions\TransientError("IMAP uid {$uid} not found in {$folder}", 404);
+        }
+        $this->log[] = "expunge:$folder:$uid";
+        unset($this->store[$folder][$uid]);
+    }
+
+    public function searchHeader(string $folder, string $header, string $value): array
+    {
+        $this->log[] = "search:$folder:$header:$value";
+        $key = strtolower($header) === 'message-id' ? 'message_id' : strtolower($header);
+        $out = [];
+        foreach ($this->store[$folder] ?? [] as $uid => $row) {
+            if (stripos((string) ($row[$key] ?? ''), $value) !== false) $out[] = $uid;
+        }
+        sort($out);
+        return $out;
     }
 
     public function add(string $folder, int $uid, array $row = []): void
