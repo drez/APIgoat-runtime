@@ -309,6 +309,8 @@ final class WebklexTransport implements ImapTransport
                     // it by position, never from webklex's parsed get() (which
                     // merges repeats, and the order is the trust).
                     'auth_results'    => HeaderRecord::topmostHeader($rawHeader, HeaderRecord::AUTH_RESULTS_HEADER),
+                    'references'      => HeaderRecord::topmostHeader($rawHeader, 'References'),
+                    'reply_to'        => HeaderRecord::topmostHeader($rawHeader, 'Reply-To'),
                 ] + HeaderRecord::bulkHeaders($rawHeader);
             }
             foreach ($this->gmailThreadIds($folder, array_keys($out)) as $uid => $thrid) {

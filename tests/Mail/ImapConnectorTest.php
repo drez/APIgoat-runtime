@@ -489,4 +489,15 @@ final class ImapConnectorTest extends TestCase
         $this->assertSame('auto-generated', $bulk['auto_submitted']);
         $this->assertSame('', $plain['list_id'], 'absent header gives empty');
     }
+
+    public function testReferencesAndReplyToFromTheTransportArePassedThrough(): void
+    {
+        $this->imap->add('INBOX', 3, ['references' => "<a@x>\r\n\t<b@y>", 'reply_to' => 'List <list@x.org>']);
+        $this->imap->add('INBOX', 4);
+        $r = $this->connector()->fetchHeaders('INBOX', null, 10);
+        $this->assertSame('<a@x> <b@y>', $r->headers[0]['references']);
+        $this->assertSame([['addr' => 'list@x.org', 'name' => 'List']], $r->headers[0]['reply_to']);
+        $this->assertSame('', $r->headers[1]['references'], 'no References header → empty, never null');
+        $this->assertSame([], $r->headers[1]['reply_to']);
+    }
 }

@@ -166,7 +166,7 @@ class FakeImapTransport implements ImapTransport
             'message_id' => "<m{$uid}@x>", 'in_reply_to' => '', 'from' => "Sender {$uid} <s{$uid}@x.com>",
             'to' => 'me@x.com', 'cc' => '', 'subject' => "Subject {$uid}", 'date' => gmdate('r', time() - 3600),
             'size' => 100 + $uid, 'has_attachments' => false, 'seen' => false, 'flags' => [],
-            'auth_results' => '',
+            'auth_results' => '', 'references' => '', 'reply_to' => '',
         ];
     }
 }

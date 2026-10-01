@@ -146,4 +146,27 @@ final class HeaderRecordTest extends TestCase
         }
         $this->assertSame(500, mb_strlen(HeaderRecord::normalise(['list_unsubscribe' => str_repeat('x', 900)])['list_unsubscribe']));
     }
+
+    public function testReferencesKeepsMessageIdsOnlyAndTrimsTheMiddle(): void
+    {
+        $this->assertSame('<a@x> <b@y>', HeaderRecord::references("<a@x>\r\n\t<b@y> <a@x>"));
+        $this->assertSame('', HeaderRecord::references('garbage without ids'));
+        $this->assertSame('', HeaderRecord::references(null));
+        $ids = implode(' ', array_map(static fn ($i) => "<m{$i}@x>", range(1, 30)));
+        $out = explode(' ', HeaderRecord::references($ids));
+        $this->assertCount(HeaderRecord::REFERENCES_MAX, $out);
+        $this->assertSame('<m1@x>', $out[0], 'the root is kept');
+        $this->assertSame('<m30@x>', end($out), 'the newest ancestors are kept');
+    }
+
+    public function testReplyToIsAParsedAddressList(): void
+    {
+        $r = HeaderRecord::normalise(['reply_to' => 'List <list@x.org>, other@y.org', 'references' => '<a@x>']);
+        $this->assertSame([['addr' => 'list@x.org', 'name' => 'List'], ['addr' => 'other@y.org', 'name' => '']], $r['reply_to']);
+        $this->assertSame('<a@x>', $r['references']);
+        $empty = HeaderRecord::normalise([]);
+        $this->assertSame([], $empty['reply_to']);
+        $this->assertSame('', $empty['references']);
+        $this->assertSame(HeaderRecord::KEYS, array_keys($empty));
+    }
 }

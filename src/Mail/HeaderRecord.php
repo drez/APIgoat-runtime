@@ -17,7 +17,11 @@ final class HeaderRecord
         'from_addr', 'from_name', 'to', 'cc', 'subject', 'date_sent', 'snippet',
         'size_bytes', 'has_attachments', 'folder_at_fetch', 'was_read_at_fetch', 'labels',
         'auth_results', 'list_id', 'list_unsubscribe', 'precedence', 'auto_submitted',
+        'references', 'reply_to',
     ];
+
+    /** At most this many ids are kept from a References header: the root and the newest ancestors. */
+    public const REFERENCES_MAX = 20;
 
     /**
      * The one Authentication-Results header (RFC 8601) worth reading.
@@ -95,7 +99,26 @@ final class HeaderRecord
             'list_unsubscribe'    => self::bulkValue($in['list_unsubscribe'] ?? ''),
             'precedence'          => self::bulkValue($in['precedence'] ?? ''),
             'auto_submitted'      => self::bulkValue($in['auto_submitted'] ?? ''),
+            'references'          => self::references($in['references'] ?? ''),
+            'reply_to'            => is_array($in['reply_to'] ?? null) ? array_values($in['reply_to']) : self::parseAddressList((string) ($in['reply_to'] ?? '')),
         ];
+    }
+
+    /**
+     * "<a@x>\r\n\t<b@y>" -> "<a@x> <b@y>": the message ids only, deduplicated,
+     * in order. Longer than REFERENCES_MAX: the first (the thread root) and
+     * the last REFERENCES_MAX - 1 (RFC 5322 3.6.4 lets a writer drop the middle).
+     */
+    public static function references(mixed $v): string
+    {
+        if (!preg_match_all('/<[^<>\s]+>/', (string) ($v ?? ''), $m)) {
+            return '';
+        }
+        $ids = array_values(array_unique($m[0]));
+        if (count($ids) > self::REFERENCES_MAX) {
+            $ids = array_merge([$ids[0]], array_slice($ids, -(self::REFERENCES_MAX - 1)));
+        }
+        return implode(' ', $ids);
     }
 
     /**

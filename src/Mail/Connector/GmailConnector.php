@@ -41,7 +41,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
 class GmailConnector extends BaseConnector implements FolderLister, StateWriter
 {
     public const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
-    public const METADATA_HEADERS = ['From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To', 'Authentication-Results', 'List-Id', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted'];
+    public const METADATA_HEADERS = ['From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To', 'Authentication-Results', 'List-Id', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted', 'References', 'Reply-To'];
     /** listIds() page cap: 200 x 500 ids. A folder bigger than that is reported incomplete, never truncated silently. */
     public const LIST_IDS_MAX_PAGES = 200;
 
@@ -373,6 +373,8 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter
             'list_unsubscribe'    => self::header($h, 'List-Unsubscribe'),
             'precedence'          => self::header($h, 'Precedence'),
             'auto_submitted'      => self::header($h, 'Auto-Submitted'),
+            'references'          => self::header($h, 'References'),
+            'reply_to'            => self::header($h, 'Reply-To'),
         ]);
     }
 
