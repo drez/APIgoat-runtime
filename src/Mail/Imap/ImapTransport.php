@@ -19,6 +19,7 @@ namespace ApiGoat\Mail\Imap;
  *   size:int, has_attachments:bool, seen:bool, flags:string[], snippet?:string,
  *   thread_id?:string (Gmail X-GM-THRID; '' or absent elsewhere),
  *   auth_results?:string (the TOPMOST Authentication-Results value only, unfolded; '' when none)
+ *   list_id?, list_unsubscribe?, precedence?, auto_submitted?: string (topmost occurrence; '' when none)
  */
 interface ImapTransport
 {

@@ -16,7 +16,7 @@ final class HeaderRecord
         'provider_message_id', 'thread_id', 'message_id_header', 'in_reply_to',
         'from_addr', 'from_name', 'to', 'cc', 'subject', 'date_sent', 'snippet',
         'size_bytes', 'has_attachments', 'folder_at_fetch', 'was_read_at_fetch', 'labels',
-        'auth_results',
+        'auth_results', 'list_id', 'list_unsubscribe', 'precedence', 'auto_submitted',
     ];
 
     /**
@@ -30,6 +30,38 @@ final class HeaderRecord
      * and nothing else; '' when the server stamped none.
      */
     public const AUTH_RESULTS_HEADER = 'Authentication-Results';
+
+    /** The bulk-mail markers (sub-project T): record key => header name. Topmost occurrence only, like Authentication-Results. */
+    public const BULK_HEADERS = [
+        'list_id'          => 'List-Id',
+        'list_unsubscribe' => 'List-Unsubscribe',
+        'precedence'       => 'Precedence',
+        'auto_submitted'   => 'Auto-Submitted',
+    ];
+
+    public const BULK_MAX = 500;
+
+    /**
+     * The four bulk markers of a raw RFC 822 header block (topmostHeader()
+     * each: unfolded, whitespace collapsed, '' when absent). The body is never
+     * searched.
+     *
+     * @return array{list_id:string, list_unsubscribe:string, precedence:string, auto_submitted:string}
+     */
+    public static function bulkHeaders(string $raw): array
+    {
+        $out = [];
+        foreach (self::BULK_HEADERS as $key => $name) {
+            $out[$key] = self::bulkValue(self::topmostHeader($raw, $name));
+        }
+        return $out;
+    }
+
+    private static function bulkValue(mixed $v): string
+    {
+        $v = trim((string) preg_replace('/\s+/', ' ', (string) ($v ?? '')));
+        return mb_substr($v, 0, self::BULK_MAX, 'UTF-8');
+    }
 
     /**
      * Fill every key with a typed default, coerce what's present, clamp the snippet.
@@ -59,6 +91,10 @@ final class HeaderRecord
             'was_read_at_fetch'   => (bool) ($in['was_read_at_fetch'] ?? false),
             'labels'              => array_values(array_map('strval', (array) ($in['labels'] ?? []))),
             'auth_results'        => trim((string) preg_replace('/\s+/', ' ', (string) ($in['auth_results'] ?? ''))),
+            'list_id'             => self::bulkValue($in['list_id'] ?? ''),
+            'list_unsubscribe'    => self::bulkValue($in['list_unsubscribe'] ?? ''),
+            'precedence'          => self::bulkValue($in['precedence'] ?? ''),
+            'auto_submitted'      => self::bulkValue($in['auto_submitted'] ?? ''),
         ];
     }
 

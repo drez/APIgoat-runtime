@@ -289,6 +289,7 @@ final class WebklexTransport implements ImapTransport
                 if (!$m) continue;
                 $flags = [];
                 foreach ($m->getFlags() as $flag) $flags[] = (string) $flag;
+                $rawHeader = (string) ($m->getHeader()?->raw ?? '');
                 $out[(int) $uid] = [
                     'uid'             => (int) $uid,
                     'message_id'      => (string) $m->getMessageId(),
@@ -307,8 +308,8 @@ final class WebklexTransport implements ImapTransport
                     // block; the TOPMOST Authentication-Results is read from
                     // it by position, never from webklex's parsed get() (which
                     // merges repeats, and the order is the trust).
-                    'auth_results'    => HeaderRecord::topmostHeader((string) ($m->getHeader()?->raw ?? ''), HeaderRecord::AUTH_RESULTS_HEADER),
-                ];
+                    'auth_results'    => HeaderRecord::topmostHeader($rawHeader, HeaderRecord::AUTH_RESULTS_HEADER),
+                ] + HeaderRecord::bulkHeaders($rawHeader);
             }
             foreach ($this->gmailThreadIds($folder, array_keys($out)) as $uid => $thrid) {
                 $out[$uid]['thread_id'] = $thrid;

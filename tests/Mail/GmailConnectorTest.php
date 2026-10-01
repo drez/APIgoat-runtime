@@ -334,4 +334,20 @@ final class GmailConnectorTest extends TestCase
         $this->assertTrue($l->complete);
         $this->assertSame(0, $l->count());
     }
+
+    public function testBulkHeadersAreRequestedAndMapped(): void
+    {
+        foreach (['List-Id', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted'] as $h) {
+            $this->assertContains($h, GmailConnector::METADATA_HEADERS);
+        }
+        $m = $this->msg('c');
+        $m['payload']['headers'][] = ['name' => 'List-Id', 'value' => 'News <news.example.com>'];
+        $m['payload']['headers'][] = ['name' => 'List-Unsubscribe', 'value' => '<https://x/u>'];
+        $m['payload']['headers'][] = ['name' => 'Precedence', 'value' => 'bulk'];
+        $h = GmailConnector::normalise($m, 'INBOX');
+        $this->assertSame('News <news.example.com>', $h['list_id']);
+        $this->assertSame('<https://x/u>', $h['list_unsubscribe']);
+        $this->assertSame('bulk', $h['precedence']);
+        $this->assertSame('', $h['auto_submitted']);
+    }
 }

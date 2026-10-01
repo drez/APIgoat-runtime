@@ -114,4 +114,36 @@ final class HeaderRecordTest extends TestCase
         $this->assertSame(['a@x.com', 'b@x.com'], array_column($r['to'], 'addr'));
         $this->assertSame([['addr' => 'c@x.com', 'name' => '']], $r['cc']);
     }
+
+    public function testBulkHeadersReadTheTopmostOccurrenceOfEach(): void
+    {
+        $raw = "List-Id: Weekly news <news.example.com>\r\n"
+             . "List-Unsubscribe: <mailto:u@example.com>,\r\n <https://example.com/u?x=1>\r\n"
+             . "Precedence: bulk\r\n"
+             . "Auto-Submitted: auto-generated\r\n"
+             . "List-Id: forged <other.example>\r\n"
+             . "\r\n"
+             . "List-Id: in the body <body.example>\r\n";
+        $this->assertSame([
+            'list_id'          => 'Weekly news <news.example.com>',
+            'list_unsubscribe' => '<mailto:u@example.com>, <https://example.com/u?x=1>',
+            'precedence'       => 'bulk',
+            'auto_submitted'   => 'auto-generated',
+        ], HeaderRecord::bulkHeaders($raw));
+        $this->assertSame(['list_id' => '', 'list_unsubscribe' => '', 'precedence' => '', 'auto_submitted' => ''],
+            HeaderRecord::bulkHeaders("From: a@b.c\r\n\r\nbody"));
+    }
+
+    public function testNormaliseCarriesTheBulkKeysWithTypedDefaults(): void
+    {
+        $r = HeaderRecord::normalise(['list_id' => "  a\r\n\t<b.example>  ", 'precedence' => 'list']);
+        $this->assertSame('a <b.example>', $r['list_id']);
+        $this->assertSame('list', $r['precedence']);
+        $this->assertSame('', $r['list_unsubscribe']);
+        $this->assertSame('', $r['auto_submitted']);
+        foreach (['list_id', 'list_unsubscribe', 'precedence', 'auto_submitted'] as $k) {
+            $this->assertContains($k, HeaderRecord::KEYS);
+        }
+        $this->assertSame(500, mb_strlen(HeaderRecord::normalise(['list_unsubscribe' => str_repeat('x', 900)])['list_unsubscribe']));
+    }
 }

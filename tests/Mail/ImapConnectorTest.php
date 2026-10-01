@@ -453,4 +453,22 @@ final class ImapConnectorTest extends TestCase
         $this->assertSame('', $this->connector()->trash('6:INBOX'), 'trash goes through move() into the detected Trash');
         $this->assertArrayHasKey(1, $this->imap->store['Archive'], 'the move itself happened');
     }
+
+    public function testBulkHeadersFromTheTransportArePassedThrough(): void
+    {
+        $this->imap->add('INBOX', 3, ['list_id' => '<news.example.com>', 'list_unsubscribe' => '<mailto:u@x>', 'precedence' => 'bulk', 'auto_submitted' => 'auto-generated', 'date' => gmdate('r')]);
+        $this->imap->add('INBOX', 4, ['date' => gmdate('r')]);
+        $r = $this->connector()->fetchHeaders('INBOX', null, 50);
+        // Fresh dates: the fake's fixed default date has aged out of the 30-day cold-start window (the 4 baseline failures).
+        $by = [];
+        foreach ($r->headers as $h) $by[$h['provider_message_id']] = $h;
+        $bulk  = $by['3:INBOX'] ?? $by['INBOX:3'] ?? $by[3] ?? null;
+        $plain = $by['4:INBOX'] ?? $by['INBOX:4'] ?? $by[4] ?? null;
+        $this->assertNotNull($bulk, 'ids: ' . implode(',', array_keys($by)));
+        $this->assertSame('<news.example.com>', $bulk['list_id']);
+        $this->assertSame('<mailto:u@x>', $bulk['list_unsubscribe']);
+        $this->assertSame('bulk', $bulk['precedence']);
+        $this->assertSame('auto-generated', $bulk['auto_submitted']);
+        $this->assertSame('', $plain['list_id'], 'absent header gives empty');
+    }
 }

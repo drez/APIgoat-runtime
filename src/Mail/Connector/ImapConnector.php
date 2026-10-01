@@ -492,6 +492,10 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter,
             'was_read_at_fetch'   => (bool) ($r['seen'] ?? false),
             'labels'              => (array) ($r['flags'] ?? []),
             'auth_results'        => (string) ($r['auth_results'] ?? ''), // topmost Authentication-Results only
+            'list_id'             => (string) ($r['list_id'] ?? ''),
+            'list_unsubscribe'    => (string) ($r['list_unsubscribe'] ?? ''),
+            'precedence'          => (string) ($r['precedence'] ?? ''),
+            'auto_submitted'      => (string) ($r['auto_submitted'] ?? ''),
         ]);
     }
 
