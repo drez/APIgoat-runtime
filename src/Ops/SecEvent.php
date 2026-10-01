@@ -46,6 +46,8 @@ final class SecEvent
         'mcp_call',
         'google_login',
         'google_reject',
+        'web_handoff',
+        'web_handoff_reject',
     ];
 
     /** ops_sec_event.detail column width; write() truncates to this, never fails on an oversized caller string. */

@@ -51,7 +51,7 @@ final class SecEventTest extends TestCase
         $expected = [
             'rbac_deny', 'csrf', 'stale_session', 'access_denied', 'switch_rejected',
             'reauth_throttled', 'token_reuse', 'token_revoked', 'jwt_refused',
-            'mcp_call', 'google_login', 'google_reject',
+            'mcp_call', 'google_login', 'google_reject', 'web_handoff', 'web_handoff_reject',
         ];
         \sort($expected);
         $actual = SecEvent::TYPES;
