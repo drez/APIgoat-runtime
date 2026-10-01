@@ -40,6 +40,12 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
 
         $response = $handler->handle($request);
 
+        // Daily log retention for every project (Ops\LogPrune): this is the
+        // one runtime middleware every gc project stacks. A state-file stat
+        // per request; the prune itself runs after the response, once a day,
+        // and only where with_ops_monitor isn't already doing it.
+        \ApiGoat\Ops\LogPrune::schedule();
+
         foreach (self::HEADERS as $name => $value) {
             if (!$response->hasHeader($name)) {
                 $response = $response->withHeader($name, $value);

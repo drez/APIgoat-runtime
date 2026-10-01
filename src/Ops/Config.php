@@ -13,7 +13,10 @@ namespace ApiGoat\Ops;
  * `_BASE_DIR . 'config/Built/ops_monitor.php'`, a plain
  * `<?php return [...];` with these keys:
  *   slow_ms, slow_query_ms, raw_days, rollup_days, server_source,
- *   report_to, snapshot_path.
+ *   report_to, snapshot_path, and the generic log windows (days, 0 = keep
+ *   forever) authy_log_days, api_log_days, client_event_days (90) and
+ *   contact_message_days (365) — a manifest built before those keys
+ *   existed simply falls back to DEFAULTS.
  * enabled() is true only when _BASE_DIR is defined AND that file exists —
  * a project that never declared `with_ops_monitor` has no file at all, so
  * every ops_* runtime path (RequestRecorder::defer, and later the query and
@@ -36,6 +39,11 @@ final class Config
         // route => ms: routes slow by design (LLM, MCP) only count as slow
         // above their own threshold; a key ending in '*' is a prefix.
         'slow_routes'   => [],
+        // Generic log retention (Retention::pruneLogs), days; 0 = keep forever.
+        'authy_log_days'       => 90,
+        'api_log_days'         => 90,
+        'client_event_days'    => 90,
+        'contact_message_days' => 365,
     ];
 
     /** Cached manifest contents (without defaults merged in), or null = not loaded yet. */

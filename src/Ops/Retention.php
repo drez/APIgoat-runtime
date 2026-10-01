@@ -18,6 +18,12 @@ namespace ApiGoat\Ops;
  *   - ops_req_hour, ops_cron_run, ops_server_snap: rollupDays
  *   - ops_report: never pruned (not in this list at all)
  *
+ * pruneLogs() applies the same batched age-based prune to the generic
+ * IP-bearing log tables a project may have (authy_log, api_log,
+ * client_event, contact_message — see LOG_TABLES), each with its own
+ * window: Config keys authy_log_days / api_log_days / client_event_days
+ * (default 90) and contact_message_days (default 365); 0 = keep forever.
+ *
  * cutoffs() is pure (no PDO) so it is unit-testable without a database
  * (R1: this host has no pdo_sqlite); prune() is the DB-backed half, run
  * against MySQL in P/.admin/tests/Custom/OpsRetentionTest.php. Never
@@ -141,6 +147,119 @@ final class Retention
         }
 
         return $deleted;
+    }
+
+    /**
+     * Generic IP-bearing log tables pruned by age, beyond the ops_* set.
+     * table => [date column, column kind ('epoch' = INTEGER unix seconds,
+     * 'datetime' = DATETIME in the app's timezone), Config key holding the
+     * retention window in days]. Every entry is optional: a project only
+     * has the tables its behaviors/schema declare, so pruneLogs() skips a
+     * missing table or column silently. Columns verified against a real
+     * generated schema.sql (2026-10-01):
+     *   - authy_log.timestamp        DATETIME (login log, ip)
+     *   - api_log.time               DATETIME (same column add_prune_action uses)
+     *   - client_event.created_at    INTEGER unix (with_client_telemetry, ip)
+     *   - contact_message.date_creation DATETIME (project table, ip_address/user_agent)
+     */
+    private const LOG_TABLES = [
+        'authy_log'       => ['timestamp', 'datetime', 'authy_log_days'],
+        'api_log'         => ['time', 'datetime', 'api_log_days'],
+        'client_event'    => ['created_at', 'epoch', 'client_event_days'],
+        'contact_message' => ['date_creation', 'datetime', 'contact_message_days'],
+    ];
+
+    /** The Config keys of the generic log windows: config key => table. */
+    public static function logDayKeys(): array
+    {
+        $out = [];
+        foreach (self::LOG_TABLES as $table => [, , $key]) {
+            $out[$key] = $table;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Pure: table => [column, cutoff value] for the generic log tables.
+     * $days maps a Config key (authy_log_days, …) to its window; a key
+     * absent or <= 0 means "never prune that table" and drops it from the
+     * result. The cutoff is an int for an epoch column and a
+     * 'Y-m-d H:i:s' string (PHP's default timezone — the one the app
+     * writes those DATETIMEs with) for a datetime column.
+     *
+     * @param array<string,int|string|null> $days
+     * @return array<string,array{0:string,1:int|string}>
+     */
+    public static function logCutoffs(int $now, array $days): array
+    {
+        $out = [];
+        foreach (self::LOG_TABLES as $table => [$column, $kind, $key]) {
+            $d = (int) ($days[$key] ?? 0);
+            if ($d <= 0) {
+                continue;
+            }
+            $ts = $now - $d * self::SECONDS_PER_DAY;
+            $out[$table] = [$column, $kind === 'epoch' ? $ts : \date('Y-m-d H:i:s', $ts)];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Age-based retention for the generic IP-bearing log tables (see
+     * LOG_TABLES), same bounded batching as prune(). A table — or its date
+     * column — that does not exist on this project is skipped silently and
+     * absent from the result; a DELETE failure is swallowed to error_log
+     * like prune(). Rows whose date column is NULL are never matched.
+     *
+     * @param array<string,int|string|null> $days Config key => window in days
+     * @return array<string,int> table => rows deleted
+     */
+    public static function pruneLogs(\PDO $pdo, int $now, array $days, int $batchSize = self::DEFAULT_BATCH_SIZE): array
+    {
+        $deleted = [];
+        foreach (self::logCutoffs($now, $days) as $table => [$column, $cutoff]) {
+            if (!self::tableExists($pdo, $table) || !self::columnExists($pdo, $table, $column)) {
+                continue;
+            }
+            $deleted[$table] = self::deleteInBatches($pdo, $table, $column, $cutoff, $batchSize);
+        }
+
+        return $deleted;
+    }
+
+    /** Batched `DELETE ... LIMIT` loop shared by pruneLogs(); never throws. */
+    private static function deleteInBatches(\PDO $pdo, string $table, string $column, int|string $cutoff, int $batchSize): int
+    {
+        $total = 0;
+        try {
+            $stmt = $pdo->prepare("DELETE FROM `{$table}` WHERE `{$column}` < :cutoff LIMIT {$batchSize}");
+            for ($batch = 0; $batch < self::MAX_BATCHES_PER_TABLE; $batch++) {
+                $stmt->execute([':cutoff' => $cutoff]);
+                $n = $stmt->rowCount();
+                $total += $n;
+                if ($n < $batchSize) {
+                    break;
+                }
+                if ($batch === self::MAX_BATCHES_PER_TABLE - 1) {
+                    \error_log("[ops] retention prune: {$table} hit the {$batch}-batch safety cap; more rows may remain for the next run");
+                }
+            }
+        } catch (\Throwable $e) {
+            \error_log("[ops] retention prune failed for {$table}: " . $e->getMessage());
+        }
+
+        return $total;
+    }
+
+    private static function columnExists(\PDO $pdo, string $table, string $column): bool
+    {
+        try {
+            return (bool) $pdo->query("SHOW COLUMNS FROM `{$table}` LIKE " . $pdo->quote($column))->fetchColumn();
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private static function tableExists(\PDO $pdo, string $table): bool

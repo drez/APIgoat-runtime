@@ -9,7 +9,8 @@ namespace ApiGoat\Ops;
  *
  *   - Forwarder::run()     every tick (no-op unless GC_OPS_HUB_URL/KEY set)
  *   - ServerSnap::collect  hourly
- *   - Retention::prune     daily
+ *   - Retention::prune     daily (+ Retention::pruneLogs: authy_log, api_log,
+ *                          client_event, contact_message when present)
  *   - IpInfo::resolvePending every tick (a few IPs per run, time-boxed)
  *
  * so every app with with_ops_monitor keeps its tables trimmed and reports
@@ -88,9 +89,23 @@ final class Tick
         return match ($job) {
             'forward' => Forwarder::run($pdo, $now),
             'snap'    => ServerSnap::collect($pdo),
-            'prune'   => (string) \json_encode(Retention::prune($pdo, $now, (int) Config::get('raw_days'), (int) Config::get('rollup_days'))),
+            'prune'   => (string) \json_encode(
+                Retention::prune($pdo, $now, (int) Config::get('raw_days'), (int) Config::get('rollup_days'))
+                + Retention::pruneLogs($pdo, $now, self::logDays())
+            ),
             'ipinfo'  => IpInfo::resolvePending($pdo, $now),
         };
+    }
+
+    /** @return array<string,int> Config key => days for Retention::pruneLogs() */
+    private static function logDays(): array
+    {
+        $out = [];
+        foreach (\array_keys(Retention::logDayKeys()) as $key) {
+            $out[$key] = (int) Config::get($key);
+        }
+
+        return $out;
     }
 
     /** @return array<string,int> */

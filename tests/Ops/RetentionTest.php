@@ -182,4 +182,102 @@ final class RetentionTest extends TestCase
         $this->assertStringContainsString('ops_req_slow', $logged);
         $this->assertStringContainsString('safety cap', $logged);
     }
+    private const LOG_DAYS = [
+        'authy_log_days' => 90, 'api_log_days' => 90,
+        'client_event_days' => 90, 'contact_message_days' => 365,
+    ];
+
+    public function test_log_cutoffs_use_each_tables_real_date_column_and_type(): void
+    {
+        $now = 1_800_000_000;
+        $c = Retention::logCutoffs($now, self::LOG_DAYS);
+
+        $this->assertSame(['timestamp', \date('Y-m-d H:i:s', $now - 90 * self::DAY)], $c['authy_log']);
+        $this->assertSame(['time', \date('Y-m-d H:i:s', $now - 90 * self::DAY)], $c['api_log']);
+        $this->assertSame(['created_at', $now - 90 * self::DAY], $c['client_event'], 'client_event.created_at is a unix INTEGER');
+        $this->assertSame(['date_creation', \date('Y-m-d H:i:s', $now - 365 * self::DAY)], $c['contact_message']);
+    }
+
+    public function test_log_cutoffs_skip_a_table_whose_window_is_zero_or_missing(): void
+    {
+        $c = Retention::logCutoffs(1_800_000_000, ['authy_log_days' => 0, 'api_log_days' => 30]);
+
+        $this->assertSame(['api_log'], \array_keys($c));
+    }
+
+    public function test_log_day_keys_match_the_config_defaults(): void
+    {
+        require_once __DIR__ . '/../../src/Ops/Config.php';
+        \ApiGoat\Ops\Config::override([]);
+        try {
+            $this->assertSame(
+                ['authy_log_days', 'api_log_days', 'client_event_days', 'contact_message_days'],
+                \array_keys(Retention::logDayKeys())
+            );
+            $this->assertSame(90, \ApiGoat\Ops\Config::get('authy_log_days'));
+            $this->assertSame(90, \ApiGoat\Ops\Config::get('api_log_days'));
+            $this->assertSame(90, \ApiGoat\Ops\Config::get('client_event_days'));
+            $this->assertSame(365, \ApiGoat\Ops\Config::get('contact_message_days'));
+        } finally {
+            \ApiGoat\Ops\Config::reset();
+        }
+    }
+
+    /**
+     * A project without a table (or with a renamed date column) must be
+     * skipped silently: no DELETE prepared, no error_log line, no key in
+     * the result. Here only api_log exists, and contact_message exists
+     * without its date column.
+     */
+    public function test_prune_logs_skips_missing_tables_and_columns_silently(): void
+    {
+        $prepared = [];
+        $pdo = $this->createMock(\PDO::class);
+        $pdo->method('quote')->willReturnCallback(static fn ($v) => "'{$v}'");
+        $pdo->method('query')->willReturnCallback(function (string $sql) {
+            $hit = \str_contains($sql, "SHOW TABLES LIKE 'api_log'")
+                || \str_contains($sql, "SHOW TABLES LIKE 'contact_message'")
+                || \str_contains($sql, "SHOW COLUMNS FROM `api_log` LIKE 'time'");
+            $stmt = $this->createMock(\PDOStatement::class);
+            $stmt->method('fetchColumn')->willReturn($hit ? 'x' : false);
+
+            return $stmt;
+        });
+        $pdo->method('prepare')->willReturnCallback(function (string $sql) use (&$prepared) {
+            $prepared[] = $sql;
+            $stmt = $this->createMock(\PDOStatement::class);
+            $stmt->method('execute')->willReturn(true);
+            $seq = [2, 1];
+            $i = 0;
+            $stmt->method('rowCount')->willReturnCallback(static function () use (&$i, $seq) {
+                return $seq[$i++] ?? 0;
+            });
+
+            return $stmt;
+        });
+
+        $result = Retention::pruneLogs($pdo, 1_800_000_000, self::LOG_DAYS, 2);
+
+        $this->assertSame(['api_log' => 3], $result, 'two batches (2 full + 1 short) on the one present table');
+        $this->assertSame(['DELETE FROM `api_log` WHERE `time` < :cutoff LIMIT 2'], $prepared);
+        $this->assertSame('', (string) \file_get_contents($this->logFile), 'skipping is silent');
+    }
+
+    public function test_prune_logs_swallows_a_delete_failure(): void
+    {
+        $pdo = $this->createMock(\PDO::class);
+        $pdo->method('quote')->willReturnCallback(static fn ($v) => "'{$v}'");
+        $pdo->method('query')->willReturnCallback(function () {
+            $stmt = $this->createMock(\PDOStatement::class);
+            $stmt->method('fetchColumn')->willReturn('x');
+
+            return $stmt;
+        });
+        $pdo->method('prepare')->willThrowException(new \PDOException('lock wait timeout'));
+
+        $result = Retention::pruneLogs($pdo, 1_800_000_000, self::LOG_DAYS);
+
+        $this->assertSame(['authy_log' => 0, 'api_log' => 0, 'client_event' => 0, 'contact_message' => 0], $result);
+        $this->assertStringContainsString('lock wait timeout', (string) \file_get_contents($this->logFile));
+    }
 }
