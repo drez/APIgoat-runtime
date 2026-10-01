@@ -20,7 +20,7 @@ final class Controls
         return '<style' . gcNonceAttr() . '>
 .dash-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--text);font:inherit;font-size:13px;font-weight:500;line-height:1;text-decoration:none;white-space:nowrap;cursor:pointer;transition:background .12s,border-color .12s}
 .dash-btn:hover{background:var(--row-hover);border-color:var(--line-hard);color:var(--ink)}
-.dash-btn i{font-size:15px;line-height:1}
+.dash-btn i{font-size:15px;line-height:1;color:inherit}
 .dash-btn--primary{background:var(--mint);border-color:var(--mint);color:var(--on-accent);font-weight:600}
 .dash-btn--primary:hover{background:var(--mint-600);border-color:var(--mint-600);color:var(--on-accent)}
 .dash-btn:focus-visible,.dash-input:focus{outline:none;border-color:var(--mint);box-shadow:0 0 0 3px var(--mint-100)}

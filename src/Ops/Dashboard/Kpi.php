@@ -18,18 +18,30 @@ final class Kpi
     /**
      * @param ?array{0:list<int|string>, 1:list<int|float|null>, 2?:string} $spark
      *        [x labels (unix timestamps or ready-made strings like a date), values, unit suffix]
-     * @param ?string $level Level::of() result: the value shows as an amber/red pill
+     * @param ?string $level   Level::of() result ('normal' amber / 'high' red):
+     *                          colors the number and the tile's top edge — the
+     *                          value keeps its full size (a pill shrank problem
+     *                          numbers, so the worst ones read the smallest)
+     * @param ?string $caption  small line under the value ("1 overdue", "across 4 clients")
+     * @param ?string $tone     'good' for good-news values (collected, net profit)
+     * @param ?string $href     makes the caption a link (e.g. "1 overdue" → the overdue bills)
      */
-    public static function tile(string $label, string|int|float $value, ?array $spark = null, ?string $level = null): string
+    public static function tile(string $label, string|int|float|null $value, ?array $spark = null, ?string $level = null, ?string $caption = null, ?string $tone = null, ?string $href = null): string
     {
         $e = static fn ($s) => \htmlspecialchars((string) $s, \ENT_QUOTES);
         $line = $spark !== null && \count($spark[1]) > 1
             ? '<canvas class="ops-spark" height="36" role="img" aria-label="' . $e(\sprintf(_('%s trend'), $label)) . '"'
                 . ' data-ts="' . $e(\json_encode(\array_values($spark[0]))) . '" data-v="' . $e(\json_encode(\array_values($spark[1]))) . '"'
                 . ' data-unit="' . $e($spark[2] ?? '') . '"></canvas>'
-            : '<div class="ops-spark ops-spark--none"></div>';
+            : ($spark !== null ? '<div class="ops-spark ops-spark--none"></div>' : ''); // an empty series keeps a sparkline row aligned
+        $mod = \in_array($level, ['normal', 'high'], true) ? ' ops-kpi--' . $level : ($tone === 'good' ? ' ops-kpi--good' : '');
 
-        return '<div class="ops-kpi"><div class="ops-kpi-l">' . $e($label) . '</div><div class="ops-kpi-v">' . Level::pill((string) $value, $level) . '</div>' . $line . '</div>';
+        return '<div class="ops-kpi' . $mod . '"><div class="ops-kpi-l">' . $e($label) . '</div>'
+            . '<div class="ops-kpi-v">' . ($value === null || $value === '' ? '—' : $e($value)) . '</div>'
+            . ($caption !== null && $caption !== ''
+                ? '<div class="ops-kpi-c">' . ($href !== null && $href !== '' ? '<a href="' . $e($href) . '">' . $e($caption) . '</a>' : $e($caption)) . '</div>'
+                : '')
+            . $line . '</div>';
     }
 
     /**
@@ -52,8 +64,14 @@ final class Kpi
     {
         return '<style' . gcNonceAttr() . '>
 .ops-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
-.ops-kpi{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:10px;padding:12px}
-.ops-kpi-l{font-size:12px;opacity:.7}.ops-kpi-v{font-size:26px;font-weight:600}
+.ops-kpi{background:var(--surface,#fff);border:1px solid var(--line,#e3e8ee);border-top:3px solid transparent;border-radius:10px;padding:12px 14px;min-width:0}
+.ops-kpi-l{font-size:12px;font-weight:500;color:var(--text-mute,#627286)}
+.ops-kpi-v{font-size:26px;font-weight:650;line-height:1.2;color:var(--ink,#0a2540);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ops-kpi-c{font-size:12px;color:var(--text-mute,#627286);margin-top:2px}.ops-kpi-c a{color:inherit;text-decoration:none}.ops-kpi-c a:hover{text-decoration:underline}
+.ops-kpi--high .ops-kpi-c{color:var(--danger,#df1b41)}.ops-kpi--normal .ops-kpi-c{color:var(--warning-700,#b45309)}
+.ops-kpi--normal{border-top-color:var(--warning,#f59e0b)}.ops-kpi--normal .ops-kpi-v{color:var(--warning-700,#b45309)}
+.ops-kpi--high{border-top-color:var(--danger,#df1b41)}.ops-kpi--high .ops-kpi-v{color:var(--danger,#df1b41)}
+.ops-kpi--good .ops-kpi-v{color:var(--mint-700,#009b82)}
 .ops-spark{display:block;width:100%!important;height:36px!important;margin-top:6px;color:var(--mint,#00d1b2)}
 </style>';
     }

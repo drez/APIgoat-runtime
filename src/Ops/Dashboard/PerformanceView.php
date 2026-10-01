@@ -215,9 +215,9 @@ final class PerformanceView
             . Kpi::tile(_('p95 latency'), self::fmtP95($o['p95_ms']), [$ts, array_column($trend, 'p95_ms'), ' ms'], $lv->level('p95_ms', $o['p95_ms']))
             . Kpi::tile(_('5xx rate'), round($o['rate_5xx'] * 100, 2) . '%', [$ts, array_map(fn ($r) => round($r['rate_5xx'] * 100, 2), $trend), '%'], $lv->level('rate_5xx_pct', round($o['rate_5xx'] * 100, 2)))
             . Kpi::tile(_('Slow queries'), $o['slow_queries'], [$ts, array_map(fn ($h) => $slowByBucket[$h] ?? 0, $ts), ''])
-            . Kpi::tile(_('Load (1m)'), $server !== null && $server['load1'] !== null ? $server['load1'] : $unavailable, $sparkServer('load1', ''), $lv->level('load1', $server['load1'] ?? null))
-            . Kpi::tile(_('Memory'), $server !== null && $server['mem_pct'] !== null ? $server['mem_pct'] . '%' : $unavailable, $sparkServer('mem_pct', '%'), $lv->level('mem_pct', $server['mem_pct'] ?? null))
-            . Kpi::tile(_('Disk'), $server !== null && $server['disk_pct'] !== null ? $server['disk_pct'] . '%' : $unavailable, $sparkServer('disk_pct', '%'), $lv->level('disk_pct', $server['disk_pct'] ?? null))
+            . Kpi::tile(_('Load (1m)'), $server !== null && $server['load1'] !== null ? $server['load1'] : null, $sparkServer('load1', ''), $lv->level('load1', $server['load1'] ?? null), $server === null ? $unavailable : null)
+            . Kpi::tile(_('Memory'), $server !== null && $server['mem_pct'] !== null ? $server['mem_pct'] . '%' : null, $sparkServer('mem_pct', '%'), $lv->level('mem_pct', $server['mem_pct'] ?? null), $server === null ? $unavailable : null)
+            . Kpi::tile(_('Disk'), $server !== null && $server['disk_pct'] !== null ? $server['disk_pct'] . '%' : null, $sparkServer('disk_pct', '%'), $lv->level('disk_pct', $server['disk_pct'] ?? null), $server === null ? $unavailable : null)
             . '</div>'
             . '<div class="ops-card"><h3>' . $e(_('Latency trend')) . '</h3>'
             . '<canvas id="perf-latency-trend" height="90" data-series="' . $e(json_encode($trend)) . '"></canvas></div>'

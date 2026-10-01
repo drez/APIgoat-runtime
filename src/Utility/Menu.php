@@ -76,7 +76,8 @@ class Menu
 
             $count = '';
             $rowCount = $this->countFor($Model);
-            if ($rowCount !== null) {
+            // A zero is noise on a long menu: only non-empty tables show a chip.
+            if ($rowCount !== null && $rowCount > 0) {
                 $count = span((int) $rowCount, 'class="dr-item-tag"');
             }
 
@@ -206,7 +207,7 @@ class Menu
                             );
                     } else {
                         $rowCount = $this->countFor($Model);
-                        if ($rowCount !== null) {
+                        if ($rowCount !== null && $rowCount > 0) {
                             $count = span((int) $rowCount, 'class="dr-item-tag"');
                         }
                         $iconStr = $this->icons[$Model] ?? null;

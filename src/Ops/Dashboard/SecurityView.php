@@ -201,11 +201,11 @@ final class SecurityView
             . '<select class="dash-input" name="type">' . $typeOptions . '</select>'
             . '<button type="submit" class="dash-btn dash-btn--primary"><i class="ri-equalizer-line"></i><span>' . $e(_('Apply')) . '</span></button></form>'
             . '<div class="ops-kpis">'
-            . Kpi::tile(_('Failed logins'), $na ?? $o['failed_logins'], $na === null ? $daily($loginsByDay, 'failed') : null)
-            . Kpi::tile(_('OK logins'), $na ?? $o['ok_logins'], $na === null ? $daily($loginsByDay, 'ok') : null)
+            . Kpi::tile(_('Failed logins'), $na ?? $o['failed_logins'], $na === null ? $daily($loginsByDay, 'failed') : [[], []])
+            . Kpi::tile(_('OK logins'), $na ?? $o['ok_logins'], $na === null ? $daily($loginsByDay, 'ok') : [[], []])
             . Kpi::tile(_('RBAC denies'), $o['rbac_denies'], $daily($secByDay, 'rbac'))
             . Kpi::tile(_('Security events'), $o['sec_events'], $daily($secByDay, 'n'))
-            . Kpi::tile(_('Active tokens (now)'), $na ?? $o['active_tokens'])
+            . Kpi::tile(_('Active tokens (now)'), $na ?? $o['active_tokens'], [[], []])
             . '</div>'
             . $trendCard
             . Tabs::render('security', [
