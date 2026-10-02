@@ -36,6 +36,18 @@ final class MailHtmlTest extends TestCase
         $this->assertStringContainsString('src="data:image/png;base64,AAAA"', $out, 'inline data images stay');
     }
 
+    public function test_image_map_areas_open_in_a_new_tab_and_no_other_element_can_target_the_frame(): void
+    {
+        $out = MailHtml::defuse('<map name="m"><area shape="rect" coords="0,0,9,9" href="https://ok.example/a" target="_self"><area href="https://ok.example/b" target="_top"></map><a href="https://ok.example/c" target="_parent">c</a><div target="_self">d</div>');
+        $this->assertStringContainsString('href="https://ok.example/a" target="_blank" rel="noopener noreferrer"', $out);
+        $this->assertStringContainsString('href="https://ok.example/b" target="_blank" rel="noopener noreferrer"', $out);
+        $this->assertStringContainsString('<a href="https://ok.example/c" target="_blank" rel="noopener noreferrer">c</a>', $out);
+        $this->assertStringContainsString('<div>d</div>', $out, 'a target on any other element is dropped');
+        foreach (['_self', '_top', '_parent'] as $t) {
+            $this->assertStringNotContainsString($t, $out, $t);
+        }
+    }
+
     public function test_remote_images_are_blocked_behind_a_placeholder_and_restorable(): void
     {
         $blocked = MailHtml::defuse('<img src="https://t.example/px.gif" width="1" height="1">');

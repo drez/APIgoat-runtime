@@ -131,9 +131,13 @@ final class MailHtml
                 }
             }
             $name = strtolower($el->localName ?: $el->nodeName);
-            if ($name === 'a') {
+            // Every link opens in a new tab: <a> and image-map <area> alike. A target on
+            // any other element could only aim at the frame itself (_self/_top/_parent).
+            if ($name === 'a' || $name === 'area') {
                 $el->setAttribute('target', '_blank');
                 $el->setAttribute('rel', 'noopener noreferrer');
+            } elseif ($el->hasAttribute('target')) {
+                $el->removeAttribute('target');
             }
             // <image> is what a browser's parser turns into <img>.
             if (($name === 'img' || $name === 'image') && !$images && $el->hasAttribute('src')) {
