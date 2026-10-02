@@ -221,6 +221,36 @@ final class RefreshTokenService
     }
 
     /**
+     * Sign-out for an API client: revoke the whole family of the presented
+     * refresh token (every rotation of that login, including a successor
+     * minted from it). Idempotent and oracle-free: an unknown or already
+     * revoked token answers success too — the caller is signing out either
+     * way. A stale (already rotated) token still finds its row, so it still
+     * ends the live rotation. Throttled with the same window and counter as
+     * redeem(), so it cannot probe token hashes faster than refresh can.
+     * Nothing here logs the token.
+     *
+     * @return array{status:string,message?:string}
+     */
+    public function revokeByToken(string $rawToken, string $ip): array
+    {
+        $now = ($this->clock)();
+        if ($rawToken === '') {
+            return $this->err('invalid_token');
+        }
+        $row      = $this->store->findByHash($this->hashToken($rawToken));
+        $familyId = $row['family_id'] ?? '';
+        if ($this->store->recentAttemptCount($ip, $familyId, $now - self::THROTTLE_WINDOW) >= self::THROTTLE_MAX) {
+            return $this->err('rate_limited');
+        }
+        $this->store->recordAttempt($ip, $familyId, $now);
+        if ($row !== null) {
+            $this->store->revokeFamily($row['family_id']);
+        }
+        return ['status' => 'success'];
+    }
+
+    /**
      * Session-length resolution: GC_SESSION_API_DAYS knob (project .env,
      * clamped to 365) > jwt_middleware settings > 90-day default. Env-first
      * because per-project settings.defaults.php copies are not drift-synced —

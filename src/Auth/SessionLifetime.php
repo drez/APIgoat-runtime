@@ -79,7 +79,7 @@ final class SessionLifetime
         if (self::isBearerRequest($_SERVER, $_COOKIE)) {
             return;
         }
-        // The API credential exchange (POST api/vN/Authy/auth|refresh) answers
+        // The API credential exchange (POST api/vN/Authy/auth|refresh|revoke) answers
         // with a token and nothing else: it used to start (and persist) an
         // ApiGoat cookie session too, and its "clean session for API auth"
         // replaced — i.e. signed out — the GUI session of a browser that called
@@ -224,7 +224,7 @@ final class SessionLifetime
     public const BEARER_PATTERN = '/Bearer\s+(\S.*)$/i';
 
     /**
-     * POST to the API credential exchange (api/vN/Authy/auth or /refresh):
+     * POST to the API credential exchange (api/vN/Authy/auth, /refresh or /revoke):
      * a token-only response that must not own a cookie session.
      *
      * @param array<string,mixed> $server $_SERVER
@@ -235,7 +235,7 @@ final class SessionLifetime
             return false;
         }
         $path = (string) parse_url((string) ($server['REQUEST_URI'] ?? ''), PHP_URL_PATH);
-        return (bool) preg_match('#/api/v[0-9]+/Authy/(auth|refresh)/?$#', $path);
+        return (bool) preg_match('#/api/v[0-9]+/Authy/(auth|refresh|revoke)/?$#', $path);
     }
 
     /** Cookie name startGuiSession() registers via session_name(). */
