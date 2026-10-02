@@ -26,7 +26,19 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
 
     public function findByHash(string $hash): ?array
     {
-        $m = \App\AuthyRefreshTokenQuery::create()->filterByTokenHash($hash)->findOne();
+        // Always a fresh row: RefreshTokenService re-reads the parent after
+        // inserting a successor to see a concurrent family revocation, and
+        // Propel's instance pool would hand back the object loaded earlier in
+        // the same request (bulk update() never refreshes pooled objects).
+        $pooling = \Propel::isInstancePoolingEnabled();
+        \Propel::disableInstancePooling();
+        try {
+            $m = \App\AuthyRefreshTokenQuery::create()->filterByTokenHash($hash)->findOne();
+        } finally {
+            if ($pooling) {
+                \Propel::enableInstancePooling();
+            }
+        }
         if (!$m) {
             return null;
         }
@@ -66,20 +78,27 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
         return (int) $n === 1;
     }
 
+    /**
+     * Revoke AND tombstone the family: family_expires = 0 on every row,
+     * already-rotated ones included (no revoked filter), so a redeem that
+     * claimed a rotation before this ran sees the tombstone on its parent
+     * when it re-reads it after inserting the successor. One statement.
+     * 1 = 'Yes' in the tinyint ENUM; the 'Yes' string silently becomes 0
+     * via MySQL cast.
+     */
     public function revokeFamily(string $familyId): void
     {
         \App\AuthyRefreshTokenQuery::create()
             ->filterByFamilyId($familyId)
-            ->filterByRevoked('No')
-            ->update(['Revoked' => 1]);  // 1 = 'Yes' in tinyint ENUM; 'Yes' string silently becomes 0 via MySQL cast
+            ->update(['Revoked' => 1, 'FamilyExpires' => 0]);
     }
 
+    /** Same tombstone as revokeFamily(), for every family of the user (logout, password change). */
     public function revokeAllForUser(int $idAuthy): void
     {
         \App\AuthyRefreshTokenQuery::create()
             ->filterByIdAuthy($idAuthy)
-            ->filterByRevoked('No')
-            ->update(['Revoked' => 1]);  // 1 = 'Yes' in tinyint ENUM
+            ->update(['Revoked' => 1, 'FamilyExpires' => 0]);
     }
 
     public function recentAttemptCount(string $ip, string $familyId, int $since): int

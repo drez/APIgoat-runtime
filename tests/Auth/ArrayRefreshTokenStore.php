@@ -68,8 +68,9 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
     public function revokeFamily(string $familyId): void
     {
         foreach ($this->rows as $id => $r) {
-            if ($r['family_id'] === $familyId && $r['revoked'] === 'No') {
+            if ($r['family_id'] === $familyId) {
                 $this->rows[$id]['revoked'] = 'Yes';
+                $this->rows[$id]['family_expires'] = 0;   // tombstone, as the Propel store
             }
         }
     }
@@ -77,8 +78,9 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
     public function revokeAllForUser(int $idAuthy): void
     {
         foreach ($this->rows as $id => $r) {
-            if ($r['id_authy'] === $idAuthy && $r['revoked'] === 'No') {
+            if ($r['id_authy'] === $idAuthy) {
                 $this->rows[$id]['revoked'] = 'Yes';
+                $this->rows[$id]['family_expires'] = 0;   // tombstone, as the Propel store
             }
         }
     }

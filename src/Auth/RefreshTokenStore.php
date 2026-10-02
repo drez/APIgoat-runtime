@@ -26,6 +26,11 @@ interface RefreshTokenStore
      */
     public function claimRotation(int $id, int $at): bool;
 
+    /**
+     * Revoke every row of the family AND set family_expires = 0 on all of
+     * them, already revoked rows included (the tombstone RefreshTokenService
+     * re-checks after inserting a successor). revokeAllForUser() likewise.
+     */
     public function revokeFamily(string $familyId): void;
 
     public function revokeAllForUser(int $idAuthy): void;

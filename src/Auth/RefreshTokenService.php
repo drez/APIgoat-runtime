@@ -152,6 +152,19 @@ final class RefreshTokenService
             'family_expires' => $row['family_expires'],
         ]);
 
+        // A family revocation (sign-out, logout, password change, reuse
+        // detection) that landed between our claim and this insert could not
+        // see the successor. Every revocation tombstones the family
+        // (family_expires = 0 on ALL its rows, the claimed parent included),
+        // so re-read the parent now: either the revoke committed before this
+        // read and we see the tombstone, or it runs after the insert and its
+        // UPDATE revokes the successor itself.
+        $parent = $this->store->findByHash($this->hashToken($rawToken));
+        if ($parent === null || (int) $parent['family_expires'] < $now) {
+            $this->store->revokeFamily($row['family_id']);
+            return $this->err('token_reuse');
+        }
+
         return [
             'status'        => 'success',
             'token'         => $jwt['token'],

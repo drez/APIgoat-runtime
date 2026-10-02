@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ApiGoat\Tests\Auth;
 
 use ApiGoat\Auth\RefreshTokenService;
+use ApiGoat\Auth\RefreshTokenStore;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../../src/Auth/RefreshTokenStore.php';
@@ -103,4 +104,90 @@ final class RefreshTokenRevokeTest extends TestCase
         $svc->revokeByToken($phone, '1.1.1.1');
         $this->assertSame('success', $svc->redeem($web, '1.1.1.1', $this->minter())['status']);
     }
+    public function testARevokeLandingBetweenClaimAndSuccessorInsertLeavesNoLiveToken(): void
+    {
+        // I-1: redeem has claimed the rotation (parent flipped to revoked)
+        // but not yet inserted the successor when sign-out runs. The insert
+        // must not resurrect the family.
+        $inner = new ArrayRefreshTokenStore();
+        $store = new RaceRefreshTokenStore($inner);
+        $svc   = $this->svc($inner);
+        $racer = new RefreshTokenService($store, ['secret' => 'k', 'expire' => 'now +15 minutes', 'refresh_expire' => 2592000, 'refresh_family_expire' => 7776000], fn () => $this->clock);
+        $rt    = $svc->mintForLogin(7);
+        $family = $inner->rows[1]['family_id'];
+        $this->clock += 100;
+        $store->beforeInsert = fn () => $svc->revokeByToken($rt, '2.2.2.2');
+
+        $res = $racer->redeem($rt, '1.1.1.1', $this->minter());
+
+        $this->assertSame('error', $res['status']);
+        $this->assertContains($res['message'], ['token_reuse', 'invalid_token', 'expired']);
+        $this->assertArrayNotHasKey('refresh_token', $res);
+        $this->assertSame(0, $inner->liveCountForFamily($family), 'the successor inserted after the revoke is revoked too');
+    }
+
+    public function testALogoutLandingBetweenClaimAndSuccessorInsertLeavesNoLiveToken(): void
+    {
+        // Same gap for revokeAllForUser (logout / password change).
+        $inner = new ArrayRefreshTokenStore();
+        $store = new RaceRefreshTokenStore($inner);
+        $svc   = $this->svc($inner);
+        $racer = new RefreshTokenService($store, ['secret' => 'k', 'expire' => 'now +15 minutes', 'refresh_expire' => 2592000, 'refresh_family_expire' => 7776000], fn () => $this->clock);
+        $rt    = $svc->mintForLogin(7);
+        $family = $inner->rows[1]['family_id'];
+        $this->clock += 100;
+        $store->beforeInsert = fn () => $svc->revokeAllForUser(7);
+
+        $res = $racer->redeem($rt, '1.1.1.1', $this->minter());
+
+        $this->assertSame('error', $res['status']);
+        $this->assertSame(0, $inner->liveCountForFamily($family));
+    }
+
+    public function testATwiceRotatedStaleTokenGetsNoAccessTokenAfterRevoke(): void
+    {
+        // M-1: a->b, b->c, revoke(c), then a (inside REUSE_GRACE) must not be
+        // grace-replayed into a fresh access JWT.
+        $store = new ArrayRefreshTokenStore();
+        $svc   = $this->svc($store);
+        $a = $svc->mintForLogin(7);
+        $this->clock += 5;
+        $b = $svc->redeem($a, '1.1.1.1', $this->minter())['refresh_token'];
+        $this->clock += 5;
+        $c = $svc->redeem($b, '1.1.1.1', $this->minter())['refresh_token'];
+        $this->clock += 2;
+        $this->assertSame(['status' => 'success'], $svc->revokeByToken($c, '1.1.1.1'));
+        $this->clock += 2;
+
+        $res = $svc->redeem($a, '1.1.1.1', $this->minter());
+        $this->assertSame('error', $res['status']);
+        $this->assertArrayNotHasKey('token', $res);
+        $this->assertSame('error', $svc->redeem($b, '1.1.1.1', $this->minter())['status']);
+    }
+}
+
+/** Decorator: runs a hook right before the successor insert (simulates a concurrent revoke). */
+final class RaceRefreshTokenStore implements RefreshTokenStore
+{
+    /** @var callable|null */
+    public $beforeInsert = null;
+
+    public function __construct(private RefreshTokenStore $inner) {}
+
+    public function insert(array $row): void
+    {
+        if ($this->beforeInsert !== null) {
+            $hook = $this->beforeInsert;
+            $this->beforeInsert = null;
+            $hook();
+        }
+        $this->inner->insert($row);
+    }
+    public function findByHash(string $hash): ?array { return $this->inner->findByHash($hash); }
+    public function markRevoked(int $id, int $lastUsedAt): void { $this->inner->markRevoked($id, $lastUsedAt); }
+    public function claimRotation(int $id, int $at): bool { return $this->inner->claimRotation($id, $at); }
+    public function revokeFamily(string $familyId): void { $this->inner->revokeFamily($familyId); }
+    public function revokeAllForUser(int $idAuthy): void { $this->inner->revokeAllForUser($idAuthy); }
+    public function recentAttemptCount(string $ip, string $familyId, int $since): int { return $this->inner->recentAttemptCount($ip, $familyId, $since); }
+    public function recordAttempt(string $ip, string $familyId, int $at): void { $this->inner->recordAttempt($ip, $familyId, $at); }
 }
