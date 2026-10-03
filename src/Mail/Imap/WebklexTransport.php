@@ -24,11 +24,19 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport
 
     /**
      * @param array{host:string, port?:int, encryption?:string, username:string, password:string,
-     *               validate_cert?:bool, authentication?:string, timeout?:int} $config
+     *               validate_cert?:bool, authentication?:string, timeout?:int, ssl_options?:array<string,mixed>} $config
+     *
+     * `ssl_options` are extra stream ssl context options handed to webklex
+     * (e.g. `peer_name` + `SNI_enabled` when `host` is a pre-resolved IP the
+     * caller pinned: the certificate is then verified against that name).
+     * `validate_cert` still wins over any verify_peer* key in them.
      */
     public function __construct(private array $config)
     {
     }
+
+    /** Feature marker: connect() forwards config['ssl_options'] to webklex (callers may pin an IP). */
+    public const SUPPORTS_SSL_OPTIONS = true;
 
     /**
      * What webklex substitutes for a Date header it cannot parse. Without it
@@ -119,6 +127,7 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport
                 'authentication' => $this->config['authentication'] ?? null,
                 'protocol'       => 'imap',
                 'timeout'        => (int) ($this->config['timeout'] ?? 30),
+                'ssl_options'    => is_array($this->config['ssl_options'] ?? null) ? $this->config['ssl_options'] : [],
             ]);
             $this->client->connect();
         }, 'connect');
