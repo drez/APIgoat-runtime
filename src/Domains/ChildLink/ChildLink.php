@@ -224,8 +224,10 @@ class ChildLink
             $msg = $cls::childLinkAllowed($childPhp, $row, $toPk);
             return is_string($msg) && $msg !== '' ? $msg : null;
         } catch (\Throwable $e) {
+            // Fail CLOSED: a veto hook that can't decide must not let the
+            // link through (it may be enforcing a limit).
             error_log('ChildLink veto hook failed: ' . $e->getMessage());
-            return null;
+            return 'link refused';
         }
     }
 
