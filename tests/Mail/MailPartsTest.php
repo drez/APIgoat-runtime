@@ -57,10 +57,87 @@ final class MailPartsTest extends TestCase
         $this->assertSame('été.pdf', $p['name']);
     }
 
-    public function test_garbage_is_refused_whole(): void
+    public function test_a_truncated_structure_is_a_partial_list(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        BodyStructure::parse('* 1 FETCH (BODYSTRUCTURE ("TEXT" "PLAIN"');
+        $l = BodyStructure::parse('* 1 FETCH (BODYSTRUCTURE (("TEXT" "PLAIN" NIL NIL NIL "7BIT" 5 1)("APPLICATION" "PDF" ("NAME" "a.pdf") NIL NIL "BASE64" 9');
+        $this->assertSame(['1', '2'], array_column($l, 'section'));
+        $this->assertSame(['pdf', 9, 'a.pdf'], [$l[1]['subtype'], $l[1]['size'], $l[1]['params']['name']]);
+    }
+
+    /** @return iterable<string, array{0:string}> hostile / malformed BODYSTRUCTUREs: none may throw, hang or blow a cap */
+    public static function hostile(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'no structure' => ['* 1 FETCH (UID 4)'];
+        yield 'unterminated string' => ['* 1 FETCH (BODYSTRUCTURE ("TEXT" "PL'];
+        yield 'short literal' => ["* 1 FETCH (BODYSTRUCTURE (\"TEXT\" {999999}\r\nab))"];
+        yield 'bad literal' => ['* 1 FETCH (BODYSTRUCTURE ({x}))'];
+        yield 'stray brace' => ['* 1 FETCH (BODYSTRUCTURE ("A" "B" { "C"))'];
+        yield 'deep nesting' => ['* 1 FETCH (BODYSTRUCTURE ' . str_repeat('(', 200000) . str_repeat(')', 200000) . ')'];
+        yield 'deep multipart' => ['* 1 FETCH (BODYSTRUCTURE ' . str_repeat('(', 60) . '"TEXT" "PLAIN" NIL NIL NIL "7BIT" 1 1' . str_repeat(') "MIXED"', 59) . '))'];
+        yield 'many empty lists' => ['* 1 FETCH (BODYSTRUCTURE (' . str_repeat('()', 100000) . ' "MIXED"))'];
+        yield 'many leaves' => ['* 1 FETCH (BODYSTRUCTURE (' . str_repeat('("IMAGE" "PNG" NIL NIL NIL "BASE64" 10)', 5000) . ' "MIXED"))'];
+        yield 'huge numbers' => ['* 1 FETCH (BODYSTRUCTURE ("A" "B" NIL NIL NIL "BASE64" 99999999999999999999999 NIL ("ATTACHMENT" ("FILENAME" "x"))))'];
+        yield 'negative size' => ['* 1 FETCH (BODYSTRUCTURE ("A" "B" NIL NIL NIL "BASE64" -5))'];
+        yield 'bogus charset' => ["* 1 FETCH (BODYSTRUCTURE (\"A\" \"B\" (\"NAME*\" \"no-such-charset''%FF%FE\") NIL NIL \"7BIT\" 1))"];
+        yield 'bad encoded word' => ['* 1 FETCH (BODYSTRUCTURE ("A" "B" ("NAME" "=?bogus?Q?=ZZ?=") NIL NIL "7BIT" 1))'];
+        yield 'wrong types' => ['* 1 FETCH (BODYSTRUCTURE ((("A") ("B")) (NIL) ("X" ()) "MIXED" (1 2 3) (()) ))'];
+        yield 'binary noise' => ["* 1 FETCH (BODYSTRUCTURE (\x00\xff\xfe\x01 \"\xc3\x28\" ))"];
+        yield 'over 2 MB' => ['* 1 FETCH (BODYSTRUCTURE (("TEXT" "PLAIN" NIL NIL NIL "7BIT" 1 1)' . str_repeat(' "' . str_repeat('x', 1000) . '"', 3000) . '))'];
+    }
+
+    /** @dataProvider hostile */
+    #[\PHPUnit\Framework\Attributes\DataProvider('hostile')]
+    public function test_hostile_input_never_throws_and_stays_bounded(string $input): void
+    {
+        $t0 = hrtime(true);
+        $l  = BodyStructure::parse($input);
+        $this->assertLessThan(2.0, (hrtime(true) - $t0) / 1e9, 'time cap');
+        $this->assertIsArray($l);
+        $this->assertLessThanOrEqual(BodyStructure::MAX_LEAVES, count($l));
+        foreach ($l as $leaf) {
+            $this->assertMatchesRegularExpression('/^[1-9]\d*(\.[1-9]\d*){0,' . BodyStructure::MAX_DEPTH . '}$/', $leaf['section']);
+            $this->assertGreaterThanOrEqual(0, $leaf['size']);
+            $this->assertMatchesRegularExpression('/^[a-z0-9!#$&^_.+-]+$/', $leaf['type'] . $leaf['subtype'] . $leaf['encoding']);
+            foreach ($leaf['params'] + $leaf['disposition_params'] as $v) {
+                $this->assertTrue(mb_check_encoding($v, 'UTF-8'));
+            }
+        }
+    }
+
+    public function test_caps_hit_by_the_hostile_set(): void
+    {
+        $many = BodyStructure::parse('* 1 FETCH (BODYSTRUCTURE (' . str_repeat('("IMAGE" "PNG" NIL NIL NIL "BASE64" 10)', 5000) . ' "MIXED"))');
+        $this->assertCount(BodyStructure::MAX_LEAVES, $many);
+        $deep = BodyStructure::parse('* 1 FETCH (BODYSTRUCTURE ' . str_repeat('(', 60) . '"TEXT" "PLAIN" NIL NIL NIL "7BIT" 1 1' . str_repeat(') "MIXED"', 59) . '))');
+        $this->assertSame([], $deep, 'a leaf deeper than MAX_DEPTH is skipped, never listed with an unusable section');
+        $this->assertSame([], BodyStructure::parse('* 1 FETCH (BODYSTRUCTURE (' . str_repeat('()', 1000) . ' "MIXED"))'), 'empty lists are no parts');
+    }
+
+    public function test_fuzz_never_throws(): void
+    {
+        mt_srand(20261005);
+        $alphabet = ['(', ')', ' ', '"', '\\', '{', '}', "\r\n", 'NIL', '"TEXT"', '"PNG"', '1', '{3}', 'x', "\xff"];
+        for ($n = 0; $n < 500; $n++) {
+            $s = 'BODYSTRUCTURE (';
+            for ($k = mt_rand(1, 300); $k > 0; $k--) {
+                $s .= $alphabet[mt_rand(0, count($alphabet) - 1)];
+            }
+            $this->assertIsArray(BodyStructure::parse($s));
+        }
+    }
+
+    public function test_the_transport_refuses_a_section_that_could_inject_before_any_io(): void
+    {
+        $t = new \ApiGoat\Mail\Imap\WebklexTransport(['host' => 'x', 'username' => 'u', 'password' => 'p']);
+        foreach (['1 BODY[]', '1)', '2.x', '', '1.2.3' . str_repeat('.1', 40)] as $bad) {
+            try {
+                $t->streamSection('INBOX', 1, $bad, 10, static function (): void {});
+                $this->fail("accepted '{$bad}'");
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
     }
 
     public function test_decoder_streams_base64_and_qp_across_chunk_boundaries(): void
