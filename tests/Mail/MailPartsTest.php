@@ -130,7 +130,7 @@ final class MailPartsTest extends TestCase
     public function test_the_transport_refuses_a_section_that_could_inject_before_any_io(): void
     {
         $t = new \ApiGoat\Mail\Imap\WebklexTransport(['host' => 'x', 'username' => 'u', 'password' => 'p']);
-        foreach (['1 BODY[]', '1)', '2.x', '', '1.2.3' . str_repeat('.1', 40)] as $bad) {
+        foreach (['1 BODY[]', '1)', '2.x', '', '1.2.3' . str_repeat('.1', 40), "1\n", "1\r\n", '0', '1.0'] as $bad) {
             try {
                 $t->streamSection('INBOX', 1, $bad, 10, static function (): void {});
                 $this->fail("accepted '{$bad}'");

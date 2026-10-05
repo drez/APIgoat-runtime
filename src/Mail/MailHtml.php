@@ -67,12 +67,6 @@ final class MailHtml
     private const URL_ATTRS = ['href', 'src', 'action', 'formaction', 'background', 'poster', 'xlink:href', 'srcset', 'ping', 'longdesc', 'usemap'];
 
     /**
-     * @param string $html   the message as stored/fetched (a full document or a fragment)
-     * @param bool   $images false ⇒ images replaced by the placeholder (default)
-     * @param string $reset  extra CSS injected FIRST in <head> (the viewer's base font/reset)
-     * @return string a complete HTML document for iframe[srcdoc]
-     */
-    /**
      * Stored bodies are already UTF-8 (converted at fetch), but the markup keeps the sender's own declaration —
      * `<meta http-equiv="Content-Type" content="text/html; charset=Windows-1252">` or `<meta charset=…>`. libxml
      * honours that over the prepended `<?xml encoding="UTF-8">` and re-decodes the UTF-8 bytes as cp1252
@@ -87,6 +81,12 @@ final class MailHtml
         ) ?? $html);
     }
 
+    /**
+     * @param string $html   the message as stored/fetched (a full document or a fragment)
+     * @param bool   $images false ⇒ images replaced by the placeholder (default)
+     * @param string $reset  extra CSS injected FIRST in <head> (the viewer's base font/reset)
+     * @return string a complete HTML document for iframe[srcdoc]
+     */
     public static function defuse(string $html, bool $images = false, string $reset = ''): string
     {
         if (trim($html) === '') {

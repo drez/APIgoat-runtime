@@ -544,7 +544,8 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport, ImapP
 
     public function streamSection(string $folder, int $uid, string $section, int $maxOctets, callable $sink): ?int
     {
-        if (!preg_match('/^\d{1,4}(?:\.\d{1,4}){0,30}$/', $section) || $maxOctets < 1) {
+        // \z, not $: `$` also matches before a trailing "\n", and the section goes into the command line.
+        if (!preg_match('/^[1-9]\d{0,3}(?:\.[1-9]\d{0,3}){0,30}\z/', $section) || $maxOctets < 1) {
             throw new \InvalidArgumentException('streamSection: bad section or limit');
         }
         return $this->guard(function () use ($folder, $uid, $section, $maxOctets, $sink) {
