@@ -60,7 +60,10 @@ class ChildLink
      * linked to a DIFFERENT parent are returned flagged (linked=1) so the
      * client can warn before reassigning.
      *
-     * @return array{rows: array<int, array{id: mixed, label: string, linked: int}>}
+     * `cols` carries the `show` values in order (blanks kept) so the picker can
+     * lay a row out as name + meta; `label` stays the joined legacy string.
+     *
+     * @return array{rows: array<int, array{id: mixed, label: string, cols: string[], linked: int}>}
      */
     public static function search(string $parentModel, array $cfg, $request, AuthySession $session): array
     {
@@ -101,8 +104,10 @@ class ChildLink
                 continue; // already on this parent's list
             }
             $parts = [];
+            $cols  = [];
             foreach ((array) $c['show'] as $colPhp) {
                 $v = (string) $row->{'get' . $colPhp}();
+                $cols[] = $v;
                 if ($v !== '') {
                     $parts[] = $v;
                 }
@@ -110,6 +115,7 @@ class ChildLink
             $out['rows'][] = [
                 'id'     => $row->getPrimaryKey(),
                 'label'  => implode(' — ', $parts),
+                'cols'   => $cols,
                 'linked' => $fkVal ? 1 : 0,
             ];
             if (count($out['rows']) >= 20) {
@@ -145,6 +151,7 @@ class ChildLink
         if ($row === null) {
             return ['status' => 'error', 'message' => 'record not found'];
         }
+        $oldFk = $row->{'get' . $c['fk']}();
         $row->{'set' . $c['fk']}($ip);
         foreach ((array) ($c['set'] ?? []) as $colPhp => $lit) {
             $row->{'set' . $colPhp}($lit);
@@ -156,6 +163,7 @@ class ChildLink
             error_log('ChildLink::link save failed: ' . $e->getMessage());
             return ['status' => 'error', 'message' => 'save failed'];
         }
+        self::notify($parentModel, $c['child'], $row, $oldFk ? (int) $oldFk : null, $ip);
         return ['status' => 'success', 'message' => ''];
     }
 
@@ -195,7 +203,30 @@ class ChildLink
             error_log('ChildLink::unlink save failed: ' . $e->getMessage());
             return ['status' => 'error', 'message' => 'save failed'];
         }
+        self::notify($parentModel, $c['child'], $row, $ip, null);
         return ['status' => 'success', 'message' => ''];
+    }
+
+    /**
+     * Project hook after a successful link/unlink: when
+     * \App\{Parent}ServiceWrapper declares a static
+     * childLinkChanged(string $childPhp, object $row, ?int $fromPk, ?int $toPk),
+     * it is called with the saved row and the parent pk it left / joined
+     * (reassign = both set). Lets a project keep derived state in step (e.g. a
+     * team manager pointer) without forking this helper. Hook failures are
+     * logged, never surfaced — the link itself already succeeded.
+     */
+    private static function notify(string $parentModel, string $childPhp, object $row, ?int $fromPk, ?int $toPk): void
+    {
+        $cls = '\\App\\' . $parentModel . 'ServiceWrapper';
+        if (!class_exists($cls) || !is_callable([$cls, 'childLinkChanged'])) {
+            return;
+        }
+        try {
+            $cls::childLinkChanged($childPhp, $row, $fromPk, $toPk);
+        } catch (\Throwable $e) {
+            error_log('ChildLink hook failed: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -210,8 +241,16 @@ class ChildLink
      * single-escaped PHP string emitted by CALL — same pattern as
      * DateCascadeDelete::interceptorScript.
      *
+     * The picker opens under the list header and stays open (multi-add: each
+     * pick links, marks the row Added and refreshes the list behind it) until
+     * Done/Escape. Linked wrappers get data-gc-childlink so the template CSS
+     * shows each row's Remove; a member's edit-drawer footer Delete, opened
+     * from a linked list, also becomes Remove (never deletes the record).
+     * Styles live in the template's _listv2.scss (.gc-cl-*).
+     *
      * $clientCfg: childPhp => {addTitle, searchPlaceholder, empty, linkedNote,
-     * reassignConfirm, removeConfirm, removeLabel, addedToast, removedToast}.
+     * reassignConfirm, removeConfirm, removeLabel, addedToast, removedToast,
+     * doneLabel, addLabel, addedLabel}.
      */
     public static function interceptorScript(string $parentModel, array $clientCfg): string
     {
@@ -220,36 +259,17 @@ class ChildLink
     if (window.__gcChildLink_%PARENT%) { return; }
     window.__gcChildLink_%PARENT% = 1;
     var PARENT = '%PARENT%', CFG = %CFG%;
-    function ensureStyle(){
-        if (document.getElementById('gc-cl-style')) { return; }
-        var st = document.createElement('style'); st.id = 'gc-cl-style';
-        st.textContent = '.gc-cl-pop{position:relative;background:var(--sw-surface,#fff);border:1px solid rgba(0,0,0,.15);border-radius:8px;padding:10px;margin:8px 0;box-shadow:0 4px 16px rgba(0,0,0,.12)}'
-            + '.gc-cl-head{display:flex;justify-content:space-between;align-items:center;font-weight:600;margin-bottom:6px}'
-            + '.gc-cl-head a{text-decoration:none;font-size:18px;line-height:1;color:inherit;opacity:.6}'
-            + '.gc-cl-input{width:100%;padding:6px 8px;box-sizing:border-box}'
-            + '.gc-cl-results{max-height:220px;overflow:auto;margin-top:6px}'
-            + '.gc-cl-row{padding:6px 8px;cursor:pointer;border-radius:6px}'
-            + '.gc-cl-row:hover{background:rgba(0,0,0,.06)}'
-            + '.gc-cl-note{opacity:.65;font-size:.85em;margin-left:6px}'
-            + '.gc-cl-empty{padding:6px 8px;opacity:.7}';
-        document.head.appendChild(st);
+    // Styles: template _listv2.scss (.gc-cl-*, [data-gc-childlink]) — no inline CSS here.
+    function wrapSel(child, ip){
+        return ".va-mob.proto-app[data-model='" + child + "'][data-parent='" + PARENT + "']"
+            + (ip ? "[data-ip='" + ip + "']" : '');
     }
+    function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
     function xhrHeaders(){ return {'X-Requested-With':'XMLHttpRequest'}; }
-    function refresh(cw){
-        var parent = cw.getAttribute('data-parent') || PARENT,
-            child = cw.getAttribute('data-model'),
-            ip = cw.getAttribute('data-ip') || '',
-            ui = cw.getAttribute('data-ui') || 'editDialog';
-        fetch(_SITE_URL + parent + '/' + child + '?i=' + encodeURIComponent(ip) + '&ui=' + encodeURIComponent(ui),
-            {credentials:'same-origin', headers:xhrHeaders()})
-        .then(function(r){ return r.text(); }).then(function(t){
-            var tmp = document.createElement('div'); tmp.innerHTML = t;
-            var fresh = tmp.querySelector('.va-mob.proto-app[data-model]');
-            if (fresh && cw.parentNode) {
-                cw.parentNode.replaceChild(fresh, cw);
-                try { document.dispatchEvent(new CustomEvent('gc:list-refreshed', {detail:{model:child, parent:parent, ip:ip}})); } catch(_){}
-            }
-        }).catch(function(){});
+    function toast(m){ if (window.gcScreens && gcScreens.toast) { gcScreens.toast(m); } }
+    function fail(m){ if (window.gcScreens && gcScreens.alert) { gcScreens.alert('Error', m); } }
+    function ask(q, opts){
+        return Promise.resolve((window.gcScreens && gcScreens.confirm) ? gcScreens.confirm(q, opts) : window.confirm(q));
     }
     function post(action, params){
         var body = Object.keys(params).map(function(k){ return k + '=' + encodeURIComponent(params[k]); }).join('&');
@@ -259,82 +279,181 @@ class ChildLink
             body: body
         }).then(function(r){ return r.json(); });
     }
-    function closePop(){ var p = document.getElementById('gc-cl-pop'); if (p && p.parentNode) { p.parentNode.removeChild(p); } }
-    function doLink(cw, childKey, id, linked, c){
-        var go = function(){
-            post('childLinkSave', {child:childKey, i:JSON.stringify(id), ip:cw.getAttribute('data-ip')||''}).then(function(j){
-                if (j && j.status === 'success') {
-                    closePop();
-                    if (window.gcScreens && gcScreens.toast) { gcScreens.toast(c.addedToast || 'Added'); }
-                    refresh(cw);
-                } else if (window.gcScreens && gcScreens.alert) {
-                    gcScreens.alert('Error', (j && j.message) || 'Could not add');
+    function pkParam(v){ v = v == null ? '' : String(v); return /^-?\d+$/.test(v) || /^[\[{"]/.test(v) ? v : JSON.stringify(v); }
+
+    // Tag linked child lists (CSS shows their row actions) and turn each
+    // row's delete into a visible Remove — injected when the user lacks the
+    // child's 'd' right (no stock link rendered), since Remove only needs 'w'.
+    function decorate(root){
+        if (!root || root.nodeType !== 1) { return; }
+        var list = root.matches('.va-mob.proto-app[data-model]') ? [root]
+            : root.querySelectorAll('.va-mob.proto-app[data-model]');
+        Array.prototype.forEach.call(list, function(cw){
+            var child = cw.getAttribute('data-model');
+            if (cw.getAttribute('data-parent') !== PARENT || !CFG[child]) { return; }
+            var c = CFG[child], label = c.removeLabel || 'Remove';
+            cw.setAttribute('data-gc-childlink', '1');
+            Array.prototype.forEach.call(cw.querySelectorAll('.va-mob-list .va-mob-row, .va-dt-table tbody tr'), function(row){
+                var cell = row.querySelector('.actionrow');
+                if (!cell) { return; }
+                var a = cell.querySelector('.ac-delete-link');
+                if (!a) {
+                    a = document.createElement('a');
+                    a.href = 'Javascript:;'; a.className = 'ac-delete-link';
+                    a.setAttribute('j', 'delete' + child);
+                    cell.insertBefore(a, cell.firstChild);
                 }
-            }).catch(function(){});
-        };
-        if (linked) {
-            var q = c.reassignConfirm || 'Already assigned elsewhere — reassign it here?';
-            Promise.resolve((window.gcScreens && gcScreens.confirm) ? gcScreens.confirm(q) : window.confirm(q))
-                .then(function(ok){ if (ok) { go(); } });
-        } else { go(); }
+                if (a.getAttribute('data-gc-cl')) { return; }
+                a.setAttribute('data-gc-cl', '1');
+                a.classList.add('gc-cl-remove');
+                a.setAttribute('title', label);
+                a.innerHTML = '<i class="ri-user-unfollow-line"></i><span>' + esc(label) + '</span>';
+            });
+        });
     }
+    new MutationObserver(function(muts){
+        muts.forEach(function(m){ Array.prototype.forEach.call(m.addedNodes, decorate); });
+    }).observe(document.body, {childList:true, subtree:true});
+    decorate(document.body);
+
+    // Re-fetch the linked list in place; an open picker is moved into the
+    // fresh wrapper so it stays open for the next pick.
+    function refresh(child, ip){
+        var cw = document.querySelector(wrapSel(child, ip));
+        if (!cw) { return; }
+        var ui = cw.getAttribute('data-ui') || 'editDialog';
+        fetch(_SITE_URL + PARENT + '/' + child + '?i=' + encodeURIComponent(ip) + '&ui=' + encodeURIComponent(ui),
+            {credentials:'same-origin', headers:xhrHeaders()})
+        .then(function(r){ return r.text(); }).then(function(t){
+            var tmp = document.createElement('div'); tmp.innerHTML = t;
+            var fresh = tmp.querySelector('.va-mob.proto-app[data-model]');
+            var cur = document.querySelector(wrapSel(child, ip));
+            if (fresh && cur && cur.parentNode) {
+                // Carry an open picker over to the fresh list (multi-add).
+                var pop = document.getElementById('gc-cl-pop');
+                if (pop && cur.contains(pop)) { placePop(fresh, pop); }
+                cur.parentNode.replaceChild(fresh, cur);
+                decorate(fresh);
+                try { document.dispatchEvent(new CustomEvent('gc:list-refreshed', {detail:{model:child, parent:PARENT, ip:ip}})); } catch(_){}
+            }
+        }).catch(function(){});
+    }
+
+    // Inside the wrapper (.va-mob is absolutely positioned over its
+    // container), right under the list header.
+    function placePop(cw, pop){
+        var head = cw.querySelector('.va-mob-header');
+        if (head) { head.insertAdjacentElement('afterend', pop); } else { cw.insertAdjacentElement('afterbegin', pop); }
+    }
+    function closePop(){ var p = document.getElementById('gc-cl-pop'); if (p && p.parentNode) { p.parentNode.removeChild(p); } }
+
     function openPicker(cw, childKey){
-        ensureStyle(); closePop();
-        var c = CFG[childKey] || {};
+        closePop();
+        var c = CFG[childKey] || {}, ip = cw.getAttribute('data-ip') || '', added = {};
         var pop = document.createElement('div');
         pop.id = 'gc-cl-pop'; pop.className = 'gc-cl-pop';
-        var head = document.createElement('div'); head.className = 'gc-cl-head';
-        head.appendChild(document.createTextNode(c.addTitle || 'Link existing'));
-        var x = document.createElement('a'); x.href = 'Javascript:'; x.innerHTML = '&times;';
-        x.addEventListener('click', closePop); head.appendChild(x);
-        var input = document.createElement('input'); input.type = 'text';
-        input.className = 'gc-cl-input'; input.placeholder = c.searchPlaceholder || 'Search…';
-        var res = document.createElement('div'); res.className = 'gc-cl-results';
-        pop.appendChild(head); pop.appendChild(input); pop.appendChild(res);
-        cw.insertAdjacentElement('afterbegin', pop);
-        var tId = null;
+        pop.innerHTML =
+              '<div class="gc-cl-head"><span class="gc-cl-title">' + esc(c.addTitle || 'Link existing') + '</span>'
+            + '<button type="button" class="gc-cl-done">' + esc(c.doneLabel || 'Done') + '</button></div>'
+            + '<div class="gc-cl-search"><i class="ri-search-line"></i>'
+            + '<input type="search" class="gc-cl-input" autocomplete="off" placeholder="' + esc(c.searchPlaceholder || 'Search…') + '"></div>'
+            + '<div class="gc-cl-results" role="listbox"></div>';
+        placePop(cw, pop);
+        var input = pop.querySelector('.gc-cl-input'), res = pop.querySelector('.gc-cl-results');
+        pop.querySelector('.gc-cl-done').addEventListener('click', closePop);
+        pop.addEventListener('keydown', function(e){ if (e.key === 'Escape') { e.stopPropagation(); closePop(); } });
+
+        function link(r, el){
+            if (el.classList.contains('is-added') || el.classList.contains('is-busy')) { return; }
+            var go = function(){
+                el.classList.add('is-busy');
+                post('childLinkSave', {child:childKey, i:JSON.stringify(r.id), ip:ip}).then(function(j){
+                    el.classList.remove('is-busy');
+                    if (j && j.status === 'success') {
+                        added[JSON.stringify(r.id)] = 1;
+                        el.classList.remove('is-linked'); el.classList.add('is-added');
+                        el.querySelector('.gc-cl-state').textContent = '\u2713 ' + (c.addedLabel || 'Added');
+                        toast(c.addedToast || 'Added');
+                        refresh(childKey, ip);
+                        try { input.focus(); input.select(); } catch(_){}
+                    } else {
+                        fail((j && j.message) || 'Could not add');
+                    }
+                }).catch(function(){ el.classList.remove('is-busy'); });
+            };
+            if (r.linked) {
+                ask(c.reassignConfirm || 'Already assigned elsewhere — reassign it here?').then(function(ok){ if (ok) { go(); } });
+            } else { go(); }
+        }
+        function render(rows){
+            res.innerHTML = '';
+            if (!rows.length) {
+                res.innerHTML = '<div class="gc-cl-empty">' + esc(c.empty || 'No match') + '</div>';
+                return;
+            }
+            rows.forEach(function(r){
+                var cols = r.cols || [r.label], name = cols[0] || r.label || '',
+                    meta = cols.slice(1).filter(function(v){ return v; }).join(' · '),
+                    isAdded = !!added[JSON.stringify(r.id)];
+                var el = document.createElement('div');
+                el.className = 'gc-cl-row' + (isAdded ? ' is-added' : (r.linked ? ' is-linked' : ''));
+                el.setAttribute('role', 'option'); el.tabIndex = 0;
+                el.innerHTML = '<span class="gc-cl-av">' + esc((name.trim().charAt(0) || '?').toUpperCase()) + '</span>'
+                    + '<span class="gc-cl-body"><span class="gc-cl-name">' + esc(name) + '</span>'
+                    + (meta ? '<span class="gc-cl-meta">' + esc(meta) + '</span>' : '') + '</span>'
+                    + '<span class="gc-cl-state">' + esc(isAdded ? '\u2713 ' + (c.addedLabel || 'Added')
+                        : (r.linked ? (c.linkedNote || 'already assigned') : (c.addLabel || 'Add'))) + '</span>';
+                el.addEventListener('click', function(){ link(r, el); });
+                el.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); link(r, el); } });
+                res.appendChild(el);
+            });
+        }
+        var tId = null, seq = 0;
         input.addEventListener('input', function(){
             clearTimeout(tId);
             var v = input.value.trim();
             tId = setTimeout(function(){
+                var my = ++seq;
                 if (!v) { res.innerHTML = ''; return; }
                 fetch(_SITE_URL + PARENT + '/childLinkSearch?child=' + encodeURIComponent(childKey)
-                        + '&term=' + encodeURIComponent(v) + '&ip=' + encodeURIComponent(cw.getAttribute('data-ip')||''),
+                        + '&term=' + encodeURIComponent(v) + '&ip=' + encodeURIComponent(ip),
                     {credentials:'same-origin', headers:xhrHeaders()})
                 .then(function(r){ return r.json(); }).then(function(j){
-                    res.innerHTML = '';
-                    var rows = (j && j.rows) || [];
-                    if (!rows.length) {
-                        var em = document.createElement('div'); em.className = 'gc-cl-empty';
-                        em.textContent = c.empty || 'No match'; res.appendChild(em); return;
-                    }
-                    rows.forEach(function(r0){
-                        var d = document.createElement('div'); d.className = 'gc-cl-row';
-                        d.appendChild(document.createTextNode(r0.label));
-                        if (r0.linked) {
-                            var n = document.createElement('span'); n.className = 'gc-cl-note';
-                            n.textContent = c.linkedNote || 'already assigned'; d.appendChild(n);
-                        }
-                        d.addEventListener('click', function(){ doLink(cw, childKey, r0.id, r0.linked, c); });
-                        res.appendChild(d);
-                    });
+                    if (my === seq) { render((j && j.rows) || []); }
                 }).catch(function(){});
             }, 250);
         });
         try { input.focus(); } catch(_){}
     }
-    // Wait (max ~6s) for the linked child list of PARENT to be on screen.
-    function whenChildList(childKey, cb){
-        var sel = ".va-mob.proto-app[data-model='" + childKey + "'][data-parent='" + PARENT + "']", n = 0;
-        (function poll(){
-            var all = document.querySelectorAll(sel), cw = all.length ? all[all.length - 1] : null;
-            if (cw) { cb(cw); } else if (++n < 30) { setTimeout(poll, 200); }
-        })();
+
+    function unlink(childKey, ip, pk, after){
+        var c = CFG[childKey] || {};
+        ask(c.removeConfirm || 'Remove this entry from the list? The record itself is not deleted.',
+            {confirmLabel: c.removeLabel || 'Remove', danger: true})
+        .then(function(ok){
+            if (!ok) { return; }
+            post('childUnlink', {child:childKey, i:pkParam(pk), ip:ip}).then(function(j){
+                if (j && j.status === 'success') {
+                    toast(c.removedToast || 'Removed');
+                    if (after) { after(); }
+                    refresh(childKey, ip);
+                } else {
+                    fail((j && j.message) || 'Could not remove');
+                }
+            }).catch(function(){});
+        });
     }
+
+    // The linked list a stacked edit drawer was opened from (screen just below it).
+    function listUnder(scr, childKey){
+        var prev = scr.previousElementSibling;
+        while (prev && !prev.classList.contains('proto-screen')) { prev = prev.previousElementSibling; }
+        return prev ? prev.querySelector(wrapSel(childKey)) : null;
+    }
+
     window.addEventListener('click', function(e){
         for (var childKey in CFG) {
-            // Add: the legacy #add{Child} button AND the mobile list header's
-            // "+ New" (.add-btn, no id) — both sit inside the child wrapper.
+            // Add: legacy #add{Child} AND the list header "+ New" (.add-btn).
             var add = e.target.closest('#add' + childKey + ', .add-btn');
             if (add) {
                 var cw = add.closest('.va-mob.proto-app[data-model]');
@@ -343,38 +462,45 @@ class ChildLink
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
                 openPicker(cw, childKey); return;
             }
-            // "+" on the parent form's child tab: the drawer stack would open
-            // the list AND push a create form — open the list, then the picker.
+            // "+" on the parent form's child tab: open the list, then the picker.
             var tabAdd = e.target.closest("[j='childadd_" + PARENT + "'][p='" + childKey + "']");
             if (tabAdd) {
-                var scr = tabAdd.closest('.proto-screen') || document;
-                var tab = scr.querySelector("[j='conglet_" + PARENT + "'][p='" + childKey + "']");
+                var scr0 = tabAdd.closest('.proto-screen') || document;
+                var tab = scr0.querySelector("[j='conglet_" + PARENT + "'][p='" + childKey + "']");
                 if (!tab) { return; }
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
                 tab.click();
-                whenChildList(childKey, function(cw3){ openPicker(cw3, childKey); });
+                var n = 0;
+                (function poll(){
+                    var all = document.querySelectorAll(wrapSel(childKey)), w = all.length ? all[all.length - 1] : null;
+                    if (w) { openPicker(w, childKey); } else if (++n < 30) { setTimeout(poll, 200); }
+                })();
                 return;
             }
-            var del = e.target.closest("[j='delete" + childKey + "']");
+            // Row Remove (pk on the link's i=, else on the row's rid=).
+            var del = e.target.closest(".ac-delete-link, [j='delete" + childKey + "']");
             if (del) {
                 var cw2 = del.closest('.va-mob.proto-app[data-model]');
-                if (!cw2 || cw2.getAttribute('data-parent') !== PARENT) { return; }
+                if (cw2 && cw2.getAttribute('data-model') === childKey && cw2.getAttribute('data-parent') === PARENT) {
+                    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+                    var rowEl = del.closest('[rid]'), cellI = (del.closest('tr') || del).querySelector('[i]');
+                    unlink(childKey, cw2.getAttribute('data-ip') || '',
+                        del.getAttribute('i') || (rowEl ? rowEl.getAttribute('rid') : '') || (cellI ? cellI.getAttribute('i') : ''));
+                    return;
+                }
+            }
+            // Edit-drawer footer Delete of a member opened from a linked list:
+            // remove from the list instead of deleting the record.
+            var fdel = e.target.closest(".sw-delete, [j='delete']");
+            if (fdel) {
+                var scr = fdel.closest('.proto-screen');
+                if (!scr || scr.getAttribute('data-model') !== childKey) { continue; }
+                var under = listUnder(scr, childKey);
+                if (!under) { continue; }
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-                var c = CFG[childKey] || {}, pk = del.getAttribute('i') || '';
-                var q = c.removeConfirm || 'Remove this entry from the list? The record itself is not deleted.';
-                Promise.resolve((window.gcScreens && gcScreens.confirm)
-                        ? gcScreens.confirm(q, {confirmLabel: c.removeLabel || 'Remove', danger: true})
-                        : window.confirm(q))
-                .then(function(ok){
-                    if (!ok) { return; }
-                    post('childUnlink', {child:childKey, i:pk, ip:cw2.getAttribute('data-ip')||''}).then(function(j){
-                        if (j && j.status === 'success') {
-                            if (window.gcScreens && gcScreens.toast) { gcScreens.toast(c.removedToast || 'Removed'); }
-                            refresh(cw2);
-                        } else if (window.gcScreens && gcScreens.alert) {
-                            gcScreens.alert('Error', (j && j.message) || 'Could not remove');
-                        }
-                    }).catch(function(){});
+                unlink(childKey, under.getAttribute('data-ip') || '', fdel.getAttribute('rid') || scr.getAttribute('data-pk'), function(){
+                    var back = scr.querySelector('[data-screen-back], .nav-back, .form-nav .nav-btn');
+                    if (back) { back.click(); }
                 });
                 return;
             }
