@@ -152,6 +152,13 @@ class ChildLink
             return ['status' => 'error', 'message' => 'record not found'];
         }
         $oldFk = $row->{'get' . $c['fk']}();
+        // Optional project veto before linking (e.g. a seat limit):
+        // \App\{Parent}ServiceWrapper::childLinkAllowed($childPhp, $row, $toPk)
+        // returns an error message, or null to allow.
+        $veto = self::veto($parentModel, $c['child'], $row, $ip);
+        if ($veto !== null) {
+            return ['status' => 'error', 'message' => $veto];
+        }
         $row->{'set' . $c['fk']}($ip);
         foreach ((array) ($c['set'] ?? []) as $colPhp => $lit) {
             $row->{'set' . $colPhp}($lit);
@@ -205,6 +212,21 @@ class ChildLink
         }
         self::notify($parentModel, $c['child'], $row, $ip, null);
         return ['status' => 'success', 'message' => ''];
+    }
+
+    private static function veto(string $parentModel, string $childPhp, object $row, int $toPk): ?string
+    {
+        $cls = '\\App\\' . $parentModel . 'ServiceWrapper';
+        if (!class_exists($cls) || !is_callable([$cls, 'childLinkAllowed'])) {
+            return null;
+        }
+        try {
+            $msg = $cls::childLinkAllowed($childPhp, $row, $toPk);
+            return is_string($msg) && $msg !== '' ? $msg : null;
+        } catch (\Throwable $e) {
+            error_log('ChildLink veto hook failed: ' . $e->getMessage());
+            return null;
+        }
     }
 
     /**
