@@ -156,7 +156,7 @@ final class PerformanceView
                 . '<p class="ops-foot">' . $e(sprintf(_('Snapshot age: %d min'), $ageMin))
                 . ($remote ? ' · ' . $e(_('latest ALERT snapshot (only alerts are forwarded)')) : '') . '</p>'
                 . '<div class="ops-svc">' . ($svcBadges ?: '<span class="ops-empty">' . $e(_('No services reported')) . '</span>') . '</div>'
-                . '<canvas class="ops-mini" id="perf-server-trend" height="60" data-series="' . $e(json_encode($serverTrend)) . '"></canvas>'
+                . '<div class="ops-chart ops-chart--mini"><canvas id="perf-server-trend" data-series="' . $e(json_encode($serverTrend)) . '"></canvas></div>'
                 . '</div>';
         }
 
@@ -220,7 +220,7 @@ final class PerformanceView
             . Kpi::tile(_('Disk'), $server !== null && $server['disk_pct'] !== null ? $server['disk_pct'] . '%' : null, $sparkServer('disk_pct', '%'), $lv->level('disk_pct', $server['disk_pct'] ?? null), $server === null ? $unavailable : null)
             . '</div>'
             . '<div class="ops-card"><h3>' . $e(_('Latency trend')) . '</h3>'
-            . '<canvas id="perf-latency-trend" height="90" data-series="' . $e(json_encode($trend)) . '"></canvas></div>'
+            . '<div class="ops-chart"><canvas id="perf-latency-trend" data-series="' . $e(json_encode($trend)) . '"></canvas></div></div>'
             . Tabs::render('performance', $tabs)
             . '</div>'
             . Scripts::performance();

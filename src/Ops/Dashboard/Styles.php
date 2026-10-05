@@ -15,7 +15,7 @@ final class Styles
         return '<style' . gcNonceAttr() . '>
 .ops-dash{padding:16px;display:flex;flex-direction:column;gap:16px}
 .ops-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.ops-head h2{margin:0 auto 0 0}
-.ops-card{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:10px;padding:12px}
+.ops-card{background:var(--surface,#fff);border:1px solid var(--border,#e5e7eb);border-radius:10px;padding:12px;overflow-x:auto}
 .ops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
 .ops-card h3{margin:0 0 8px;font-size:14px}
 .ops-t{width:100%;border-collapse:collapse;font-size:13px}.ops-t th{text-align:left;opacity:.6;font-weight:500}
@@ -26,7 +26,7 @@ final class Styles
 .ops-report-body{margin-top:8px}
 .ops-report-frame{display:block;width:100%;height:70vh;min-height:420px;margin-top:8px;border:0}
 .ops-t code{white-space:pre-wrap;word-break:break-all;font-size:12px}
-.ops-mini{max-width:100%;height:60px!important}
+.ops-chart{position:relative;height:clamp(200px,28vw,320px)}.ops-chart--mini{height:120px}
 .ops-svc{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .ops-ip{overflow-wrap:anywhere;max-width:280px}
 .ops-tip{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}

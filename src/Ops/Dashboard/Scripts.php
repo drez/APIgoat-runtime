@@ -17,6 +17,13 @@ namespace ApiGoat\Ops\Dashboard;
  */
 final class Scripts
 {
+    /**
+     * Charts fill their .ops-chart box (fixed height, Styles) instead of
+     * keeping the canvas aspect ratio, which crushed them to a sliver at
+     * phone width; x labels stay horizontal and thin out instead of rotating.
+     */
+    public const X_TICKS = '{maxRotation:0,autoSkip:true,maxTicksLimit:6}';
+
     public static function security(): string
     {
         return self::chartTag()
@@ -25,7 +32,7 @@ final class Scripts
             . 'new Chart(c,{type:"line",data:{labels:labels,datasets:['
             . '{label:"Failed",data:s.map(function(r){return r.failed}),tension:.3},'
             . '{label:"OK",data:s.map(function(r){return r.ok}),tension:.3}'
-            . ']},options:{responsive:true,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});})();</script>'
+            . ']},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{x:{ticks:' . self::X_TICKS . '},y:{beginAtZero:true,ticks:{precision:0}}}}});})();</script>'
             . Kpi::js();
     }
 
@@ -49,7 +56,7 @@ if(t){
   new Chart(t,{type:"line",data:{labels:labels,datasets:[
     {label:"Avg ms",data:s.map(function(r){return r.avg_ms}),tension:.3},
     {label:"p95 ms",data:s.map(function(r){return r.p95_ms}),tension:.3}
-  ]},options:{responsive:true,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{y:{beginAtZero:true}}}});
+  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{position:"bottom"}},scales:{x:{ticks:' . self::X_TICKS . '},y:{beginAtZero:true}}}});
 }
 var sv=document.getElementById("perf-server-trend");
 if(sv){
@@ -57,7 +64,7 @@ if(sv){
   new Chart(sv,{type:"line",data:{labels:lbl,datasets:[
     {label:"Load (1m)",data:r.map(function(x){return x.load1}),tension:.3,pointRadius:0},
     {label:"Disk %",data:r.map(function(x){return x.disk_pct}),tension:.3,pointRadius:0}
-  ]},options:{responsive:true,plugins:{legend:{position:"bottom"}},scales:{x:{display:false},y:{beginAtZero:true}}}});
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom"}},scales:{x:{display:false},y:{beginAtZero:true}}}});
 }
 })();</script>'
             . Kpi::js();

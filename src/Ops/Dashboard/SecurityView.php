@@ -191,7 +191,7 @@ final class SecurityView
         $trendCard = $remote
             ? $scope->remoteCard(_('Login trend'), 'Security/dashboard')
             : '<div class="ops-card"><h3>' . $e(_('Login trend')) . '</h3>'
-                . '<canvas id="ops-trend" height="90" data-series="' . $e(json_encode($trend)) . '"></canvas></div>';
+                . '<div class="ops-chart"><canvas id="ops-trend" data-series="' . $e(json_encode($trend)) . '"></canvas></div></div>';
 
         return Styles::css() . Controls::css()
             . '<div class="ops-dash">'
