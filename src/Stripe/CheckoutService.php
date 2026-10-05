@@ -348,6 +348,14 @@ final class CheckoutService
             }
             $params['line_items'] = [['quantity' => 1, 'price' => $priceRow->getStripePriceId()]];
         }
+        // Opt-in free trial on a subscription (e.g. 14 days): the card is
+        // still collected up front and charged when the trial ends. The
+        // caller enforces any once-per-customer rule.
+        $trialDays = (int) ($opts['trial_days'] ?? 0);
+        if ($mode === 'subscription' && $trialDays > 0) {
+            $params['subscription_data'] = ['trial_period_days' => \min(90, $trialDays)];
+            $params['payment_method_collection'] = 'always';
+        }
 
         return ['params' => $params, 'mode' => $mode, 'amount' => $amount, 'currency' => $currency];
     }
