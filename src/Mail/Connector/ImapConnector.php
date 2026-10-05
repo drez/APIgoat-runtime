@@ -11,17 +11,23 @@ use ApiGoat\Mail\FolderRole;
 use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\FolderWriter;
 use ApiGoat\Mail\HeaderRecord;
+use ApiGoat\Mail\BodyStructure;
 use ApiGoat\Mail\Imap\ImapDraftTransport;
+use ApiGoat\Mail\Imap\ImapPartTransport;
 use ApiGoat\Mail\Imap\ImapTransport;
 use ApiGoat\Mail\Imap\WebklexTransport;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
 use ApiGoat\Mail\MailConnector;
 use ApiGoat\Mail\MessageState;
+use ApiGoat\Mail\PartDecoder;
+use ApiGoat\Mail\PartReader;
+use ApiGoat\Mail\PartTooLarge;
 use ApiGoat\Mail\MimeBodyParser;
 use ApiGoat\Mail\StateWriter;
 use ApiGoat\Mail\UnsupportedOperation;
 use ApiGoat\Sync\Exceptions\TransientError;
+use ApiGoat\Sync\Exceptions\ValidationRejected;
 
 /**
  * IMAP over {@see ImapTransport} (default {@see WebklexTransport}).
@@ -39,7 +45,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  * was returned (uidnext = last returned uid + 1, or the server's UIDNEXT
  * once the window is drained), so the next call is a plain increment.
  */
-class ImapConnector extends BaseConnector implements FolderLister, FolderWriter, StateWriter, DraftStore
+class ImapConnector extends BaseConnector implements FolderLister, FolderWriter, StateWriter, DraftStore, PartReader
 {
     private ImapTransport $imap;
     private string $folder;
@@ -509,6 +515,72 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter,
             throw new \InvalidArgumentException("ImapConnector::{$op}: unusable Message-ID");
         }
         return '<' . $id . '>';
+    }
+
+    // ------------------------------------------------------------ PartReader
+
+    public function fetchStructure(string $providerId): array
+    {
+        self::assertResolved($providerId, 'fetchStructure');
+        $t = $this->partTransport('fetchStructure');
+        [$uid, $folder] = $this->parseId($providerId);
+        $this->connect();
+        $raw = $t->bodyStructure($folder, $uid);
+        if ($raw === null) {
+            throw new ValidationRejected("IMAP uid {$uid} not found in {$folder}", 404);
+        }
+        try {
+            return BodyStructure::parse($raw);
+        } catch (\InvalidArgumentException $e) {
+            throw new TransientError('IMAP: unreadable BODYSTRUCTURE of ' . $providerId . ': ' . $e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * The server is asked for a PREFIX of the section only (BODY.PEEK[s]<0.n>,
+     * n = encodedBound()): an over-cap part is never transferred whole. When
+     * the server stopped at that bound the part was larger: PartTooLarge,
+     * never a silently truncated file.
+     */
+    public function fetchPart(string $providerId, string $section, string $encoding, int $maxBytes, callable $sink): int
+    {
+        self::assertResolved($providerId, 'fetchPart');
+        $t = $this->partTransport('fetchPart');
+        [$uid, $folder] = $this->parseId($providerId);
+        $this->connect();
+        $dec    = new PartDecoder($encoding, $maxBytes, $sink);
+        $octets = self::encodedBound($encoding, $maxBytes);
+        $got    = $t->streamSection($folder, $uid, $section, $octets, [$dec, 'write']);
+        if ($got === null) {
+            throw new ValidationRejected("IMAP section {$section} of uid {$uid} not found in {$folder}", 404);
+        }
+        $n = $dec->finish();
+        if ($got >= $octets) {
+            throw new PartTooLarge($maxBytes);
+        }
+        return $n;
+    }
+
+    /** Encoded octets that can hold $maxBytes decoded, plus slack (line breaks, padding) — and at least one byte more. */
+    public static function encodedBound(string $encoding, int $maxBytes): int
+    {
+        $e = strtolower(trim($encoding));
+        $m = max(0, $maxBytes) + 1;
+        if ($e === 'base64') {
+            return (int) ceil($m * 4 / 3 * 1.05) + 4096;
+        }
+        if ($e === 'quoted-printable') {
+            return 3 * $m + 4096;
+        }
+        return $m;
+    }
+
+    private function partTransport(string $op): ImapPartTransport
+    {
+        if (!$this->imap instanceof ImapPartTransport) {
+            throw $this->unsupported($op);
+        }
+        return $this->imap;
     }
 
     private function draftTransport(string $op): ImapDraftTransport

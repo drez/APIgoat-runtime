@@ -16,7 +16,7 @@ use ApiGoat\Sync\Exceptions\ValidationRejected;
  * Library-dependent — exercised only against a live server (the apigmail
  * project's smoke), never in the runtime unit tests.
  */
-final class WebklexTransport implements ImapTransport, ImapDraftTransport
+final class WebklexTransport implements ImapTransport, ImapDraftTransport, ImapPartTransport
 {
     private ?object $client = null;
     /** @var array<string,object> */
@@ -527,6 +527,35 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport
         }, "fetch {$section} {$folder}/{$uid}");
     }
 
+    /** Largest BODYSTRUCTURE response read (a hostile message with thousands of parts). */
+    private const MAX_STRUCTURE_BYTES = 2097152;
+
+    public function bodyStructure(string $folder, int $uid): ?string
+    {
+        return $this->guard(function () use ($folder, $uid) {
+            $this->client->openFolder($folder);
+            $conn = $this->client->getConnection();
+            $tag  = null;
+            $conn->sendRequest('UID FETCH', [(string) $uid, '(UID BODYSTRUCTURE)'], $tag);
+            $text = ImapFetchReader::collect($conn->getStream(), (string) $tag, self::MAX_STRUCTURE_BYTES);
+            return stripos($text, 'BODYSTRUCTURE') === false ? null : $text;
+        }, "fetch BODYSTRUCTURE {$folder}/{$uid}");
+    }
+
+    public function streamSection(string $folder, int $uid, string $section, int $maxOctets, callable $sink): ?int
+    {
+        if (!preg_match('/^\d{1,4}(?:\.\d{1,4}){0,30}$/', $section) || $maxOctets < 1) {
+            throw new \InvalidArgumentException('streamSection: bad section or limit');
+        }
+        return $this->guard(function () use ($folder, $uid, $section, $maxOctets, $sink) {
+            $this->client->openFolder($folder);
+            $conn = $this->client->getConnection();
+            $tag  = null;
+            $conn->sendRequest('UID FETCH', [(string) $uid, "(UID BODY.PEEK[{$section}]<0.{$maxOctets}>)"], $tag);
+            return ImapFetchReader::streamLiteral($conn->getStream(), (string) $tag, $sink);
+        }, "fetch BODY[{$section}] {$folder}/{$uid}");
+    }
+
     public function setSeen(string $folder, int $uid, bool $seen): void
     {
         $this->guard(function () use ($folder, $uid, $seen) {
@@ -674,6 +703,8 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport
     {
         try {
             return $fn();
+        } catch (\ApiGoat\Mail\PartTooLarge $e) {
+            throw $e;   // the caller's cap (streamSection's sink), not a server failure
         } catch (\Throwable $e) {
             throw ImapExceptionMapper::map($e, 'IMAP ' . $context);
         }
