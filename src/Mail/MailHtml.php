@@ -72,6 +72,21 @@ final class MailHtml
      * @param string $reset  extra CSS injected FIRST in <head> (the viewer's base font/reset)
      * @return string a complete HTML document for iframe[srcdoc]
      */
+    /**
+     * Stored bodies are already UTF-8 (converted at fetch), but the markup keeps the sender's own declaration —
+     * `<meta http-equiv="Content-Type" content="text/html; charset=Windows-1252">` or `<meta charset=…>`. libxml
+     * honours that over the prepended `<?xml encoding="UTF-8">` and re-decodes the UTF-8 bytes as cp1252
+     * ("é" → "Ã©"). Drop every charset declaration before parsing; the output document declares UTF-8 itself.
+     */
+    public static function dropCharsetDeclarations(string $html): string
+    {
+        return (string) (preg_replace(
+            '~<meta\b(?=[^>]*(?:\bcharset\s*=|http-equiv\s*=\s*["\']?\s*content-type))[^>]*>~i',
+            '',
+            $html
+        ) ?? $html);
+    }
+
     public static function defuse(string $html, bool $images = false, string $reset = ''): string
     {
         if (trim($html) === '') {
@@ -79,7 +94,7 @@ final class MailHtml
         }
         $doc  = new \DOMDocument('1.0', 'UTF-8');
         $prev = libxml_use_internal_errors(true);
-        $ok   = $doc->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_NONET);
+        $ok   = $doc->loadHTML('<?xml encoding="UTF-8">' . self::dropCharsetDeclarations($html), LIBXML_NONET);
         libxml_clear_errors();
         libxml_use_internal_errors($prev);
         if (!$ok) {
