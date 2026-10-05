@@ -1160,6 +1160,14 @@ class Api
             $obj = $this->setAclFilter($this->queryObjName::create())
                 ->filterByPrimaryKey($data["Id{$this->tablename}"])
                 ->findOne();
+            // Project-delegated access (opt-in): when the ACL scope finds
+            // nothing, a ServiceWrapper may vouch for the row itself, e.g. a
+            // business manager editing a teammate's ad. It must apply its own
+            // authorization — returning a row here grants the update.
+            if ($obj === null && is_object($this->ServiceWrapper)
+                && \method_exists($this->ServiceWrapper, 'aclFallbackRow')) {
+                $obj = $this->ServiceWrapper->aclFallbackRow($data["Id{$this->tablename}"]);
+            }
         } else {
             $this->response['debug'][] = "Update {$this->tablename}";
             $obj = $DataObj;
