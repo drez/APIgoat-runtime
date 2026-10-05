@@ -323,14 +323,37 @@ class ChildLink
         });
         try { input.focus(); } catch(_){}
     }
+    // Wait (max ~6s) for the linked child list of PARENT to be on screen.
+    function whenChildList(childKey, cb){
+        var sel = ".va-mob.proto-app[data-model='" + childKey + "'][data-parent='" + PARENT + "']", n = 0;
+        (function poll(){
+            var all = document.querySelectorAll(sel), cw = all.length ? all[all.length - 1] : null;
+            if (cw) { cb(cw); } else if (++n < 30) { setTimeout(poll, 200); }
+        })();
+    }
     window.addEventListener('click', function(e){
         for (var childKey in CFG) {
-            var add = e.target.closest('#add' + childKey);
+            // Add: the legacy #add{Child} button AND the mobile list header's
+            // "+ New" (.add-btn, no id) — both sit inside the child wrapper.
+            var add = e.target.closest('#add' + childKey + ', .add-btn');
             if (add) {
                 var cw = add.closest('.va-mob.proto-app[data-model]');
-                if (!cw || cw.getAttribute('data-parent') !== PARENT) { return; }
+                if (!cw || cw.getAttribute('data-model') !== childKey) { continue; }
+                if (cw.getAttribute('data-parent') !== PARENT) { return; }
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
                 openPicker(cw, childKey); return;
+            }
+            // "+" on the parent form's child tab: the drawer stack would open
+            // the list AND push a create form — open the list, then the picker.
+            var tabAdd = e.target.closest("[j='childadd_" + PARENT + "'][p='" + childKey + "']");
+            if (tabAdd) {
+                var scr = tabAdd.closest('.proto-screen') || document;
+                var tab = scr.querySelector("[j='conglet_" + PARENT + "'][p='" + childKey + "']");
+                if (!tab) { return; }
+                e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+                tab.click();
+                whenChildList(childKey, function(cw3){ openPicker(cw3, childKey); });
+                return;
             }
             var del = e.target.closest("[j='delete" + childKey + "']");
             if (del) {
