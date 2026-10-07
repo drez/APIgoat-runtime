@@ -275,17 +275,23 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
         );
     }
 
+    /**
+     * Every id in the folder, walked by receivedDateTime with the same keyset as
+     * {@see fetchBefore()}: a message leaving the folder mid-walk never shifts
+     * another one out of the listing (an offset page would — and a missing id
+     * reads as "left the folder" to the caller).
+     */
     public function listIds(string $folder): FolderListing
     {
-        $ids = [];
-        $url = $this->folderPath($folder !== '' ? $folder : 'inbox') . '/messages?$select=id&$top=500';
-        while ($url !== '') {
-            $page = $this->graph->call('GET', $url);
-            foreach ($page['value'] ?? [] as $m) {
-                if (!empty($m['id'])) $ids[(string) $m['id']] = true;
+        $folder = $folder !== '' ? $folder : 'inbox';
+        $ids    = [];
+        $token  = null;
+        do {
+            [$rows, $token] = $this->keysetPage($folder, 'id,receivedDateTime', $token, 500);
+            foreach ($rows as $m) {
+                $ids[(string) $m['id']] = true;
             }
-            $url = (string) ($page['@odata.nextLink'] ?? '');
-        }
+        } while ($token !== null);
         return new FolderListing($ids, null, true);
     }
 
@@ -353,29 +359,107 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
     }
 
     /**
-     * $before is Graph's own @odata.nextLink from the previous page (null = newest page). Paging by
-     * link, not by timestamp, never loses messages that share a receivedDateTime; mail arriving mid-walk
-     * can only cause repeats, which ingest absorbs.
+     * Keyset paging, newest first: `$orderby=receivedDateTime desc` with `$filter=receivedDateTime le
+     * <boundary>`. $before is our own opaque token `<iso>|<id,id,…>`: the boundary instant and the
+     * ids already returned AT that instant (skipped when they come back). A message leaving the
+     * folder between pages cannot shift another one out of the walk (an offset nextLink could);
+     * messages sharing a second are each returned once, however Graph orders them.
      */
     public function fetchBefore(string $folder, ?string $before, int $max): BackfillResult
     {
         $folder = $folder !== '' ? $folder : 'inbox';
-        $max    = self::clampMax($max);
-        if ($before !== null && $before !== '') {
-            if (!str_starts_with($before, 'https://graph.microsoft.com/')) {
-                throw new \InvalidArgumentException('Backfill token is not a Graph URL');
-            }
-            $url = $before;
-        } else {
-            $url = $this->folderPath($folder) . '/messages?$select=' . self::SELECT . '&$orderby=receivedDateTime%20desc&$top=' . $max;
-        }
-        $page = $this->graph->call('GET', $url);
-        $out  = [];
-        foreach ((array) ($page['value'] ?? []) as $m) {
+        [$rows, $next] = $this->keysetPage($folder, self::SELECT, $before !== '' ? $before : null, self::clampMax($max));
+        $out = [];
+        foreach ($rows as $m) {
             $out[] = self::normalise($m, $folder);
         }
-        $next = (string) ($page['@odata.nextLink'] ?? '');
-        return new BackfillResult($out, $next !== '' ? $next : null, $next === '');
+        return new BackfillResult($out, $next, $next === null);
+    }
+
+    /** Graph's largest $top on a message collection. */
+    private const TOP_CEILING = 1000;
+    /** A boundary token: ISO-8601 UTC instant | comma-separated Graph ids. */
+    private const TOKEN_RE = '/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z)\|([A-Za-z0-9_=+\/-]+(?:,[A-Za-z0-9_=+\/-]+)*)$/';
+
+    /**
+     * One keyset page: up to $max rows not returned before, and the token for the next one
+     * (null = the folder is exhausted). Rows without a usable receivedDateTime cannot be
+     * paged past: the walk refuses rather than silently drop them.
+     *
+     * @return array{0: list<array<string,mixed>>, 1: ?string}
+     */
+    private function keysetPage(string $folder, string $select, ?string $token, int $max): array
+    {
+        $boundary = null;
+        $seen     = [];
+        if ($token !== null) {
+            [$boundary, $seen] = self::parseToken($token);
+        }
+        $top = min(self::TOP_CEILING, $max + count($seen));
+        $url = $this->folderPath($folder) . '/messages?$select=' . $select
+            . ($boundary !== null ? '&$filter=' . rawurlencode('receivedDateTime le ' . $boundary) : '')
+            . '&$orderby=receivedDateTime%20desc&$top=' . $top;
+
+        $out  = [];
+        $last = null;   // [iso, ts] of the oldest row this page saw
+        $atLast = [];
+        do {
+            $page = $this->graph->call('GET', $url);
+            foreach ((array) ($page['value'] ?? []) as $m) {
+                $id  = (string) ($m['id'] ?? '');
+                $iso = (string) ($m['receivedDateTime'] ?? '');
+                $ts  = self::instant($iso);
+                if ($id === '') {
+                    continue;
+                }
+                if ($ts === null) {
+                    throw new TransientError('Graph returned message ' . $id . ' without a receivedDateTime: cannot page past it');
+                }
+                if ($last === null || $ts !== $last[1]) {
+                    $last   = [$iso, $ts];
+                    $atLast = [];
+                }
+                $atLast[$id] = true;
+                if ($boundary !== null && $ts === self::instant($boundary) && isset($seen[$id])) {
+                    continue;   // returned by the previous page
+                }
+                $out[] = $m;
+            }
+            $more = (string) ($page['@odata.nextLink'] ?? '');
+            // A full page of rows we had already returned (more than TOP_CEILING on one instant):
+            // follow Graph's own link inside this call until something new comes.
+            $url = ($out === [] && $more !== '') ? $more : '';
+        } while ($url !== '');
+
+        if ($more === '' || $last === null) {
+            return [$out, null];
+        }
+        if ($boundary !== null && $last[1] === self::instant($boundary)) {
+            $atLast += $seen;   // still on the same instant: the set grows, the walk moves
+        }
+        return [$out, $last[0] . '|' . implode(',', array_keys($atLast))];
+    }
+
+    /** @return array{0:string, 1:array<string,true>} */
+    private static function parseToken(string $token): array
+    {
+        if (!preg_match(self::TOKEN_RE, $token, $m) || self::instant($m[1]) === null) {
+            throw new \InvalidArgumentException('Backfill token is not <ISO-8601 UTC>|<ids>');
+        }
+        return [$m[1], array_fill_keys(explode(',', $m[2]), true)];
+    }
+
+    /** A Graph DateTimeOffset as a comparable string ('U.u'), null when it is not one. */
+    private static function instant(string $iso): ?string
+    {
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$/', $iso, $p) || !checkdate((int) $p[2], (int) $p[3], (int) $p[1])) {
+            return null;
+        }
+        try {
+            return (new \DateTimeImmutable($iso))->format('U.u');
+        } catch (\Exception) {
+            return null;
+        }
     }
 
     public function fetchBody(string $providerId): MailBody

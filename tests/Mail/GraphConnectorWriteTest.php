@@ -171,19 +171,6 @@ final class GraphConnectorWriteTest extends TestCase
         ];
     }
 
-    public function test_list_ids_follows_every_page(): void
-    {
-        $this->routes['$skiptoken=P2'] = ['status' => 200, 'body' => ['value' => [['id' => 'C']]]];
-        $this->routes['/mailFolders/F1/messages?'] = ['status' => 200, 'body' => ['value' => [['id' => 'A'], ['id' => 'B']],
-            '@odata.nextLink' => 'https://graph.microsoft.com/v1.0/me/mailFolders/F1/messages?$select=id&$skiptoken=P2']];
-        $l = $this->connector()->listIds('F1');
-        $this->assertSame(['A' => true, 'B' => true, 'C' => true], $l->ids);
-        $this->assertNull($l->generation);
-        $this->assertTrue($l->complete);
-        $this->assertStringContainsString('$select=id&$top=500', $this->calls[0]['url']);
-        $this->assertCount(2, $this->calls);
-    }
-
     public function test_append_uploads_base64_mime_then_clears_the_draft_flag(): void
     {
         $this->routes['POST https://graph.microsoft.com/v1.0/me/mailFolders/F1/messages'] = ['status' => 201, 'body' => ['id' => 'NEW1']];
@@ -232,48 +219,176 @@ final class GraphConnectorWriteTest extends TestCase
         $this->assertStringContainsString(rawurlencode("displayName eq 'O''Neil'"), $this->calls[0]['url']);
     }
 
-    private const NEXT = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$select=id&$orderby=receivedDateTime%20desc&$top=2&$skiptoken=T1';
-
-    public function test_backfill_follows_the_graph_nextLink_exactly(): void
+    /**
+     * A folder served like Graph: `$filter=receivedDateTime le X`, `$orderby=receivedDateTime desc`,
+     * `$top`, `$skip` honoured over $this->folder (which a test may change between calls). Rows that
+     * share an instant come back in an order that flips on every request (Graph promises none).
+     *
+     * @param ?callable $after fn(int $callNo): void, run after each answer
+     */
+    private function serveFolder(?callable $after = null): void
     {
-        $row = fn (string $id) => ['id' => $id, 'receivedDateTime' => '2026-10-01T00:00:00Z'];
-        $this->routes['$skiptoken=T1'] = ['status' => 200, 'body' => ['value' => [$row('C')]]];
-        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['value' => [$row('A'), $row('B')], '@odata.nextLink' => self::NEXT]];
+        $n = 0;
+        $this->routes['/mailFolders/inbox/messages?'] = function (string $method, string $url) use (&$n, $after) {
+            $q = rawurldecode((string) parse_url($url, PHP_URL_QUERY));
+            preg_match('/\$top=(\d+)/', $q, $top);
+            preg_match('/\$skip=(\d+)/', $q, $skip);
+            $le   = preg_match('/\$filter=receivedDateTime le (\S+?)(&|$)/', $q, $f) ? strtotime($f[1]) : null;
+            $rows = array_values(array_filter($this->folder, fn ($r) => $le === null || strtotime($r['receivedDateTime']) <= $le));
+            $flip = $n % 2 === 1;
+            usort($rows, fn ($a, $b) => [strtotime($b['receivedDateTime']), $flip ? $b['id'] : $a['id']] <=> [strtotime($a['receivedDateTime']), $flip ? $a['id'] : $b['id']]);
+            $off  = (int) ($skip[1] ?? 0);
+            $page = array_slice($rows, $off, (int) $top[1]);
+            $body = ['value' => $page];
+            if (count($rows) > $off + (int) $top[1]) {
+                $body['@odata.nextLink'] = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?' . preg_replace('/&\$skip=\d+/', '', $q) . '&$skip=' . ($off + (int) $top[1]);
+            }
+            $n++;
+            if ($after !== null) $after($n);
+            return ['status' => 200, 'body' => $body];
+        };
+    }
+
+    /** @var list<array{id:string, receivedDateTime:string}> */
+    private array $folder = [];
+
+    private static function row(string $id, string $at): array
+    {
+        return ['id' => $id, 'receivedDateTime' => $at];
+    }
+
+    /** @return list<string> every id a backfill walk returned, in order */
+    private function walk(int $max, int $cap = 50): array
+    {
+        $c   = $this->connector();
+        $ids = [];
+        $tok = null;
+        for ($i = 0; $i < $cap; $i++) {
+            $r   = $c->fetchBefore('inbox', $tok, $max);
+            $ids = array_merge($ids, array_column($r->headers, 'provider_message_id'));
+            if ($r->complete) {
+                $this->assertNull($r->next);
+                return $ids;
+            }
+            $this->assertNotSame($tok, $r->next, 'every page moves the walk');
+            $tok = $r->next;
+        }
+        $this->fail('the walk never completed');
+    }
+
+    public function test_backfill_pages_by_received_time_with_a_boundary_token(): void
+    {
+        $this->folder = [self::row('A', '2026-10-01T10:05:00Z'), self::row('B', '2026-10-01T10:00:00Z'),
+                         self::row('C', '2026-10-01T10:00:00Z'), self::row('E', '2026-10-01T09:00:00Z')];
+        $this->serveFolder();
         $r = $this->connector()->fetchBefore('inbox', null, 2);
         $this->assertSame(['A', 'B'], array_column($r->headers, 'provider_message_id'));
         $this->assertSame('inbox', $r->headers[0]['folder_at_fetch']);
-        $this->assertSame(self::NEXT, $r->next);
+        $this->assertSame('2026-10-01T10:00:00Z|B', $r->next);
         $this->assertFalse($r->complete);
-        $this->assertStringContainsString('$orderby=receivedDateTime desc', rawurldecode($this->calls[0]['url']));
-        $this->assertStringContainsString('$top=2', $this->calls[0]['url']);
+        $first = rawurldecode($this->calls[0]['url']);
+        $this->assertStringContainsString('$orderby=receivedDateTime desc', $first);
+        $this->assertStringContainsString('$top=2', $first);
+        $this->assertStringNotContainsString('$filter', $first);
+
         $r2 = $this->connector()->fetchBefore('inbox', $r->next, 2);
-        $this->assertSame(self::NEXT, $this->calls[1]['url']);
-        $this->assertSame(['C'], array_column($r2->headers, 'provider_message_id'));
+        $second = rawurldecode($this->calls[1]['url']);
+        $this->assertStringContainsString('$filter=receivedDateTime le 2026-10-01T10:00:00Z', $second);
+        $this->assertStringContainsString('$orderby=receivedDateTime desc', $second);
+        $this->assertStringContainsString('$top=3', $second, 'max + the ids already returned at the boundary');
+        $this->assertSame(['C', 'E'], array_column($r2->headers, 'provider_message_id'));
         $this->assertNull($r2->next);
         $this->assertTrue($r2->complete);
     }
 
-    public function test_backfill_returns_same_second_messages_across_pages_once(): void
+    public function test_backfill_returns_same_second_messages_across_pages_exactly_once(): void
     {
-        $row = fn (string $id) => ['id' => $id, 'receivedDateTime' => '2026-10-01T00:00:00Z'];
-        $this->routes['$skiptoken=T1'] = ['status' => 200, 'body' => ['value' => [$row('C')]]];
-        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['value' => [$row('A'), $row('B')], '@odata.nextLink' => self::NEXT]];
-        $c  = $this->connector();
-        $r  = $c->fetchBefore('inbox', null, 2);
-        $r2 = $c->fetchBefore('inbox', $r->next, 2);
-        $this->assertSame(['A', 'B', 'C'], array_merge(array_column($r->headers, 'provider_message_id'), array_column($r2->headers, 'provider_message_id')));
+        $this->folder = [self::row('A', '2026-10-01T10:05:00Z')];
+        foreach (range(1, 7) as $i) {
+            $this->folder[] = self::row('S' . $i, '2026-10-01T10:00:00Z');   // a whole page and more on one instant
+        }
+        $this->folder[] = self::row('Z', '2026-10-01T08:00:00Z');
+        $this->serveFolder();
+        $ids = $this->walk(2);
+        $this->assertSame(count($this->folder), count($ids), 'no repeats: ' . implode(',', $ids));
+        $this->assertEqualsCanonicalizing(array_column($this->folder, 'id'), $ids);
     }
 
-    public function test_backfill_refuses_a_non_graph_token_before_any_call(): void
+    public function test_backfill_loses_nothing_when_messages_leave_the_folder_between_pages(): void
     {
-        try {
-            $this->connector()->fetchBefore('inbox', 'https://evil.example/v1.0/me/messages', 5);
-            $this->fail('expected InvalidArgumentException');
-        } catch (\InvalidArgumentException) {
-            $this->assertSame([], $this->calls);
+        foreach (range(1, 8) as $i) {
+            $this->folder[] = self::row('M' . $i, sprintf('2026-10-01T10:%02d:00Z', 60 - $i * 5));
         }
-        $this->expectException(\InvalidArgumentException::class);
-        $this->connector()->fetchBefore('inbox', '2026-10-01T00:00:00Z|B', 5);
+        $this->serveFolder();
+        $c = $this->connector();
+        $r = $c->fetchBefore('inbox', null, 3);
+        $this->assertSame(['M1', 'M2', 'M3'], array_column($r->headers, 'provider_message_id'));
+        // the user files the three newest away: an offset page would now skip M4..M6
+        $this->folder = array_values(array_filter($this->folder, fn ($m) => !in_array($m['id'], ['M1', 'M2', 'M3'], true)));
+        $ids = [];
+        for ($tok = $r->next; $tok !== null; $tok = $r->next) {
+            $r   = $c->fetchBefore('inbox', $tok, 3);
+            $ids = array_merge($ids, array_column($r->headers, 'provider_message_id'));
+        }
+        $this->assertSame(['M4', 'M5', 'M6', 'M7', 'M8'], $ids);
+    }
+
+    public function test_backfill_refuses_a_malformed_token_before_any_call(): void
+    {
+        foreach ([
+            'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skip=2',   // the old nextLink form
+            'https://evil.example/v1.0/me/messages',
+            '2026-10-01T00:00:00Z|',
+            '2026-10-01T00:00:00Z',
+            '2026-10-01 00:00:00|B',
+            '2026-10-01T00:00:00+02:00|B',
+            '2026-10-01T00:00:00Z|A B',
+            "2026-10-01T00:00:00Z|A'",
+            '2026-10-01T00:00:00Z|A,,B',
+            '2026-10-01T00:00:00Z|A&$filter=x',
+            '2026-13-45T00:00:00Z|A',
+        ] as $bad) {
+            try {
+                $this->connector()->fetchBefore('inbox', $bad, 5);
+                $this->fail('expected InvalidArgumentException for ' . $bad);
+            } catch (\InvalidArgumentException) {
+                $this->assertSame([], $this->calls, $bad);
+            }
+        }
+    }
+
+    public function test_list_ids_walks_the_whole_folder_by_received_time(): void
+    {
+        foreach (range(1, 1203) as $i) {   // 3 pages of 500, ties on every instant
+            $this->folder[] = self::row(sprintf('L%04d', $i), sprintf('2026-10-01T%02d:00:00Z', intdiv($i, 60)));
+        }
+        $this->serveFolder();
+        $l = $this->connector()->listIds('inbox');
+        $this->assertCount(1203, $l->ids);
+        $this->assertTrue($l->complete);
+        $this->assertGreaterThanOrEqual(3, count($this->calls));
+        $first = rawurldecode($this->calls[0]['url']);
+        $this->assertStringContainsString('$select=id,receivedDateTime', $first);
+        $this->assertStringContainsString('$orderby=receivedDateTime desc', $first);
+        $this->assertStringContainsString('$filter=receivedDateTime le ', rawurldecode($this->calls[1]['url']));
+    }
+
+    public function test_list_ids_misses_nothing_when_messages_leave_the_folder_mid_walk(): void
+    {
+        foreach (range(1, 1100) as $i) {
+            $this->folder[] = self::row(sprintf('L%04d', $i), sprintf('2026-10-01T%02d:%02d:00Z', 23 - intdiv($i, 60), 59 - $i % 60));
+        }
+        $gone = array_column(array_slice($this->folder, 0, 400), 'id');
+        $this->serveFolder(function (int $call) use ($gone): void {
+            if ($call === 1) {   // after the first page: 400 of the newest leave the folder
+                $this->folder = array_values(array_filter($this->folder, fn ($m) => !in_array($m['id'], $gone, true)));
+            }
+        });
+        $l = $this->connector()->listIds('inbox');
+        foreach (array_slice(array_column($this->folder, 'id'), 0) as $id) {
+            $this->assertTrue($l->has($id), $id . ' is still in the folder and must be listed');
+        }
+        $this->assertTrue($l->complete);
     }
 
     public function test_backfill_without_nextLink_is_complete(): void
