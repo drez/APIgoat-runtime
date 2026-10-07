@@ -14,7 +14,8 @@ namespace ApiGoat\Ai\Chat;
  * body for the caller to append to its onReadyJs — running both is safe,
  * every bind is guarded on a data attribute.
  *
- * Client contract: POST {endpoint} with JSON {message} or {reset:true};
+ * Client contract: POST {endpoint} with JSON {message} or {reset:true},
+ * each carrying `scope` when the panel shows a scope switcher;
  * the endpoint answers JSON {answer, sources:[{id,label,href?}], usage,
  * model} or {error} with a non-2xx status. The CSRF header rides on the
  * app's wrapped window.fetch; the widget also sets it itself from
@@ -33,6 +34,10 @@ final class ChatPanel
      *   placeholder textarea placeholder
      *   intro       first line shown in an empty conversation
      *   turns       prior turns [{q, a, sources}] to pre-render
+     *   scopes      optional switcher choices [{value, label}] (from
+     *               ScopedContextProvider::scopes()); fewer than two hides it
+     *   scope       the selected value (ChatSessionStore::scope()); the
+     *               first choice when it is not one of them
      *   id          DOM id of the root (default gcAiChat)
      *   labels      overrides for the button/status strings
      */
@@ -55,6 +60,7 @@ final class ChatPanel
             'failed'   => 'The assistant could not answer. Please try again.',
             'errTitle' => 'AI',
             'localModel' => 'local model',
+            'scope'    => 'Context',
         ], \is_array($opts['labels'] ?? null) ? $opts['labels'] : []);
         $placeholder = (string) ($opts['placeholder'] ?? 'Ask a question… (Enter to send, Shift+Enter for a new line)');
         $intro = (string) ($opts['intro'] ?? 'Ask anything about your data. Answers cite the records they come from.');
@@ -65,6 +71,8 @@ final class ChatPanel
         ], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES);
 
         $e = static fn ($s): string => \htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+
+        $scopeHtml = self::scopeHtml(\is_array($opts['scopes'] ?? null) ? $opts['scopes'] : [], (string) ($opts['scope'] ?? ''), (string) $labels['scope']);
 
         $turnsHtml = '';
         foreach (\is_array($opts['turns'] ?? null) ? $opts['turns'] : [] as $t) {
@@ -89,6 +97,7 @@ final class ChatPanel
             . '<button type="button" class="gc-aichat-btn is-ghost" data-gc-ai-new="1">' . $e($labels['newChat']) . '</button>'
             . '<button type="button" class="gc-aichat-btn is-ghost gc-aichat-x" data-gc-ai-close="1" aria-label="' . $e($labels['close']) . '">×</button>'
             . '</span></div>'
+            . $scopeHtml
             . '<div class="gc-aichat-msgs" data-gc-ai-msgs="1">'
             . '<div class="gc-aichat-intro" data-gc-ai-intro="1">' . $e($intro) . '</div>' . $turnsHtml
             . '</div>'
@@ -100,6 +109,42 @@ final class ChatPanel
             . '</div></div>'
             . self::style()
             . '<script>' . self::js() . '</script>';
+    }
+
+    /**
+     * The scope switcher: a labelled <select> under the panel head, or '' when
+     * there are fewer than two usable choices (nothing to switch between).
+     * Values and labels are escaped; malformed entries are skipped.
+     *
+     * @param array<int,mixed> $scopes [{value, label}]
+     */
+    public static function scopeHtml(array $scopes, string $selected = '', string $label = 'Context'): string
+    {
+        $e = static fn ($s): string => \htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+        $opts = [];
+        foreach ($scopes as $s) {
+            if (!\is_array($s) || !isset($s['label']) || !\array_key_exists('value', $s)) {
+                continue;
+            }
+            if (!\is_scalar($s['value']) || !\is_scalar($s['label'])) {
+                continue;
+            }
+            $opts[(string) $s['value']] = (string) $s['label'];
+        }
+        if (\count($opts) < 2) {
+            return '';
+        }
+        if (!\array_key_exists($selected, $opts)) {
+            $selected = (string) \array_key_first($opts);
+        }
+        $h = '<label class="gc-aichat-scope"><span class="gc-aichat-scope-l">' . $e($label) . '</span>'
+            . '<select class="gc-aichat-scope-sel" data-gc-ai-scope="1">';
+        foreach ($opts as $v => $l) {
+            $v = (string) $v; // array keys of digit strings come back as ints
+            $h .= '<option value="' . $e($v) . '"' . ($v === $selected ? ' selected' : '') . '>' . $e($l) . '</option>';
+        }
+
+        return $h . '</select></label>';
     }
 
     /**
@@ -144,7 +189,7 @@ final class ChatPanel
         var q = function (sel) { return root.querySelector(sel); };
         var launch = q('[data-gc-ai-open]'), drawer = q('.gc-aichat-drawer'), backdrop = q('.gc-aichat-backdrop');
         var msgs = q('[data-gc-ai-msgs]'), form = q('[data-gc-ai-form]'), input = q('[data-gc-ai-input]'), send = q('[data-gc-ai-send]');
-        var intro = q('[data-gc-ai-intro]');
+        var intro = q('[data-gc-ai-intro]'), scopeSel = q('[data-gc-ai-scope]');
         var busy = false;
         function open() { drawer.hidden = false; backdrop.hidden = false; launch.setAttribute('aria-expanded', 'true'); root.classList.add('is-open'); setTimeout(function () { input.focus(); scroll(); }, 30); }
         function close() { drawer.hidden = true; backdrop.hidden = true; launch.setAttribute('aria-expanded', 'false'); root.classList.remove('is-open'); }
@@ -170,12 +215,17 @@ final class ChatPanel
           try { if (window.gcCore && typeof window.gcCore.csrfToken === 'function') { var t = window.gcCore.csrfToken(); if (t) { h['X-Csrf-Token'] = t; } } } catch (e) {}
           return h;
         }
+        function withScope(body) { if (scopeSel) { body.scope = scopeSel.value; } return body; }
+        function clearMsgs() {
+          var nodes = msgs.querySelectorAll('.gc-aichat-msg'); for (var i = 0; i < nodes.length; i++) { nodes[i].parentNode.removeChild(nodes[i]); }
+          if (intro) { intro.hidden = false; }
+        }
         function post(body) {
           return fetch(cfg.endpoint, { method: 'POST', credentials: 'same-origin', headers: headers(), body: JSON.stringify(body) })
             .then(function (r) { return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) {} return { ok: r.ok, status: r.status, json: j }; }); });
         }
         function setBusy(b) {
-          busy = b; send.disabled = b; input.disabled = b; send.textContent = b ? (L.sending || 'Thinking…') : (L.send || 'Send');
+          busy = b; send.disabled = b; input.disabled = b; if (scopeSel) { scopeSel.disabled = b; } send.textContent = b ? (L.sending || 'Thinking…') : (L.send || 'Send');
           var sp = q('[data-gc-ai-spin]');
           if (b && !sp) { sp = el('div', 'gc-aichat-msg is-bot is-spin'); sp.setAttribute('data-gc-ai-spin', '1'); sp.innerHTML = '<span></span><span></span><span></span>'; msgs.appendChild(sp); scroll(); }
           if (!b && sp) { sp.parentNode.removeChild(sp); }
@@ -186,7 +236,7 @@ final class ChatPanel
           if (intro) { intro.hidden = true; }
           msgs.appendChild(el('div', 'gc-aichat-msg is-user', text)); input.value = ''; scroll();
           setBusy(true);
-          post({ message: text }).then(function (res) {
+          post(withScope({ message: text })).then(function (res) {
             setBusy(false);
             var j = res.json || {};
             if (!res.ok || j.error || typeof j.answer !== 'string') { fail(j.error || j.message || (L.failed || 'The assistant could not answer.')); return; }
@@ -200,11 +250,23 @@ final class ChatPanel
         for (var c = 0; c < closers.length; c++) { closers[c].addEventListener('click', function (ev) { ev.preventDefault(); close(); }); }
         q('[data-gc-ai-new]').addEventListener('click', function (ev) {
           ev.preventDefault(); if (busy) { return; }
-          post({ reset: true }).catch(function () {});
-          var nodes = msgs.querySelectorAll('.gc-aichat-msg'); for (var i = 0; i < nodes.length; i++) { nodes[i].parentNode.removeChild(nodes[i]); }
-          if (intro) { intro.hidden = false; }
+          post(withScope({ reset: true })).catch(function () {});
+          clearMsgs();
           input.focus();
         });
+        // Switching scope starts a new conversation: the server drops the
+        // history of the old scope (ChatSessionStore::useScope), the panel
+        // drops its messages, so nothing from one scope is shown or replayed
+        // in the other.
+        if (scopeSel) {
+          scopeSel.addEventListener('change', function () {
+            post(withScope({ reset: true })).then(function (res) {
+              if (!res.ok) { var j = res.json || {}; fail(j.error || (L.failed || 'The assistant could not answer.')); }
+            }).catch(function () {});
+            clearMsgs();
+            input.focus();
+          });
+        }
         form.addEventListener('submit', function (ev) { ev.preventDefault(); ask(); });
         input.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ask(); } });
         document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !drawer.hidden) { close(); } });
@@ -235,6 +297,9 @@ JS;
 .gc-aichat-btn.is-ghost{background:transparent}
 .gc-aichat-btn:disabled{opacity:.55;cursor:default}
 .gc-aichat-x{font-size:20px;line-height:1;padding:0 10px}
+.gc-aichat-scope{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--colorBorder,#e3e8ee);background:var(--colorBgCard,#fff);font-size:13px}
+.gc-aichat-scope-l{color:var(--colorTextMuted,#6b7280);font-weight:600}
+.gc-aichat-scope-sel{flex:1 1 auto;min-width:0;height:30px;padding:0 8px;border:1px solid var(--colorBorderMid,#d9dee5);border-radius:8px;background:var(--colorBgBody,#fff);color:var(--colorText,#222);font:inherit}
 .gc-aichat-msgs{flex:1 1 auto;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
 .gc-aichat-intro{color:var(--colorTextMuted,#6b7280);font-size:13px;padding:6px 2px}
 .gc-aichat-msg{max-width:92%;padding:9px 12px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word;line-height:1.4}

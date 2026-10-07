@@ -82,12 +82,24 @@ final class ChatAssistant
 
     /**
      * @param array<int,array{role:string,content:string}> $history prior turns, oldest first
+     * @param array{scope?:string} $options retrieval options; `scope` reaches a
+     *   ScopedContextProvider only ("" or absent = unscoped). A plain
+     *   ContextProvider handed a non-empty scope is refused rather than
+     *   silently answering from the whole tenant.
      * @throws ChatFailed when the model does not answer
+     * @throws ChatScopeInvalid when a scope is given that the provider cannot honour
      */
-    public function ask(string $question, array $history): ChatAnswer
+    public function ask(string $question, array $history, array $options = []): ChatAnswer
     {
         $question = \trim($question);
-        $bundle   = $this->ctx->retrieve($question, $history, $this->idTenant);
+        $scope    = (string) ($options['scope'] ?? '');
+        if ($this->ctx instanceof ScopedContextProvider) {
+            $bundle = $this->ctx->retrieve($question, $history, $this->idTenant, $scope !== '' ? ['scope' => $scope] : []);
+        } elseif ($scope !== '') {
+            throw new ChatScopeInvalid('This chat has no scopes to choose from.');
+        } else {
+            $bundle = $this->ctx->retrieve($question, $history, $this->idTenant);
+        }
         $messages = self::assemble($this->persona, $bundle->text, $history, $question);
 
         $model = $this->profile->chatModel();
