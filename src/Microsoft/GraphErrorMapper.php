@@ -30,7 +30,7 @@ final class GraphErrorMapper
             throw new AuthFailed($text, $status);
         }
         if ($status === 429 || $status === 503) {
-            throw new RateLimited($text, self::retryAfter($rawHeaders));
+            throw new RateLimited($text, self::retryAfter($rawHeaders), null, $status);
         }
         if ($status === 404 || $status === 410) {
             throw new TransientError($text, $status);

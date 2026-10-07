@@ -33,13 +33,13 @@ final class GraphHttpTest extends TestCase
     public function test_429_maps_to_rate_limited_with_retry_after(): void
     {
         $g = new GraphHttp(new FakeTokenSource(), fn () => ['status' => 429, 'headers' => "Retry-After: 45\r\n", 'body' => '{}']);
-        try { $g->call('GET', '/me'); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(45, $e->getCode()); }
+        try { $g->call('GET', '/me'); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(45, $e->getCode()); $this->assertSame(429, $e->httpStatus()); }
     }
 
     public function test_503_without_header_defaults_to_30_seconds(): void
     {
         $g = new GraphHttp(new FakeTokenSource(), fn () => ['status' => 503, 'headers' => '', 'body' => '{}']);
-        try { $g->call('GET', '/me'); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(30, $e->getCode()); }
+        try { $g->call('GET', '/me'); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(30, $e->getCode()); $this->assertSame(503, $e->httpStatus()); }
     }
 
     public function test_410_and_404_are_transient_with_their_status(): void

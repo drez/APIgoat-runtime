@@ -233,12 +233,17 @@ final class GraphConnectorWriteTest extends TestCase
             $q = rawurldecode((string) parse_url($url, PHP_URL_QUERY));
             preg_match('/\$top=(\d+)/', $q, $top);
             preg_match('/\$skip=(\d+)/', $q, $skip);
-            $le   = preg_match('/\$filter=receivedDateTime le (\S+?)(&|$)/', $q, $f) ? strtotime($f[1]) : null;
-            $rows = array_values(array_filter($this->folder, fn ($r) => $le === null || strtotime($r['receivedDateTime']) <= $le));
+            $op   = preg_match('/\$filter=receivedDateTime (le|lt) (\S+?)(&|$)/', $q, $f) ? $f[1] : null;
+            $lim  = $op !== null ? (float) (new \DateTimeImmutable($f[2]))->format('U.u') : null;
+            $rows = array_values(array_filter($this->folder, function ($r) use ($op, $lim) {
+                $t = self::precise($r);
+                return $op === null || ($op === 'le' ? $t <= $lim : $t < $lim);
+            }));
             $flip = $n % 2 === 1;
-            usort($rows, fn ($a, $b) => [strtotime($b['receivedDateTime']), $flip ? $b['id'] : $a['id']] <=> [strtotime($a['receivedDateTime']), $flip ? $a['id'] : $b['id']]);
+            usort($rows, fn ($a, $b) => [self::precise($b), $flip ? $b['id'] : $a['id']] <=> [self::precise($a), $flip ? $a['id'] : $b['id']]);
             $off  = (int) ($skip[1] ?? 0);
-            $page = array_slice($rows, $off, (int) $top[1]);
+            // Graph answers whole seconds whatever Exchange stored
+            $page = array_map(fn ($r) => ['id' => $r['id'], 'receivedDateTime' => $r['receivedDateTime']], array_slice($rows, $off, (int) $top[1]));
             $body = ['value' => $page];
             if (count($rows) > $off + (int) $top[1]) {
                 $body['@odata.nextLink'] = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?' . preg_replace('/&\$skip=\d+/', '', $q) . '&$skip=' . ($off + (int) $top[1]);
@@ -252,9 +257,15 @@ final class GraphConnectorWriteTest extends TestCase
     /** @var list<array{id:string, receivedDateTime:string}> */
     private array $folder = [];
 
-    private static function row(string $id, string $at): array
+    /** $stored: the instant Exchange holds (sub-second); Graph only ever returns the whole second. */
+    private static function row(string $id, string $at, ?string $stored = null): array
     {
-        return ['id' => $id, 'receivedDateTime' => $at];
+        return ['id' => $id, 'receivedDateTime' => $stored !== null ? preg_replace('/\.\d+Z$/', 'Z', $stored) : $at, 'stored' => $stored ?? $at];
+    }
+
+    private static function precise(array $r): float
+    {
+        return (float) (new \DateTimeImmutable($r['stored'] ?? $r['receivedDateTime']))->format('U.u');
     }
 
     /** @return list<string> every id a backfill walk returned, in order */
@@ -293,7 +304,7 @@ final class GraphConnectorWriteTest extends TestCase
 
         $r2 = $this->connector()->fetchBefore('inbox', $r->next, 2);
         $second = rawurldecode($this->calls[1]['url']);
-        $this->assertStringContainsString('$filter=receivedDateTime le 2026-10-01T10:00:00Z', $second);
+        $this->assertStringContainsString('$filter=receivedDateTime lt 2026-10-01T10:00:01Z', $second);
         $this->assertStringContainsString('$orderby=receivedDateTime desc', $second);
         $this->assertStringContainsString('$top=3', $second, 'max + the ids already returned at the boundary');
         $this->assertSame(['C', 'E'], array_column($r2->headers, 'provider_message_id'));
@@ -312,6 +323,31 @@ final class GraphConnectorWriteTest extends TestCase
         $ids = $this->walk(2);
         $this->assertSame(count($this->folder), count($ids), 'no repeats: ' . implode(',', $ids));
         $this->assertEqualsCanonicalizing(array_column($this->folder, 'id'), $ids);
+    }
+
+    public function test_backfill_and_list_ids_keep_messages_stored_at_sub_second_times(): void
+    {
+        $this->folder = [self::row('A', '', '2026-10-01T10:05:00.000Z'),
+                         self::row('X', '', '2026-10-01T10:00:00.700Z'),
+                         self::row('Y', '', '2026-10-01T10:00:00.200Z'),
+                         self::row('Z', '', '2026-10-01T09:00:00.000Z')];
+        $this->serveFolder();
+        // page 1 = A + X (Graph shows X at 10:00:00); an `le 10:00:00` filter would now hide Y (10:00:00.200)
+        $r = $this->connector()->fetchBefore('inbox', null, 2);
+        $this->assertSame(['A', 'X'], array_column($r->headers, 'provider_message_id'));
+        $ids = array_column($r->headers, 'provider_message_id');
+        for ($tok = $r->next; $tok !== null; $tok = $r->next) {
+            $r   = $this->connector()->fetchBefore('inbox', $tok, 2);
+            $ids = array_merge($ids, array_column($r->headers, 'provider_message_id'));
+        }
+        $this->assertEqualsCanonicalizing(['A', 'X', 'Y', 'Z'], $ids);
+        $this->assertCount(4, $ids, 'each exactly once');
+
+        $this->calls = [];
+        $l = $this->connector()->listIds('inbox');
+        foreach (['A', 'X', 'Y', 'Z'] as $id) {
+            $this->assertTrue($l->has($id), $id);
+        }
     }
 
     public function test_backfill_loses_nothing_when_messages_leave_the_folder_between_pages(): void
@@ -370,7 +406,7 @@ final class GraphConnectorWriteTest extends TestCase
         $first = rawurldecode($this->calls[0]['url']);
         $this->assertStringContainsString('$select=id,receivedDateTime', $first);
         $this->assertStringContainsString('$orderby=receivedDateTime desc', $first);
-        $this->assertStringContainsString('$filter=receivedDateTime le ', rawurldecode($this->calls[1]['url']));
+        $this->assertStringContainsString('$filter=receivedDateTime lt ', rawurldecode($this->calls[1]['url']));
     }
 
     public function test_list_ids_misses_nothing_when_messages_leave_the_folder_mid_walk(): void

@@ -68,7 +68,7 @@ final class M365AppTokenSource implements TokenSource
         $data   = json_decode((string) $r['body'], true);
         $data   = is_array($data) ? $data : [];
         if ($status === 429) {
-            throw new RateLimited('Microsoft token endpoint throttled', GraphErrorMapper::retryAfter((string) ($r['headers'] ?? '')));
+            throw new RateLimited('Microsoft token endpoint throttled', GraphErrorMapper::retryAfter((string) ($r['headers'] ?? '')), null, 429);
         }
         if ($status >= 500) {
             throw new TransientError('Microsoft token endpoint HTTP ' . $status, $status);

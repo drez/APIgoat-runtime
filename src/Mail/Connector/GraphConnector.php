@@ -359,8 +359,8 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
     }
 
     /**
-     * Keyset paging, newest first: `$orderby=receivedDateTime desc` with `$filter=receivedDateTime le
-     * <boundary>`. $before is our own opaque token `<iso>|<id,id,…>`: the boundary instant and the
+     * Keyset paging, newest first: `$orderby=receivedDateTime desc` with `$filter=receivedDateTime lt
+     * <boundary + 1s>`. $before is our own opaque token `<iso>|<id,id,…>`: the boundary instant and the
      * ids already returned AT that instant (skipped when they come back). A message leaving the
      * folder between pages cannot shift another one out of the walk (an offset nextLink could);
      * messages sharing a second are each returned once, however Graph orders them.
@@ -397,7 +397,7 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
         }
         $top = min(self::TOP_CEILING, $max + count($seen));
         $url = $this->folderPath($folder) . '/messages?$select=' . $select
-            . ($boundary !== null ? '&$filter=' . rawurlencode('receivedDateTime le ' . $boundary) : '')
+            . ($boundary !== null ? '&$filter=' . rawurlencode('receivedDateTime lt ' . self::nextSecond($boundary)) : '')
             . '&$orderby=receivedDateTime%20desc&$top=' . $top;
 
         $out  = [];
@@ -438,6 +438,16 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
             $atLast += $seen;   // still on the same instant: the set grows, the walk moves
         }
         return [$out, $last[0] . '|' . implode(',', array_keys($atLast))];
+    }
+
+    /**
+     * Graph answers receivedDateTime in whole seconds while Exchange may hold sub-second times, so
+     * `le <boundary>` would hide a message stored at boundary+0.4s. `lt <boundary + 1s>` keeps the
+     * whole boundary second; the seen-ids skip removes what the previous page already returned.
+     */
+    private static function nextSecond(string $iso): string
+    {
+        return gmdate('Y-m-d\TH:i:s\Z', (int) floor((float) (new \DateTimeImmutable($iso))->format('U.u')) + 1);
     }
 
     /** @return array{0:string, 1:array<string,true>} */

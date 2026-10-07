@@ -95,13 +95,13 @@ final class M365TokenSourceTest extends TestCase
     public function test_app_token_429_is_rate_limited_with_retry_after(): void
     {
         $src = new M365AppTokenSource('tid-1', 'cid', 'sec', $this->http(['status' => 429, 'headers' => "Retry-After: 12\r\n", 'body' => '{}']));
-        try { $src->accessToken(); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(12, $e->getCode()); }
+        try { $src->accessToken(); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(12, $e->getCode()); $this->assertSame(429, $e->httpStatus()); }
     }
 
     public function test_oauth_429_is_rate_limited_default_30(): void
     {
         $src = new M365OauthTokenSource('cid', 'sec', 'rt', 'u@x.com', $this->http(['status' => 429, 'body' => '{}']));
-        try { $src->accessToken(); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(30, $e->getCode()); }
+        try { $src->accessToken(); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(30, $e->getCode()); $this->assertSame(429, $e->httpStatus()); }
     }
 
     public function test_oauth_onrotate_failure_propagates_and_caches_nothing(): void
