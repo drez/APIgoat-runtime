@@ -236,19 +236,16 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
 
     public function trash(string $providerId): string
     {
-        self::assertResolved($providerId, 'trash');
         return $this->move($providerId, 'deleteditems');
     }
 
     public function archive(string $providerId, string $archiveFolder = ''): string
     {
-        self::assertResolved($providerId, 'archive');
         return $this->move($providerId, $archiveFolder !== '' ? $archiveFolder : 'archive');
     }
 
     public function untrash(string $providerId, string $toFolder = ''): string
     {
-        self::assertResolved($providerId, 'untrash');
         return $this->move($providerId, $toFolder !== '' ? $toFolder : 'inbox');
     }
 
@@ -290,16 +287,16 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
         foreach (array_filter(explode('/', $wanted), fn ($s) => $s !== '') as $seg) {
             $children = $parent === '' ? $this->basePath . '/mailFolders' : $this->folderPath($parent) . '/childFolders';
             $filter   = rawurlencode("displayName eq '" . str_replace("'", "''", $seg) . "'");
-            $found    = '';
-            foreach ($this->graph->call('GET', $children . '?$filter=' . $filter)['value'] ?? [] as $f) {
-                if (strcasecmp((string) ($f['displayName'] ?? ''), $seg) === 0 && !empty($f['id'])) {
-                    $found = (string) $f['id'];
-                    break;
-                }
-            }
+            $found    = $this->findChild($children, $filter, $seg);
             if ($found === '') {
-                $created = $this->graph->call('POST', $children, ['displayName' => $seg]);
-                $found   = (string) ($created['id'] ?? '');
+                try {
+                    $created = $this->graph->call('POST', $children, ['displayName' => $seg]);
+                    $found   = (string) ($created['id'] ?? '');
+                } catch (TransientError $e) {
+                    if ($e->getCode() !== 409) throw $e;
+                    $found = $this->findChild($children, $filter, $seg); // lost a create race
+                    if ($found === '') throw $e;
+                }
                 if ($found === '') {
                     throw new TransientError('Graph created folder "' . $seg . '" but returned no id');
                 }
@@ -312,44 +309,65 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
         return $parent;
     }
 
+    private function findChild(string $children, string $encodedFilter, string $seg): string
+    {
+        foreach ($this->graph->call('GET', $children . '?$filter=' . $encodedFilter)['value'] ?? [] as $f) {
+            if (strcasecmp((string) ($f['displayName'] ?? ''), $seg) === 0 && !empty($f['id'])) {
+                return (string) $f['id'];
+            }
+        }
+        return '';
+    }
+
     /** Upload RFC 822 as base64, then clear the "unsent draft" flag Graph sets on created messages. */
     public function append(string $folder, string $raw, bool $seen): string
     {
+        $folder  = $folder !== '' ? $folder : 'inbox';
         $created = $this->graph->postRaw($this->folderPath($folder) . '/messages', base64_encode($raw), 'text/plain');
         $id      = (string) ($created['id'] ?? '');
         if ($id === '') {
             throw new TransientError('Graph accepted the appended message but returned no id');
         }
-        $this->graph->call('PATCH', $this->msgPath($id), [
-            'singleValueExtendedProperties' => [['id' => 'Integer 0x0E07', 'value' => '1']], // MSGFLAG_READ
-            'isRead'                        => $seen,
-        ]);
+        try {
+            $this->graph->call('PATCH', $this->msgPath($id), [
+                'singleValueExtendedProperties' => [['id' => 'Integer 0x0E07', 'value' => '1']], // MSGFLAG_READ
+                'isRead'                        => $seen,
+            ]);
+        } catch (\Throwable $e) {
+            try {
+                $this->graph->call('DELETE', $this->msgPath($id));
+            } catch (\Throwable) {
+                // best effort: the original failure is what matters
+            }
+            throw $e;
+        }
         return $id;
     }
 
-    /** $before = "<receivedDateTime>|<id>" of the oldest row of the previous page. */
+    /**
+     * $before is Graph's own @odata.nextLink from the previous page (null = newest page). Paging by
+     * link, not by timestamp, never loses messages that share a receivedDateTime; mail arriving mid-walk
+     * can only cause repeats, which ingest absorbs.
+     */
     public function fetchBefore(string $folder, ?string $before, int $max): BackfillResult
     {
         $folder = $folder !== '' ? $folder : 'inbox';
         $max    = self::clampMax($max);
-        $url    = $this->folderPath($folder) . '/messages?$select=' . self::SELECT . '&$orderby=receivedDateTime%20desc&$top=' . $max;
-        $bDate  = '';
-        $bId    = '';
         if ($before !== null && $before !== '') {
-            [$bDate, $bId] = array_pad(explode('|', $before, 2), 2, '');
-            $url .= '&$filter=receivedDateTime+lt+' . $bDate;
+            if (!str_starts_with($before, 'https://graph.microsoft.com/')) {
+                throw new \InvalidArgumentException('Backfill token is not a Graph URL');
+            }
+            $url = $before;
+        } else {
+            $url = $this->folderPath($folder) . '/messages?$select=' . self::SELECT . '&$orderby=receivedDateTime%20desc&$top=' . $max;
         }
         $page = $this->graph->call('GET', $url);
-        $rows = (array) ($page['value'] ?? []);
         $out  = [];
-        foreach ($rows as $m) {
-            // `lt` already excludes the boundary instant; this also drops a repeated boundary row.
-            if ($bId !== '' && ($m['id'] ?? '') === $bId) continue;
+        foreach ((array) ($page['value'] ?? []) as $m) {
             $out[] = self::normalise($m, $folder);
         }
-        $last = $rows ? end($rows) : null;
-        $more = count($rows) >= $max && $last !== null && !empty($last['receivedDateTime']);
-        return new BackfillResult($out, $more ? $last['receivedDateTime'] . '|' . $last['id'] : null, !$more);
+        $next = (string) ($page['@odata.nextLink'] ?? '');
+        return new BackfillResult($out, $next !== '' ? $next : null, $next === '');
     }
 
     public function fetchBody(string $providerId): MailBody

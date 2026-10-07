@@ -232,35 +232,96 @@ final class GraphConnectorWriteTest extends TestCase
         $this->assertStringContainsString(rawurlencode("displayName eq 'O''Neil'"), $this->calls[0]['url']);
     }
 
-    public function test_backfill_walks_backwards_with_an_opaque_token(): void
+    private const NEXT = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$select=id&$orderby=receivedDateTime%20desc&$top=2&$skiptoken=T1';
+
+    public function test_backfill_follows_the_graph_nextLink_exactly(): void
     {
-        $row = fn (string $id, string $dt) => ['id' => $id, 'receivedDateTime' => $dt, 'subject' => 's' . $id, 'isRead' => true, 'parentFolderId' => 'F'];
-        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['value' => [
-            $row('A', '2026-10-02T00:00:00Z'), $row('B', '2026-10-01T00:00:00Z')]]];
+        $row = fn (string $id) => ['id' => $id, 'receivedDateTime' => '2026-10-01T00:00:00Z'];
+        $this->routes['$skiptoken=T1'] = ['status' => 200, 'body' => ['value' => [$row('C')]]];
+        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['value' => [$row('A'), $row('B')], '@odata.nextLink' => self::NEXT]];
         $r = $this->connector()->fetchBefore('inbox', null, 2);
-        $this->assertCount(2, $r->headers);
-        $this->assertSame('A', $r->headers[0]['provider_message_id']);
+        $this->assertSame(['A', 'B'], array_column($r->headers, 'provider_message_id'));
         $this->assertSame('inbox', $r->headers[0]['folder_at_fetch']);
-        $this->assertSame('2026-10-01T00:00:00Z|B', $r->next);
+        $this->assertSame(self::NEXT, $r->next);
         $this->assertFalse($r->complete);
         $this->assertStringContainsString('$orderby=receivedDateTime desc', rawurldecode($this->calls[0]['url']));
         $this->assertStringContainsString('$top=2', $this->calls[0]['url']);
-        $this->assertStringNotContainsString('$filter', $this->calls[0]['url']);
-
-        $this->calls  = [];
-        $this->routes = ['/mailFolders/inbox/messages?' => ['status' => 200, 'body' => ['value' => [$row('C', '2026-09-30T00:00:00Z')]]]];
         $r2 = $this->connector()->fetchBefore('inbox', $r->next, 2);
-        $this->assertStringContainsString('$filter=receivedDateTime+lt+2026-10-01T00:00:00Z', $this->calls[0]['url']);
+        $this->assertSame(self::NEXT, $this->calls[1]['url']);
         $this->assertSame(['C'], array_column($r2->headers, 'provider_message_id'));
         $this->assertNull($r2->next);
         $this->assertTrue($r2->complete);
     }
 
-    public function test_backfill_skips_the_boundary_row_when_a_page_repeats_it(): void
+    public function test_backfill_returns_same_second_messages_across_pages_once(): void
     {
-        $row = fn (string $id, string $dt) => ['id' => $id, 'receivedDateTime' => $dt];
-        $this->routes['/messages?'] = ['status' => 200, 'body' => ['value' => [$row('B', '2026-10-01T00:00:00Z'), $row('C', '2026-09-30T00:00:00Z')]]];
-        $r = $this->connector()->fetchBefore('F1', '2026-10-01T00:00:00Z|B', 5);
-        $this->assertSame(['C'], array_column($r->headers, 'provider_message_id'));
+        $row = fn (string $id) => ['id' => $id, 'receivedDateTime' => '2026-10-01T00:00:00Z'];
+        $this->routes['$skiptoken=T1'] = ['status' => 200, 'body' => ['value' => [$row('C')]]];
+        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['value' => [$row('A'), $row('B')], '@odata.nextLink' => self::NEXT]];
+        $c  = $this->connector();
+        $r  = $c->fetchBefore('inbox', null, 2);
+        $r2 = $c->fetchBefore('inbox', $r->next, 2);
+        $this->assertSame(['A', 'B', 'C'], array_merge(array_column($r->headers, 'provider_message_id'), array_column($r2->headers, 'provider_message_id')));
+    }
+
+    public function test_backfill_refuses_a_non_graph_token_before_any_call(): void
+    {
+        try {
+            $this->connector()->fetchBefore('inbox', 'https://evil.example/v1.0/me/messages', 5);
+            $this->fail('expected InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            $this->assertSame([], $this->calls);
+        }
+        $this->expectException(\InvalidArgumentException::class);
+        $this->connector()->fetchBefore('inbox', '2026-10-01T00:00:00Z|B', 5);
+    }
+
+    public function test_backfill_without_nextLink_is_complete(): void
+    {
+        $this->routes['/messages?'] = ['status' => 200, 'body' => ['value' => []]];
+        $r = $this->connector()->fetchBefore('inbox', null, 5);
+        $this->assertNull($r->next);
+        $this->assertTrue($r->complete);
+    }
+
+    public function test_append_rolls_back_the_created_message_when_the_patch_fails(): void
+    {
+        $this->routes['POST https://graph.microsoft.com/v1.0/me/mailFolders/F1/messages'] = ['status' => 201, 'body' => ['id' => 'NEW1']];
+        $this->routes['PATCH '] = ['status' => 500, 'body' => 'boom'];
+        $this->routes['DELETE https://graph.microsoft.com/v1.0/me/messages/NEW1'] = ['status' => 500, 'body' => 'boom again'];
+        try {
+            $this->connector()->append('F1', 'x', true);
+            $this->fail('expected TransientError');
+        } catch (TransientError $e) {
+            $this->assertStringContainsString('PATCH', $e->getMessage(), 'the PATCH error is rethrown, not the DELETE one');
+        }
+        $this->assertSame('DELETE', end($this->calls)['method']);
+    }
+
+    public function test_append_defaults_to_the_inbox(): void
+    {
+        $this->routes['POST '] = ['status' => 201, 'body' => ['id' => 'NEW1']];
+        $this->routes['PATCH '] = ['status' => 200, 'body' => ['id' => 'NEW1']];
+        $this->connector()->append('', 'x', true);
+        $this->assertStringContainsString('/me/mailFolders/inbox/messages', $this->calls[0]['url']);
+    }
+
+    public function test_ensure_folder_recovers_from_a_create_race(): void
+    {
+        $lookups = 0;
+        $this->routes['GET '] = function () use (&$lookups) {
+            return ['status' => 200, 'body' => ['value' => ++$lookups === 1 ? [] : [['id' => 'RACED', 'displayName' => 'Clients']]]];
+        };
+        $this->routes['POST '] = ['status' => 409, 'body' => ['error' => ['code' => 'ErrorFolderExists', 'message' => 'exists']]];
+        $this->assertSame('RACED', $this->connector()->ensureFolder('Clients'));
+        $this->assertSame(2, $lookups);
+    }
+
+    public function test_ensure_folder_rethrows_a_409_when_the_folder_still_is_not_there(): void
+    {
+        $this->routes['GET '] = ['status' => 200, 'body' => ['value' => []]];
+        $this->routes['POST '] = ['status' => 409, 'body' => ['error' => ['code' => 'ErrorFolderExists', 'message' => 'exists']]];
+        $this->expectException(TransientError::class);
+        $this->connector()->ensureFolder('Clients');
     }
 }
