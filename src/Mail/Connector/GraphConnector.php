@@ -4,6 +4,7 @@ namespace ApiGoat\Mail\Connector;
 
 use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
+use ApiGoat\Mail\DraftStore;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\FolderLister;
@@ -14,11 +15,15 @@ use ApiGoat\Mail\MailboxState;
 use ApiGoat\Mail\MailConnector;
 use ApiGoat\Mail\MessageState;
 use ApiGoat\Mail\MimeBodyParser;
+use ApiGoat\Mail\MimeStructure;
+use ApiGoat\Mail\PartDecoder;
+use ApiGoat\Mail\PartReader;
 use ApiGoat\Mail\StateWriter;
 use ApiGoat\Mail\TokenSource;
 use ApiGoat\Microsoft\GraphHttp;
 use ApiGoat\Sync\Exceptions\AuthFailed;
 use ApiGoat\Sync\Exceptions\TransientError;
+use ApiGoat\Sync\Exceptions\ValidationRejected;
 
 /**
  * Microsoft 365 mail over Microsoft Graph. ONE class for both auth modes:
@@ -36,7 +41,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  *                                           watermark only moves when a deltaLink arrives.
  *   - delta set                          → follow it; 410 ⇒ cold start 'delta_expired'.
  */
-class GraphConnector extends BaseConnector implements FolderLister, StateWriter, FolderWriter
+class GraphConnector extends BaseConnector implements FolderLister, StateWriter, FolderWriter, DraftStore, PartReader
 {
     public const SELECT = 'id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,parentFolderId,internetMessageHeaders';
 
@@ -50,6 +55,9 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
     private int $coldStartDays;
     /** @var array<string,string>|null folder id → role */
     private ?array $roles = null;
+    /** One-entry cache of the last downloaded MIME: structure + part = one download. */
+    private ?string $rawId = null;
+    private string $rawMime = '';
 
     /** @param array{cold_start_days?:int} $options */
     public function __construct(private TokenSource $tokens, private string $basePath, ?callable $transport = null, array $options = [])
@@ -378,7 +386,90 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
     public function fetchRaw(string $providerId): string
     {
         self::assertResolved($providerId, 'fetchRaw');
+        if ($this->rawId === $providerId) {
+            return $this->rawMime;
+        }
+        $raw = $this->downloadRaw($providerId);
+        $this->rawId   = $providerId;
+        $this->rawMime = $raw;
+        return $raw;
+    }
+
+    private function downloadRaw(string $providerId): string
+    {
         return (string) $this->graph->call('GET', $this->basePath . '/messages/' . rawurlencode($providerId) . '/$value', null, [], true);
+    }
+
+    /** Graph creates a message POSTed as MIME in Drafts as an unsent draft. Returns its (immutable) id. */
+    public function appendDraft(string $draftsFolder, string $raw): string
+    {
+        $folder  = $draftsFolder !== '' ? $draftsFolder : 'drafts';
+        $created = $this->graph->postRaw($this->folderPath($folder) . '/messages', base64_encode($raw), 'text/plain');
+        $id      = (string) ($created['id'] ?? '');
+        if ($id === '') {
+            throw new TransientError('Graph created the draft but returned no id');
+        }
+        return $id;
+    }
+
+    public function deleteDraft(string $providerId, string $draftsFolder, string $expectedMessageId): void
+    {
+        self::assertResolved($providerId, 'deleteDraft');
+        $m = $this->graph->call('GET', $this->msgPath($providerId) . '?$select=internetMessageId,isDraft'); // 404 → TransientError 404
+        if ((string) ($m['internetMessageId'] ?? '') !== $expectedMessageId) {
+            throw new ValidationRejected('Graph message ' . $providerId . ' no longer holds our draft (Message-ID '
+                . (string) ($m['internetMessageId'] ?? 'none') . ') — not deleted', 409);
+        }
+        $this->graph->call('DELETE', $this->msgPath($providerId));
+    }
+
+    public function findByMessageId(string $folder, string $messageId): ?string
+    {
+        $filter = rawurlencode("internetMessageId eq '" . str_replace("'", "''", $messageId) . "'");
+        $page   = $this->graph->call('GET', $this->folderPath($folder !== '' ? $folder : 'inbox') . '/messages?$filter=' . $filter . '&$select=id&$top=1');
+        $id     = (string) ($page['value'][0]['id'] ?? '');
+        return $id !== '' ? $id : null;
+    }
+
+    /** Send a fully built RFC 822 message as the mailbox (Graph sendMail, MIME form; 202). Saved to Sent Items by Graph. */
+    public function sendRaw(string $raw): void
+    {
+        $this->graph->postRaw($this->basePath . '/sendMail', base64_encode($raw), 'text/plain');
+    }
+
+    public function send(array $message): string
+    {
+        throw $this->unsupported('send'); // SendWorker builds the MIME and calls sendRaw()
+    }
+
+    public function fetchStructure(string $providerId): array
+    {
+        return MimeStructure::leaves($this->rawOrGone($providerId));
+    }
+
+    public function fetchPart(string $providerId, string $section, string $encoding, int $maxBytes, callable $sink): int
+    {
+        $encoded = MimeStructure::part($this->rawOrGone($providerId), $section);
+        if ($encoded === null) {
+            throw new ValidationRejected('Graph message ' . $providerId . ' has no part ' . $section, 404);
+        }
+        $dec = new PartDecoder($encoding, $maxBytes, $sink);
+        for ($o = 0, $n = strlen($encoded); $o < $n; $o += 65536) {
+            $dec->write(substr($encoded, $o, 65536));
+        }
+        return $dec->finish();
+    }
+
+    private function rawOrGone(string $providerId): string
+    {
+        try {
+            return $this->fetchRaw($providerId);
+        } catch (TransientError $e) {
+            if ($e->getCode() === 404) {
+                throw new ValidationRejected('Graph message ' . $providerId . ' is gone', 404, $e);
+            }
+            throw $e;
+        }
     }
 
     /**
