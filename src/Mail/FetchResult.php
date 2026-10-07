@@ -19,6 +19,7 @@ final class FetchResult
     public const REASON_INITIAL             = 'initial';
     public const REASON_UIDVALIDITY_CHANGED = 'uidvalidity_changed';
     public const REASON_HISTORY_EXPIRED     = 'history_expired';
+    public const REASON_DELTA_EXPIRED       = 'delta_expired';
 
     /** @param array<int,array<string,mixed>> $headers */
     public function __construct(

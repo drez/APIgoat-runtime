@@ -7,6 +7,7 @@ namespace ApiGoat\Mail;
  *
  *   IMAP  → uidvalidity + uidnext (next UID we have NOT seen yet)
  *   Gmail → history_id (+ page_token while a cold start is still paging)
+ *   Graph → delta (deltaLink watermark) + folder (+ next while a delta is still paging)
  *
  * Opaque to callers: persist {@see toJson()} after the rows it covers are
  * committed, hand {@see fromJson()} back on the next call. Extra keys are
@@ -31,6 +32,11 @@ final class MailboxState implements \JsonSerializable
         $d = ['history_id' => $historyId];
         if ($pageToken !== null && $pageToken !== '') $d['page_token'] = $pageToken;
         return new self($d);
+    }
+
+    public static function graph(string $deltaLink, string $folder): self
+    {
+        return new self(['delta' => $deltaLink, 'folder' => $folder]);
     }
 
     public static function fromJson(?string $json): ?self
@@ -95,6 +101,18 @@ final class MailboxState implements \JsonSerializable
     {
         $t = $this->data['page_token'] ?? null;
         return ($t === null || $t === '') ? null : (string) $t;
+    }
+
+    public function deltaLink(): ?string
+    {
+        $d = $this->data['delta'] ?? null;
+        return ($d === null || $d === '') ? null : (string) $d;
+    }
+
+    public function nextLink(): ?string
+    {
+        $n = $this->data['next'] ?? null;
+        return ($n === null || $n === '') ? null : (string) $n;
     }
 
     public function isEmpty(): bool
