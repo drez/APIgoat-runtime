@@ -5,6 +5,8 @@ namespace ApiGoat\Mail\Token;
 use ApiGoat\Google\HttpTransport;
 use ApiGoat\Mail\TokenSource;
 use ApiGoat\Sync\Exceptions\AuthFailed;
+use ApiGoat\Microsoft\GraphErrorMapper;
+use ApiGoat\Sync\Exceptions\RateLimited;
 use ApiGoat\Sync\Exceptions\TransientError;
 
 /**
@@ -65,6 +67,9 @@ final class M365AppTokenSource implements TokenSource
         $status = (int) $r['status'];
         $data   = json_decode((string) $r['body'], true);
         $data   = is_array($data) ? $data : [];
+        if ($status === 429) {
+            throw new RateLimited('Microsoft token endpoint throttled', GraphErrorMapper::retryAfter((string) ($r['headers'] ?? '')));
+        }
         if ($status >= 500) {
             throw new TransientError('Microsoft token endpoint HTTP ' . $status, $status);
         }

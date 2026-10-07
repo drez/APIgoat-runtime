@@ -67,7 +67,7 @@ final class GraphHttpTest extends TestCase
         });
         $this->assertSame([], $g->call('DELETE', '/me/messages/1'));
         $this->assertSame('MIME-RAW', $g->call('GET', 'https://graph.microsoft.com/v1.0/me/messages/1/$value?x=1', null, [], true));
-        $this->assertSame('https://graph.microsoft.com/v1.0/me/messages/1', $urls[0] === GraphHttp::BASE . '/me/messages/1' ? $urls[0] : '');
+        $this->assertSame(GraphHttp::BASE . '/me/messages/1', $urls[0]);
         $this->assertSame('https://graph.microsoft.com/v1.0/me/messages/1/$value?x=1', $urls[1]);
     }
 
@@ -79,5 +79,39 @@ final class GraphHttpTest extends TestCase
         $this->assertSame('POST', $seen['m']);
         $this->assertSame('BASE64==', $seen['b']);
         $this->assertContains('Content-Type: text/plain', $seen['h']);
+    }
+
+    public function test_401_then_200_returns_the_body(): void
+    {
+        $t = new FakeTokenSource();
+        $n = 0;
+        $g = new GraphHttp($t, function () use (&$n) {
+            return ++$n === 1 ? ['status' => 401, 'headers' => '', 'body' => '{}'] : ['status' => 200, 'headers' => '', 'body' => '{"v":2}'];
+        });
+        $this->assertSame(['v' => 2], $g->call('GET', '/me'));
+        $this->assertSame(1, $t->invalidated);
+    }
+
+    /** @dataProvider badUrls */
+    public function test_non_graph_absolute_urls_are_rejected_before_any_transport_call(string $url): void
+    {
+        $called = 0;
+        $g = new GraphHttp(new FakeTokenSource(), function () use (&$called) { $called++; return ['status' => 200, 'headers' => '', 'body' => '{}']; });
+        try { $g->call('GET', $url); $this->fail('no throw'); } catch (\InvalidArgumentException $e) { $this->assertTrue(true); }
+        $this->assertSame(0, $called);
+    }
+
+    public static function badUrls(): array
+    {
+        return [
+            'http' => ['http://graph.microsoft.com/v1.0/me'],
+            'other host' => ['https://evil.com/v1.0/me'],
+            'suffix host' => ['https://graph.microsoft.com.evil.com/v1.0/me'],
+            'userinfo' => ['https://graph.microsoft.com@evil.com/'],
+            'userinfo2' => ['https://graph.microsoft.com:x@evil.com/'],
+            'port' => ['https://graph.microsoft.com:8443/v1.0/me'],
+            'scheme-relative' => ['//evil.com/x'],
+            'other scheme' => ['ftp://graph.microsoft.com/x'],
+        ];
     }
 }

@@ -44,10 +44,25 @@ final class GraphHttp
         return is_array($r) ? $r : [];
     }
 
+    /** Relative paths get BASE; absolute URLs (nextLink/deltaLink) must be https://graph.microsoft.com/ exactly. */
+    private static function resolveUrl(string $path): string
+    {
+        if (!preg_match('#^[a-z][a-z0-9+.-]*:|^//#i', $path)) {
+            return self::BASE . $path;
+        }
+        $p = parse_url($path);
+        if (!is_array($p) || ($p['scheme'] ?? '') !== 'https' || ($p['host'] ?? '') !== 'graph.microsoft.com'
+            || isset($p['user']) || isset($p['pass']) || isset($p['port'])
+            || !str_starts_with($path, 'https://graph.microsoft.com/')) {
+            throw new \InvalidArgumentException('Refusing non-Graph absolute URL');
+        }
+        return $path;
+    }
+
     /** @param string[] $headers */
     private function send(string $method, string $path, array $headers, ?string $body, bool $raw, bool $retried = false): array|string
     {
-        $url  = str_starts_with($path, 'http') ? $path : self::BASE . $path;
+        $url  = self::resolveUrl($path);
         $all  = array_merge([
             'Authorization: Bearer ' . $this->tokens->accessToken(),
             'Accept: application/json',

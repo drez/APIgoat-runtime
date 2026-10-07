@@ -4,6 +4,7 @@ namespace ApiGoat\Tests\Mail;
 use ApiGoat\Mail\Token\M365AppTokenSource;
 use ApiGoat\Mail\Token\M365OauthTokenSource;
 use ApiGoat\Sync\Exceptions\AuthFailed;
+use ApiGoat\Sync\Exceptions\RateLimited;
 use ApiGoat\Sync\Exceptions\TransientError;
 use PHPUnit\Framework\TestCase;
 
@@ -89,5 +90,30 @@ final class M365TokenSourceTest extends TestCase
         $this->expectException(AuthFailed::class);
         $this->expectExceptionMessage('sign in again');
         $src->accessToken();
+    }
+
+    public function test_app_token_429_is_rate_limited_with_retry_after(): void
+    {
+        $src = new M365AppTokenSource('tid-1', 'cid', 'sec', $this->http(['status' => 429, 'headers' => "Retry-After: 12\r\n", 'body' => '{}']));
+        try { $src->accessToken(); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(12, $e->getCode()); }
+    }
+
+    public function test_oauth_429_is_rate_limited_default_30(): void
+    {
+        $src = new M365OauthTokenSource('cid', 'sec', 'rt', 'u@x.com', $this->http(['status' => 429, 'body' => '{}']));
+        try { $src->accessToken(); $this->fail('no throw'); } catch (RateLimited $e) { $this->assertSame(30, $e->getCode()); }
+    }
+
+    public function test_oauth_onrotate_failure_propagates_and_caches_nothing(): void
+    {
+        $src = new M365OauthTokenSource('cid', 'sec', 'rt-old', 'u@x.com', $this->http(
+            ['status' => 200, 'body' => '{"access_token":"a1","expires_in":3600,"refresh_token":"rt-new"}'],
+            ['status' => 200, 'body' => '{"access_token":"a2","expires_in":3600}']
+        ), function (string $rt) { throw new \RuntimeException('db down'); });
+        try { $src->accessToken(); $this->fail('no throw'); } catch (\RuntimeException $e) { $this->assertSame('db down', $e->getMessage()); }
+        $this->assertSame('a2', $src->accessToken());
+        $this->assertCount(2, $this->calls);
+        parse_str((string) $this->calls[1]['body'], $form);
+        $this->assertSame('rt-old', $form['refresh_token']);
     }
 }
