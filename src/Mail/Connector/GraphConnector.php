@@ -2,13 +2,19 @@
 
 namespace ApiGoat\Mail\Connector;
 
+use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
+use ApiGoat\Mail\FolderListing;
+use ApiGoat\Mail\FolderLister;
+use ApiGoat\Mail\FolderWriter;
 use ApiGoat\Mail\HeaderRecord;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
 use ApiGoat\Mail\MailConnector;
+use ApiGoat\Mail\MessageState;
 use ApiGoat\Mail\MimeBodyParser;
+use ApiGoat\Mail\StateWriter;
 use ApiGoat\Mail\TokenSource;
 use ApiGoat\Microsoft\GraphHttp;
 use ApiGoat\Sync\Exceptions\AuthFailed;
@@ -30,7 +36,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  *                                           watermark only moves when a deltaLink arrives.
  *   - delta set                          → follow it; 410 ⇒ cold start 'delta_expired'.
  */
-class GraphConnector extends BaseConnector
+class GraphConnector extends BaseConnector implements FolderLister, StateWriter, FolderWriter
 {
     public const SELECT = 'id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,parentFolderId,internetMessageHeaders';
 
@@ -198,6 +204,154 @@ class GraphConnector extends BaseConnector
         return $rows;
     }
 
+    private function msgPath(string $providerId): string
+    {
+        return $this->basePath . '/messages/' . rawurlencode($providerId);
+    }
+
+    private function folderPath(string $folder): string
+    {
+        return $this->basePath . '/mailFolders/' . rawurlencode($folder);
+    }
+
+    public function markRead(string $providerId, bool $read): void
+    {
+        self::assertResolved($providerId, 'markRead');
+        $this->graph->call('PATCH', $this->msgPath($providerId), ['isRead' => $read]);
+    }
+
+    public function setFlag(string $providerId, bool $flagged): void
+    {
+        self::assertResolved($providerId, 'setFlag');
+        $this->graph->call('PATCH', $this->msgPath($providerId), ['flag' => ['flagStatus' => $flagged ? 'flagged' : 'notFlagged']]);
+    }
+
+    /** @param string $folder a Graph folder id or well-known name. Immutable ids ⇒ the id survives the move. */
+    public function move(string $providerId, string $folder): string
+    {
+        self::assertResolved($providerId, 'move');
+        $r = $this->graph->call('POST', $this->msgPath($providerId) . '/move', ['destinationId' => $folder]);
+        return (string) ($r['id'] ?? $providerId);
+    }
+
+    public function trash(string $providerId): string
+    {
+        self::assertResolved($providerId, 'trash');
+        return $this->move($providerId, 'deleteditems');
+    }
+
+    public function archive(string $providerId, string $archiveFolder = ''): string
+    {
+        self::assertResolved($providerId, 'archive');
+        return $this->move($providerId, $archiveFolder !== '' ? $archiveFolder : 'archive');
+    }
+
+    public function untrash(string $providerId, string $toFolder = ''): string
+    {
+        self::assertResolved($providerId, 'untrash');
+        return $this->move($providerId, $toFolder !== '' ? $toFolder : 'inbox');
+    }
+
+    public function messageState(string $providerId): ?MessageState
+    {
+        self::assertResolved($providerId, 'messageState');
+        try {
+            $m = $this->graph->call('GET', $this->msgPath($providerId) . '?$select=isRead,flag,parentFolderId');
+        } catch (TransientError $e) {
+            if ($e->getCode() === 404) return null;
+            throw $e;
+        }
+        $parent = (string) ($m['parentFolderId'] ?? '');
+        return new MessageState(
+            (bool) ($m['isRead'] ?? false),
+            ($m['flag']['flagStatus'] ?? '') === 'flagged',
+            $parent,
+            $this->wellKnownRoles()[$parent] ?? null
+        );
+    }
+
+    public function listIds(string $folder): FolderListing
+    {
+        $ids = [];
+        $url = $this->folderPath($folder !== '' ? $folder : 'inbox') . '/messages?$select=id&$top=500';
+        while ($url !== '') {
+            $page = $this->graph->call('GET', $url);
+            foreach ($page['value'] ?? [] as $m) {
+                if (!empty($m['id'])) $ids[(string) $m['id']] = true;
+            }
+            $url = (string) ($page['@odata.nextLink'] ?? '');
+        }
+        return new FolderListing($ids, null, true);
+    }
+
+    public function ensureFolder(string $wanted): string
+    {
+        $parent = '';
+        foreach (array_filter(explode('/', $wanted), fn ($s) => $s !== '') as $seg) {
+            $children = $parent === '' ? $this->basePath . '/mailFolders' : $this->folderPath($parent) . '/childFolders';
+            $filter   = rawurlencode("displayName eq '" . str_replace("'", "''", $seg) . "'");
+            $found    = '';
+            foreach ($this->graph->call('GET', $children . '?$filter=' . $filter)['value'] ?? [] as $f) {
+                if (strcasecmp((string) ($f['displayName'] ?? ''), $seg) === 0 && !empty($f['id'])) {
+                    $found = (string) $f['id'];
+                    break;
+                }
+            }
+            if ($found === '') {
+                $created = $this->graph->call('POST', $children, ['displayName' => $seg]);
+                $found   = (string) ($created['id'] ?? '');
+                if ($found === '') {
+                    throw new TransientError('Graph created folder "' . $seg . '" but returned no id');
+                }
+            }
+            $parent = $found;
+        }
+        if ($parent === '') {
+            throw new \InvalidArgumentException('ensureFolder needs a non-empty folder name');
+        }
+        return $parent;
+    }
+
+    /** Upload RFC 822 as base64, then clear the "unsent draft" flag Graph sets on created messages. */
+    public function append(string $folder, string $raw, bool $seen): string
+    {
+        $created = $this->graph->postRaw($this->folderPath($folder) . '/messages', base64_encode($raw), 'text/plain');
+        $id      = (string) ($created['id'] ?? '');
+        if ($id === '') {
+            throw new TransientError('Graph accepted the appended message but returned no id');
+        }
+        $this->graph->call('PATCH', $this->msgPath($id), [
+            'singleValueExtendedProperties' => [['id' => 'Integer 0x0E07', 'value' => '1']], // MSGFLAG_READ
+            'isRead'                        => $seen,
+        ]);
+        return $id;
+    }
+
+    /** $before = "<receivedDateTime>|<id>" of the oldest row of the previous page. */
+    public function fetchBefore(string $folder, ?string $before, int $max): BackfillResult
+    {
+        $folder = $folder !== '' ? $folder : 'inbox';
+        $max    = self::clampMax($max);
+        $url    = $this->folderPath($folder) . '/messages?$select=' . self::SELECT . '&$orderby=receivedDateTime%20desc&$top=' . $max;
+        $bDate  = '';
+        $bId    = '';
+        if ($before !== null && $before !== '') {
+            [$bDate, $bId] = array_pad(explode('|', $before, 2), 2, '');
+            $url .= '&$filter=receivedDateTime+lt+' . $bDate;
+        }
+        $page = $this->graph->call('GET', $url);
+        $rows = (array) ($page['value'] ?? []);
+        $out  = [];
+        foreach ($rows as $m) {
+            // `lt` already excludes the boundary instant; this also drops a repeated boundary row.
+            if ($bId !== '' && ($m['id'] ?? '') === $bId) continue;
+            $out[] = self::normalise($m, $folder);
+        }
+        $last = $rows ? end($rows) : null;
+        $more = count($rows) >= $max && $last !== null && !empty($last['receivedDateTime']);
+        return new BackfillResult($out, $more ? $last['receivedDateTime'] . '|' . $last['id'] : null, !$more);
+    }
+
     public function fetchBody(string $providerId): MailBody
     {
         return MimeBodyParser::parse($this->fetchRaw($providerId), $providerId);
@@ -205,6 +359,7 @@ class GraphConnector extends BaseConnector
 
     public function fetchRaw(string $providerId): string
     {
+        self::assertResolved($providerId, 'fetchRaw');
         return (string) $this->graph->call('GET', $this->basePath . '/messages/' . rawurlencode($providerId) . '/$value', null, [], true);
     }
 
