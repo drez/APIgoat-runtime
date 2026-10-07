@@ -374,6 +374,26 @@ final class AiProfileTest extends TestCase
         ], $extra);
     }
 
+    /* ── fromSpec() ──────────────────────────────────────────────────────── */
+
+    public function test_fromSpec_builds_an_openai_profile_with_the_given_key_and_model(): void
+    {
+        $p = AiProfile::fromSpec(['provider' => 'openai', 'model' => 'gpt-5-mini', 'api_key' => 'sk-company', 'prices' => ['input_per_m' => 0.25, 'output_per_m' => 2.0]]);
+        $this->assertSame('openai', $p->provider());
+        $this->assertSame('gpt-5-mini', $p->model());
+        $this->assertSame('sk-company', $p->apiKey());
+        $this->assertFalse($p->isFallback());
+        $this->assertSame(['input_per_m' => 0.25, 'output_per_m' => 2.0], $p->prices());
+    }
+
+    public function test_fromSpec_is_not_memoized_per_tenant(): void
+    {
+        $a = AiProfile::fromSpec(['provider' => 'openai', 'model' => 'a', 'api_key' => 'k']);
+        $b = AiProfile::fromSpec(['provider' => 'openai', 'model' => 'b', 'api_key' => 'k']);
+        $this->assertSame('b', $b->model());
+        $this->assertSame('a', $a->model());
+    }
+
     /** @param array<string,mixed> $chat @return array<string,mixed> */
     private static function manifestWithChat(array $chat): array
     {

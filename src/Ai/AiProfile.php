@@ -110,6 +110,15 @@ final class AiProfile
     }
 
     /**
+     * A profile built from an explicit spec (same shape the resolver returns), not memoized. For callers that
+     * pick a provider per call (e.g. a per-feature cloud switch) without replacing the tenant's default profile.
+     */
+    public static function fromSpec(array $spec): self
+    {
+        return self::build($spec, false);
+    }
+
+    /**
      * @param array<string,mixed> $spec
      * @param bool $fallback true when building the cloud fallback: the key
      *   then comes from $spec ONLY — no config row, no env — so a fallback
