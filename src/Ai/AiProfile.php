@@ -410,6 +410,7 @@ final class AiProfile
             'timeout'  => $this->timeout,
             'retries'  => $this->retries,
             'throttle' => $this->throttle,
+            'headers'  => $this->provider === 'anthropic' ? ['anthropic-version: ' . \ApiGoat\Ai\Chat\AnthropicChat::VERSION] : [],
         ];
     }
 }

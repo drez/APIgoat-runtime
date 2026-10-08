@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ApiGoat\Tests\Ai;
 
 use ApiGoat\Ai\AiProfile;
+use ApiGoat\Ai\Chat\AnthropicChat;
 use ApiGoat\Ai\Chat\ChatAssistant;
 use ApiGoat\Ai\Chat\ChatDriver;
 use ApiGoat\Ai\Chat\ChatFailed;
@@ -28,6 +29,7 @@ require_once __DIR__ . '/../../src/Ai/Chat/ChatFailed.php';
 require_once __DIR__ . '/../../src/Ai/AiUsageLogger.php';
 require_once __DIR__ . '/../../src/Ai/AiGateway.php';
 require_once __DIR__ . '/../../src/Ai/Chat/OpenAiChat.php';
+require_once __DIR__ . '/../../src/Ai/Chat/AnthropicChat.php';
 require_once __DIR__ . '/../../src/Ai/Chat/OllamaChat.php';
 require_once __DIR__ . '/../../src/Ai/Chat/ChatAssistant.php';
 require_once __DIR__ . '/support/ManifestFixture.php';
@@ -257,10 +259,10 @@ final class ChatAssistantTest extends TestCase
         self::assertInstanceOf(OllamaChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
     }
 
-    /** Pinned: cloud providers still get OpenAiChat, exactly as before. */
+    /** Pinned: openai still gets OpenAiChat, exactly as before. */
     public function testDriverForCloudProvidersIsStillOpenAiChat(): void
     {
-        foreach (['openai', 'anthropic'] as $provider) {
+        foreach (['openai'] as $provider) {
             AiProfile::setResolver(fn () => ['provider' => $provider, 'api_key' => 'k', 'model' => 'm']);
             AiProfile::reset();
             self::assertInstanceOf(
@@ -332,5 +334,11 @@ final class ChatAssistantTest extends TestCase
         $r->setAccessible(true);
 
         return $r->getValue($a);
+    }
+
+    public function testAnthropicProfileGetsAnthropicChat(): void
+    {
+        AiProfile::setResolver(fn () => ['provider' => 'anthropic', 'model' => 'claude-haiku-5-5', 'api_key' => 'k']);
+        self::assertInstanceOf(AnthropicChat::class, ChatAssistant::driverFor(AiProfile::forTenant(1)));
     }
 }

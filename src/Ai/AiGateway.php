@@ -150,7 +150,7 @@ final class AiGateway
             return true;
         }
 
-        return $httpStatus === 429 || $httpStatus >= 500;
+        return $httpStatus === 429 || $httpStatus === 529 || $httpStatus >= 500;
     }
 
     /** Seconds from a Retry-After header (delta form only), or null. */

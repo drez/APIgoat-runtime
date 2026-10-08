@@ -133,9 +133,19 @@ final class AiProfileTest extends TestCase
     {
         AiProfile::setResolver(fn () => ['base_url' => 'http://box/v1', 'api_key' => 'k', 'throttle' => 0, 'retries' => 1, 'timeout' => 120]);
         self::assertSame(
-            ['base_url' => 'http://box/v1', 'api_key' => 'k', 'auth' => 'bearer', 'timeout' => 120, 'retries' => 1, 'throttle' => 0.0],
+            ['base_url' => 'http://box/v1', 'api_key' => 'k', 'auth' => 'bearer', 'timeout' => 120, 'retries' => 1, 'throttle' => 0.0, 'headers' => []],
             AiProfile::forTenant(3)->gatewayOpts()
         );
+    }
+
+    public function testAnthropicGetsVersionHeader(): void
+    {
+        \putenv('ANTHROPIC_API_KEY=sk-ant');
+        AiProfile::setResolver(fn () => ['provider' => 'anthropic']);
+        self::assertSame(['anthropic-version: 2023-06-01'], AiProfile::forTenant(1)->gatewayOpts()['headers']);
+        AiProfile::setResolver(fn () => ['provider' => 'openai', 'api_key' => 'k']);
+        AiProfile::reset();
+        self::assertSame([], AiProfile::forTenant(1)->gatewayOpts()['headers']);
     }
 
     public function testAnthropicDefaultsToXApiKey(): void

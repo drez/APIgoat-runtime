@@ -69,6 +69,9 @@ final class ChatAssistant
      */
     public static function driverFor(AiProfile $profile): ChatDriver
     {
+        if ($profile->provider() === 'anthropic') {
+            return new AnthropicChat();
+        }
         $declared = (string) ((AiManifest::chat() ?? [])['driver'] ?? 'auto');
         if ($declared === 'openai') {
             return new OpenAiChat();

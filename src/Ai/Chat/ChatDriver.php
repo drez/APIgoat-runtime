@@ -7,10 +7,9 @@ use ApiGoat\Ai\AiProfile;
 /**
  * One chat completion against whatever AiProfile says.
  *
- * Implementations: OpenAiChat (OpenAI and Ollama — both speak
- * /chat/completions). TODO(phase 1.5): AnthropicChat — /messages,
- * x-api-key + anthropic-version, system hoisted to top level, max_tokens
- * required, text at content[0].text; read the claude-api skill first.
+ * Implementations: OpenAiChat (OpenAI — /chat/completions), OllamaChat
+ * (native), AnthropicChat (/messages: x-api-key + anthropic-version, system
+ * hoisted, max_tokens required, forced-tool JSON).
  */
 interface ChatDriver
 {
