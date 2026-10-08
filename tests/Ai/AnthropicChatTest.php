@@ -113,4 +113,41 @@ final class AnthropicChatTest extends TestCase
         $this->assertSame(15, $seen[2]['timeout']);
         $this->assertSame('ok', $r->text());
     }
+
+    public function testConsecutiveSameRoleTurnsAreMerged(): void
+    {
+        $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => 'claude-haiku-5-5', 'api_key' => 'k']);
+        $body = AnthropicChat::buildBody($p, [
+            ['role' => 'user', 'content' => 'a'], ['role' => 'user', 'content' => 'b'],
+            ['role' => 'assistant', 'content' => 'c'], ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => 'd']]],
+            ['role' => 'user', 'content' => 'e'],
+        ], []);
+        $this->assertSame([
+            ['role' => 'user', 'content' => "a\n\nb"],
+            ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => 'c'], ['type' => 'text', 'text' => 'd']]],
+            ['role' => 'user', 'content' => 'e'],
+        ], $body['messages']);
+    }
+
+    public function testNonStringSystemIsSkippedAndTextBlocksJoined(): void
+    {
+        $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => 'claude-haiku-5-5', 'api_key' => 'k']);
+        $body = AnthropicChat::buildBody($p, [
+            ['role' => 'system'], ['role' => 'system', 'content' => null],
+            ['role' => 'system', 'content' => [['type' => 'text', 'text' => 'A'], ['type' => 'text', 'text' => 'B']]],
+            ['role' => 'user', 'content' => 'x'],
+        ], []);
+        $this->assertSame("A\n\nB", $body['system']);
+        $none = AnthropicChat::buildBody($p, [['role' => 'system', 'content' => 5], ['role' => 'user', 'content' => 'x']], []);
+        $this->assertArrayNotHasKey('system', $none);
+    }
+
+    public function testWrappedBase64IsStripped(): void
+    {
+        $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => 'claude-haiku-5-5', 'api_key' => 'k']);
+        $b64 = base64_encode('PNGDATA-PNGDATA');
+        $wrapped = substr($b64, 0, 6) . "\r\n" . substr($b64, 6, 4) . " \n" . substr($b64, 10);
+        $body = AnthropicChat::buildBody($p, [['role' => 'user', 'content' => [['type' => 'image_url', 'image_url' => ['url' => 'data:image/png;base64,' . $wrapped]]]]], []);
+        $this->assertSame($b64, $body['messages'][0]['content'][0]['source']['data']);
+    }
 }

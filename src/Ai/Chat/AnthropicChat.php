@@ -36,8 +36,19 @@ final class AnthropicChat implements ChatDriver
         $system = []; $turns = [];
         foreach ($messages as $m) {
             $role = (string) ($m['role'] ?? 'user');
-            if ($role === 'system') { $system[] = is_string($m['content']) ? $m['content'] : ''; continue; }
-            $turns[] = ['role' => $role === 'assistant' ? 'assistant' : 'user', 'content' => self::content($m['content'] ?? '')];
+            if ($role === 'system') {
+                $sys = self::systemText($m['content'] ?? null);
+                if ($sys !== '') $system[] = $sys;
+                continue;
+            }
+            $role = $role === 'assistant' ? 'assistant' : 'user';
+            $content = self::content($m['content'] ?? '');
+            $last = count($turns) - 1;
+            if ($last >= 0 && $turns[$last]['role'] === $role) {
+                $turns[$last]['content'] = self::mergeContent($turns[$last]['content'], $content);
+                continue;
+            }
+            $turns[] = ['role' => $role, 'content' => $content];
         }
         $model = isset($opts['model']) && is_string($opts['model']) && $opts['model'] !== '' ? $opts['model'] : $profile->model();
         $body = ['model' => $model, 'max_tokens' => isset($opts['max_tokens']) ? (int) $opts['max_tokens'] : self::DEFAULT_MAX_TOKENS, 'messages' => $turns];
@@ -55,6 +66,26 @@ final class AnthropicChat implements ChatDriver
         return $body;
     }
 
+    /** System content as text: strings as-is, text-only block arrays joined; anything else is skipped. */
+    private static function systemText($c): string
+    {
+        if (is_string($c)) return $c;
+        if (!is_array($c)) return '';
+        $parts = [];
+        foreach ($c as $part) {
+            if (is_array($part) && ($part['type'] ?? '') === 'text' && is_string($part['text'] ?? null)) $parts[] = $part['text'];
+        }
+        return implode("\n\n", $parts);
+    }
+
+    /** Merge two same-role contents (the Messages API rejects consecutive same-role turns). */
+    private static function mergeContent($a, $b)
+    {
+        if (is_string($a) && is_string($b)) return $a . "\n\n" . $b;
+        $blocks = static fn ($c): array => is_array($c) ? $c : [['type' => 'text', 'text' => (string) $c]];
+        return array_merge($blocks($a), $blocks($b));
+    }
+
     /** string → string; OpenAI-shaped parts → Anthropic blocks. */
     private static function content($c)
     {
@@ -64,7 +95,7 @@ final class AnthropicChat implements ChatDriver
             $type = $part['type'] ?? '';
             if ($type === 'text') { $out[] = ['type' => 'text', 'text' => (string) ($part['text'] ?? '')]; continue; }
             if ($type === 'image_url' && preg_match('#^data:([\w/.+-]+);base64,(.+)$#s', (string) ($part['image_url']['url'] ?? ''), $m)) {
-                $out[] = ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $m[1], 'data' => $m[2]]];
+                $out[] = ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $m[1], 'data' => preg_replace('/\\s+/', '', $m[2])]];
                 continue;
             }
             if ($type === 'image') { $out[] = $part; }   // already native
