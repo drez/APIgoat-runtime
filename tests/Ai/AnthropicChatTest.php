@@ -38,7 +38,7 @@ final class AnthropicChatTest extends TestCase
         $this->assertSame("You file mail.\n\nSecond rule.", $body['system']);
         $this->assertSame([['role' => 'user', 'content' => 'hi'], ['role' => 'assistant', 'content' => '{"x":1}'], ['role' => 'user', 'content' => 'fix it']], $body['messages']);
         $this->assertSame(120, $body['max_tokens']);
-        $this->assertSame(0.0, $body['temperature']);
+        $this->assertArrayNotHasKey('temperature', $body);
         $this->assertArrayNotHasKey('response_format', $body);
     }
 
@@ -49,13 +49,75 @@ final class AnthropicChatTest extends TestCase
         $this->assertSame(AnthropicChat::DEFAULT_MAX_TOKENS, $body['max_tokens']);
     }
 
-    public function testJsonSchemaBecomesAForcedTool(): void
+    public function testJsonSchemaUsesOutputConfigFormat(): void
     {
         $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => 'claude-haiku-5-5', 'api_key' => 'k']);
         $schema = ['type' => 'object', 'properties' => ['job' => ['type' => ['string', 'null']], 'confidence' => ['type' => 'number']], 'required' => ['job', 'confidence'], 'additionalProperties' => false];
         $body = AnthropicChat::buildBody($p, [['role' => 'user', 'content' => 'x']], ['json_schema' => $schema, 'json_schema_name' => 'job']);
-        $this->assertSame([['name' => 'job', 'description' => 'Return the answer as the tool input.', 'input_schema' => $schema]], $body['tools']);
-        $this->assertSame(['type' => 'tool', 'name' => 'job'], $body['tool_choice']);
+        $this->assertSame(['format' => ['type' => 'json_schema', 'schema' => $schema]], $body['output_config']);
+        $this->assertArrayNotHasKey('tools', $body);
+        $this->assertArrayNotHasKey('tool_choice', $body);
+    }
+
+    public function testNeverSendsTemperatureEvenViaExtra(): void
+    {
+        $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => 'claude-sonnet-5-5', 'api_key' => 'k']);
+        $body = AnthropicChat::buildBody($p, [['role' => 'user', 'content' => 'x']], ['temperature' => 0.7, 'extra' => ['temperature' => 0.2]]);
+        $this->assertArrayNotHasKey('temperature', $body);
+    }
+
+    public function testSonnetGetsBetweenToolsAndKeepsFormat(): void
+    {
+        $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => 'claude-sonnet-5-5', 'api_key' => 'k']);
+        $schema = ['type' => 'object'];
+        $body = AnthropicChat::buildBody($p, [['role' => 'user', 'content' => 'x']], ['json_schema' => $schema]);
+        $this->assertSame(['type' => 'between_tools'], $body['thinking']);
+        $this->assertSame(['format' => ['type' => 'json_schema', 'schema' => $schema]], $body['output_config']);
+        $plain = AnthropicChat::buildBody($p, [['role' => 'user', 'content' => 'x']], []);
+        $this->assertSame(['type' => 'between_tools'], $plain['thinking']);
+        $this->assertArrayNotHasKey('output_config', $plain);
+    }
+
+    public function testHaikuAndOtherModelsGetNoThinkingKeys(): void
+    {
+        $schema = ['type' => 'object'];
+        foreach (['claude-haiku-5-5', 'claude-opus-4-1'] as $m) {
+            $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => $m, 'api_key' => 'k']);
+            $body = AnthropicChat::buildBody($p, [['role' => 'user', 'content' => 'x']], ['json_schema' => $schema]);
+            $this->assertArrayNotHasKey('thinking', $body, $m);
+            $this->assertSame(['format' => ['type' => 'json_schema', 'schema' => $schema]], $body['output_config'], $m);
+        }
+    }
+
+    public function testRefusalAndTruncationAreFailures(): void
+    {
+        $refusal = AnthropicChat::parseResponse(200, ['content' => [], 'usage' => ['input_tokens' => 1, 'output_tokens' => 0], 'stop_reason' => 'refusal'], 1);
+        $this->assertFalse($refusal->ok());
+        $this->assertSame('stop_reason: refusal', $refusal->transportError());
+        $this->assertSame(200, $refusal->status());
+        $cut = AnthropicChat::parseResponse(200, ['content' => [['type' => 'thinking', 'thinking' => '...']], 'stop_reason' => 'max_tokens'], 1);
+        $this->assertFalse($cut->ok());
+        $this->assertSame('stop_reason: max_tokens', $cut->transportError());
+        $partial = AnthropicChat::parseResponse(200, ['content' => [['type' => 'text', 'text' => 'half a draf']], 'stop_reason' => 'max_tokens'], 1);
+        $this->assertTrue($partial->ok());
+        foreach (['end_turn', 'stop_sequence', 'tool_use'] as $r) {
+            $this->assertTrue(AnthropicChat::parseResponse(200, ['content' => [['type' => 'text', 'text' => 'hi']], 'stop_reason' => $r], 1)->ok(), $r);
+        }
+    }
+
+    public function testEmptyStringsNeverBecomeBlocksOrTurns(): void
+    {
+        $p = AiProfile::fromSpec(['provider' => 'anthropic', 'model' => 'claude-haiku-5-5', 'api_key' => 'k']);
+        $body = AnthropicChat::buildBody($p, [
+            ['role' => 'user', 'content' => 'q'],
+            ['role' => 'assistant', 'content' => ''],
+            ['role' => 'user', 'content' => 'fix it'],
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => ''], ['type' => 'text', 'text' => 'more']]],
+            ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => '']]],
+        ], []);
+        $this->assertSame([['role' => 'user', 'content' => [['type' => 'text', 'text' => "q\n\nfix it"], ['type' => 'text', 'text' => 'more']]]], $body['messages']);
+        $m = AnthropicChat::buildBody($p, [['role' => 'user', 'content' => [['type' => 'image', 'source' => []]]], ['role' => 'user', 'content' => '']], []);
+        $this->assertCount(1, $m['messages']);
     }
 
     public function testOpenAiExtrasAreDroppedAndOthersMerged(): void
@@ -90,11 +152,13 @@ final class AnthropicChatTest extends TestCase
         $this->assertSame('no HTTP response (transport error or timeout)', $z->transportError());
     }
 
-    public function testToolUseAnswerIsReturnedAsJsonText(): void
+    public function testToolUseIsOnlyAFallbackWhenThereIsNoText(): void
     {
         $r = AnthropicChat::parseResponse(200, ['content' => [['type' => 'tool_use', 'id' => 'toolu_1', 'name' => 'job', 'input' => ['job' => null, 'confidence' => 0.4]]], 'usage' => ['input_tokens' => 1, 'output_tokens' => 1], 'stop_reason' => 'tool_use'], 1);
         $this->assertSame(['job' => null, 'confidence' => 0.4], $r->decodeJson());
         $this->assertSame('{"job":null,"confidence":0.4}', $r->text());
+        $both = AnthropicChat::parseResponse(200, ['content' => [['type' => 'text', 'text' => '{"a":1}'], ['type' => 'tool_use', 'input' => ['b' => 2]]], 'stop_reason' => 'tool_use'], 1);
+        $this->assertSame('{"a":1}', $both->text());
     }
 
     public function testCompleteThreadsProfileHeadersAndPath(): void
