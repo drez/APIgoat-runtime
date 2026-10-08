@@ -1414,7 +1414,26 @@ class Api
     private function validateSave($obj)
     {
         if ($obj->validate($this->colsToValidate)) {
-            $obj->save();
+            try {
+                $obj->save();
+            } catch (\Throwable $saveErr) {
+                // A unique-index collision (1062) is a field validation error,
+                // the same 400 shape a wrapper's $extValidationErr produces.
+                $svc = '\\App\\' . $this->tablename . 'Service';
+                $uniqueKeys = defined($svc . '::UNIQUE_KEYS') ? constant($svc . '::UNIQUE_KEYS') : [];
+                $dup = \ApiGoat\Db\UniqueViolation::errors($saveErr, $uniqueKeys);
+                if ($dup === null) {
+                    throw $saveErr;
+                }
+                $PropelErrorHandler = new PropelErrorHandler($obj);
+                $PropelErrorHandler->setExtendedValidationFailures(\ApiGoat\Db\UniqueViolation::asExtValidation($dup));
+                $validationErrors = $PropelErrorHandler->getValidationErrorsArray();
+                $this->response['messages'] = $validationErrors['messages'];
+                $this->response['data'] = $validationErrors['columns'];
+                $this->response['error'] = "Validation error";
+                $this->response['status'] = 'failure';
+                return false;
+            }
             $this->response['ids'][] = $obj->getPrimaryKey();
             $this->response['status'] = 'success';
             return true;
