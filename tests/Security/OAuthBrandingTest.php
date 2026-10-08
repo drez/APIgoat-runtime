@@ -105,11 +105,14 @@ define('_SITE_URL', 'https://example.test/app/');
 
 check('logoUrl with no logo file -> empty (no broken <img>)', Branding::logoUrl(), '');
 check('faviconUrl with no favicon file -> empty', Branding::faviconUrl(), '');
+check('appLogoUrl with no app logo file -> empty', Branding::appLogoUrl(), '');
 
 file_put_contents($tmp . '/public/img/logo-admin.png', 'png');
 file_put_contents($tmp . '/public/img/fav-2.1.png', 'png');
 check('default logo resolves under _SITE_URL', Branding::logoUrl(), 'https://example.test/app/public/img/logo-admin.png');
 check('favicon resolves under _SITE_URL', Branding::faviconUrl(), 'https://example.test/app/public/img/fav-2.1.png');
+file_put_contents($tmp . '/public/img/app-logo.png', 'png');
+check('appLogoUrl resolves under _SITE_URL', Branding::appLogoUrl(), 'https://example.test/app/public/img/app-logo.png');
 
 define('LOGO_URL_LOGIN', 'custom-login.png');
 check('defined LOGO_URL_LOGIN with missing file falls back to default', Branding::logoUrl(), 'https://example.test/app/public/img/logo-admin.png');

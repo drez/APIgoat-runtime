@@ -78,4 +78,17 @@ final class Branding
 
         return '';
     }
+
+    /** Project app logo (drawer logo mark) URL, or '' when the file is absent. */
+    public static function appLogoUrl(): string
+    {
+        if (
+            \defined('_INSTALL_PATH') && \defined('_SITE_URL')
+            && \is_file(_INSTALL_PATH . 'public/img/app-logo.png')
+        ) {
+            return _SITE_URL . 'public/img/app-logo.png';
+        }
+
+        return '';
+    }
 }
