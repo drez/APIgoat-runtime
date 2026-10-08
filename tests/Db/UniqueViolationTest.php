@@ -31,6 +31,12 @@ final class UniqueViolationTest extends TestCase
         $this->assertSame(['name' => 'Already exists'], UniqueViolation::errors($outer, self::KEYS));
     }
 
+    public function test_value_containing_for_key_text_does_not_misattribute(): void
+    {
+        $e = $this->pdo("Duplicate entry '1-a' for key 'authy_U_1' b' for key 'client_U_1'");
+        $this->assertSame(['name' => 'Already exists'], UniqueViolation::errors($e, self::KEYS + ['authy_U_1' => ['username']]));
+    }
+
     public function test_only_system_columns_keys_on_first_column(): void
     {
         $e = $this->pdo("Duplicate entry '1' for key 'tenant_only_U_1'");

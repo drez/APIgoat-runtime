@@ -26,7 +26,7 @@ final class UniqueViolation
     public static function errors(\Throwable $e, array $uniqueKeys): ?array
     {
         $message = self::duplicateMessage($e);
-        if ($message === null || !preg_match("/for key '([^']+)'/", $message, $m)) {
+        if ($message === null || !preg_match("/.*for key '([^']+)'/s", $message, $m)) {
             return null;
         }
         $key = $m[1];
