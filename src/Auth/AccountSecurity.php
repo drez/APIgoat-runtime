@@ -169,15 +169,24 @@ final class AccountSecurity
      * re-roll the session epoch so the user's browser sessions end too.
      * Best effort per store: one failing store never blocks the other.
      */
-    public static function revokeAllForUser(int $idAuthy, bool $bumpEpoch = true): void
+    public static function revokeAllForUser(int $idAuthy, bool $bumpEpoch = true, ?string $keepRefreshToken = null): bool
     {
+        $kept = false;
         if ($idAuthy <= 0) {
-            return;
+            return $kept;
         }
         try {
             $svc = RefreshTokenService::forProject();
             if ($svc) {
-                $svc->revokeAllForUser($idAuthy);
+                // The device making the change keeps its refresh family when it
+                // presents a live refresh token of its own; with none (or one
+                // that is not this user's live family) every family goes.
+                if ($keepRefreshToken !== null && $keepRefreshToken !== '') {
+                    $kept = $svc->revokeAllExceptTokenFamily($idAuthy, $keepRefreshToken);
+                }
+                if (!$kept) {
+                    $svc->revokeAllForUser($idAuthy);
+                }
             }
         } catch (\Throwable $e) {
             \error_log('AccountSecurity: refresh-token revoke failed for user ' . $idAuthy . ': ' . $e->getMessage());
@@ -201,6 +210,7 @@ final class AccountSecurity
                 \error_log('AccountSecurity: epoch bump failed for user ' . $idAuthy . ': ' . $e->getMessage());
             }
         }
+        return $kept;
     }
 
     // ------------------------------------------------------------- re-auth
@@ -301,11 +311,17 @@ final class AccountSecurity
      * other session and token of the user ends (the Authy preSave re-rolled the
      * epoch; API/OAuth tokens are revoked here), while the session making the
      * change continues: it gets a fresh session id and adopts the new epoch.
+     *
+     * A bearer (mobile / API) caller passes its own $keepRefreshToken: that
+     * family survives, every other one is revoked. The epoch is still bumped,
+     * so the caller's current access JWT is stale: the return value says
+     * whether a family was kept (the client then calls Authy/refresh for a new
+     * access token instead of signing in again).
      */
-    public static function passwordChanged($authy): void
+    public static function passwordChanged($authy, ?string $keepRefreshToken = null): bool
     {
         if (!\is_object($authy) || !\method_exists($authy, 'getIdAuthy')) {
-            return;
+            return false;
         }
         $id = (int) $authy->getIdAuthy();
         $session = (\defined('_AUTH_VAR') && isset($_SESSION[\_AUTH_VAR]) && \is_object($_SESSION[\_AUTH_VAR]))
@@ -323,7 +339,7 @@ final class AccountSecurity
             self::publishEpoch($id, $epoch);
         }
 
-        self::revokeAllForUser($id, false);
+        $kept = self::revokeAllForUser($id, false, $keepRefreshToken);
 
         if ($mine) {
             if (\session_status() === \PHP_SESSION_ACTIVE) {
@@ -333,6 +349,32 @@ final class AccountSecurity
             $mine->set('session_epoch', $epoch);
             $mine->set('stale_check_ts', \time());
         }
+        return $kept;
+    }
+
+    // ------------------------------------------------------------ username
+
+    public const USERNAME_ERROR_FORMAT = 'Username must be 3 to 32 letters, digits, dots, dashes or underscores';
+    public const USERNAME_ERROR_TAKEN  = 'This username is taken';
+
+    /**
+     * Validate a username a user picked for themselves: 3-32 of letters,
+     * digits, dot, dash, underscore (never '@', so it can't collide with an
+     * email used as a login), unique case-insensitively across ALL authy rows
+     * (read with SQL, not AuthyQuery, so a tenant filter can't hide a clash).
+     * Returns the error message (untranslated key; wrap in _() at the edge) or
+     * null when the name is acceptable. $exceptIdAuthy = the user's own row.
+     */
+    public static function usernameError(string $username, int $exceptIdAuthy = 0): ?string
+    {
+        if (!\preg_match('/^[A-Za-z0-9._-]{3,32}\z/', $username)) {
+            return self::USERNAME_ERROR_FORMAT;
+        }
+        $st = \Propel::getConnection()->prepare(
+            'SELECT 1 FROM authy WHERE LOWER(username) = LOWER(:u) AND id_authy <> :id LIMIT 1'
+        );
+        $st->execute([':u' => $username, ':id' => $exceptIdAuthy]);
+        return $st->fetchColumn() !== false ? self::USERNAME_ERROR_TAKEN : null;
     }
 
     // ------------------------------------------------------------- helpers

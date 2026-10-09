@@ -10,10 +10,10 @@ namespace ApiGoat\Auth;
  */
 interface RefreshTokenStore
 {
-    /** @param array{id_authy:int,family_id:string,token_hash:string,expires:int,family_expires:int} $row */
+    /** @param array{id_authy:int,family_id:string,token_hash:string,expires:int,family_expires:int,user_agent?:?string,ip?:?string} $row */
     public function insert(array $row): void;
 
-    /** @return array{id:int,id_authy:int,family_id:string,token_hash:string,expires:int,family_expires:int,revoked:string}|null */
+    /** @return array{id:int,id_authy:int,family_id:string,token_hash:string,expires:int,family_expires:int,revoked:string,last_used_at?:?int,user_agent?:?string,ip?:?string}|null */
     public function findByHash(string $hash): ?array;
 
     public function markRevoked(int $id, int $lastUsedAt): void;
@@ -39,4 +39,21 @@ interface RefreshTokenStore
     public function recentAttemptCount(string $ip, string $familyId, int $since): int;
 
     public function recordAttempt(string $ip, string $familyId, int $at): void;
+
+    /**
+     * One entry per LIVE family of the user (a family with a non-revoked,
+     * unexpired row, family not expired), newest-first order is the caller's
+     * job. Keys: id (smallest row id of the family), family_id, created (unix,
+     * earliest row), last_used (unix|null, latest rotation), expires (family
+     * expiry, unix), user_agent / ip (of the live row = the latest request).
+     *
+     * @return list<array{id:int,family_id:string,created:int,last_used:?int,expires:int,user_agent:?string,ip:?string}>
+     */
+    public function liveFamilies(int $idAuthy, int $now): array;
+
+    /**
+     * Revoke + tombstone (like revokeFamily) every family of the user except
+     * $keepFamilyId. Rows of an already revoked family are re-stamped too.
+     */
+    public function revokeAllForUserExcept(int $idAuthy, string $keepFamilyId): void;
 }

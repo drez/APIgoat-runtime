@@ -71,7 +71,11 @@ final class RefreshTokenService
         return new self(new PropelRefreshTokenStore(), $jwt);
     }
 
-    public function mintForLogin(int $idAuthy): string
+    /**
+     * @param ?string $userAgent  device label source; null = this request's User-Agent
+     * @param ?string $ip         client address; null = this request's REMOTE_ADDR
+     */
+    public function mintForLogin(int $idAuthy, ?string $userAgent = null, ?string $ip = null): string
     {
         $now = ($this->clock)();
         [$raw, $hash] = $this->generate();
@@ -81,15 +85,26 @@ final class RefreshTokenService
             'token_hash'     => $hash,
             'expires'        => $this->ts($this->refreshExpire(), $now),
             'family_expires' => $this->ts($this->familyExpire(), $now),
-        ]);
+        ] + $this->device($userAgent, $ip));
         return $raw;
+    }
+
+    /** @return array{user_agent:?string,ip:?string} the latest request's device fields (bounded) */
+    private function device(?string $userAgent, ?string $ip): array
+    {
+        $ua = $userAgent ?? (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
+        $ip = $ip ?? (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+        return [
+            'user_agent' => $ua !== '' ? mb_substr($ua, 0, 255) : null,
+            'ip'         => $ip !== '' ? mb_substr($ip, 0, 45) : null,
+        ];
     }
 
     /**
      * @param callable $mintAccessToken fn(int $idAuthy): array{token:string,expires:int,status:string}
      * @return array{status:string,token?:string,expires?:int,refresh_token?:string,message?:string}
      */
-    public function redeem(string $rawToken, string $ip, callable $mintAccessToken): array
+    public function redeem(string $rawToken, string $ip, callable $mintAccessToken, ?string $userAgent = null): array
     {
         $now = ($this->clock)();
         if ($rawToken === '') {
@@ -150,7 +165,7 @@ final class RefreshTokenService
             'token_hash'     => $hash2,
             'expires'        => $newExpires,
             'family_expires' => $row['family_expires'],
-        ]);
+        ] + $this->device($userAgent, $ip));
 
         // A family revocation (sign-out, logout, password change, reuse
         // detection) that landed between our claim and this insert could not
@@ -231,6 +246,120 @@ final class RefreshTokenService
     public function revokeAllForUser(int $idAuthy): void
     {
         $this->store->revokeAllForUser($idAuthy);
+    }
+
+    /**
+     * The family of a presented refresh token, only when the token is the
+     * CURRENT token of one of the user's live families. A token rotated away
+     * resolves only within REUSE_GRACE of its rotation (the same benign race
+     * redeem() tolerates); later it is a replayed (possibly stolen) token:
+     * like redeem(), its family is revoked and null is returned, so an old
+     * token can never pick the family a password change or "sign out other
+     * devices" keeps. Null too for an unknown, foreign or expired token.
+     */
+    public function liveFamilyOf(int $idAuthy, string $rawToken): ?string
+    {
+        if ($rawToken === '' || $idAuthy <= 0) {
+            return null;
+        }
+        $row = $this->store->findByHash($this->hashToken($rawToken));
+        if ($row === null || (int) $row['id_authy'] !== $idAuthy) {
+            return null;
+        }
+        $now = ($this->clock)();
+        if ($row['revoked'] === 'Yes') {
+            $lastUsed = $row['last_used_at'] ?? null;
+            if ($lastUsed === null || ($now - (int) $lastUsed) > self::REUSE_GRACE) {
+                $this->store->revokeFamily($row['family_id']);   // reuse: same response as redeem()
+                return null;
+            }
+        } elseif ($row['expires'] < $now || $row['family_expires'] < $now) {
+            return null;
+        }
+        foreach ($this->store->liveFamilies($idAuthy, ($this->clock)()) as $f) {
+            if ($f['family_id'] === $row['family_id']) {
+                return $row['family_id'];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The user's live sessions (one per refresh-token family), the family of
+     * $currentRaw first, then last used (never used = created) newest first.
+     * `id` is the opaque handle sessions can be revoked by (see revokeSession).
+     *
+     * @return list<array{id:string,created:int,last_used:?int,expires:int,device:string,ip:?string,current:bool}>
+     */
+    public function sessionsFor(int $idAuthy, ?string $currentRaw = null): array
+    {
+        $current = ($currentRaw !== null && $currentRaw !== '') ? $this->liveFamilyOf($idAuthy, $currentRaw) : null;
+        $out = [];
+        foreach ($this->store->liveFamilies($idAuthy, ($this->clock)()) as $f) {
+            $out[] = [
+                'id'        => (string) $f['id'],
+                'created'   => (int) $f['created'],
+                'last_used' => $f['last_used'],
+                'expires'   => (int) $f['expires'],
+                'device'    => DeviceLabel::fromUserAgent($f['user_agent'] ?? null),
+                'ip'        => DeviceLabel::maskIp($f['ip'] ?? null),
+                'current'   => $current !== null && $f['family_id'] === $current,
+            ];
+        }
+        usort($out, static function (array $a, array $b): int {
+            if ($a['current'] !== $b['current']) {
+                return $a['current'] ? -1 : 1;
+            }
+            return ($b['last_used'] ?? $b['created']) <=> ($a['last_used'] ?? $a['created']) ?: ((int) $b['id'] <=> (int) $a['id']);
+        });
+        return $out;
+    }
+
+    /**
+     * Revoke one of the user's live sessions by the id sessionsFor() handed
+     * out. False when it is not a live session of THIS user (unknown, foreign,
+     * already revoked): nothing is touched. Access JWTs already issued to that
+     * device keep working until they expire (session_epoch is not bumped).
+     */
+    public function revokeSession(int $idAuthy, string $id): bool
+    {
+        if ($id === '' || !ctype_digit($id)) {
+            return false;
+        }
+        foreach ($this->store->liveFamilies($idAuthy, ($this->clock)()) as $f) {
+            if ((string) $f['id'] === $id) {
+                $this->store->revokeFamily($f['family_id']);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Revoke every live session of the user except $keepFamilyId.
+     * @return int number of live sessions revoked
+     */
+    public function revokeOtherSessions(int $idAuthy, string $keepFamilyId): int
+    {
+        $n = 0;
+        foreach ($this->store->liveFamilies($idAuthy, ($this->clock)()) as $f) {
+            if ($f['family_id'] !== $keepFamilyId) {
+                $n++;
+            }
+        }
+        $this->store->revokeAllForUserExcept($idAuthy, $keepFamilyId);
+        return $n;
+    }
+
+    /** Revoke all of the user's families but the one of $rawToken; false when that is not the user's live family. */
+    public function revokeAllExceptTokenFamily(int $idAuthy, string $rawToken): bool
+    {
+        $keep = $this->liveFamilyOf($idAuthy, $rawToken);
+        if ($keep === null) {
+            return false;
+        }
+        $this->store->revokeAllForUserExcept($idAuthy, $keep);
+        return true;
     }
 
     /**

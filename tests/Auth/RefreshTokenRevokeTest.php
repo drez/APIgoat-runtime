@@ -188,6 +188,8 @@ final class RaceRefreshTokenStore implements RefreshTokenStore
     public function claimRotation(int $id, int $at): bool { return $this->inner->claimRotation($id, $at); }
     public function revokeFamily(string $familyId): void { $this->inner->revokeFamily($familyId); }
     public function revokeAllForUser(int $idAuthy): void { $this->inner->revokeAllForUser($idAuthy); }
+    public function revokeAllForUserExcept(int $idAuthy, string $keepFamilyId): void { $this->inner->revokeAllForUserExcept($idAuthy, $keepFamilyId); }
+    public function liveFamilies(int $idAuthy, int $now): array { return $this->inner->liveFamilies($idAuthy, $now); }
     public function recentAttemptCount(string $ip, string $familyId, int $since): int { return $this->inner->recentAttemptCount($ip, $familyId, $since); }
     public function recordAttempt(string $ip, string $familyId, int $at): void { $this->inner->recordAttempt($ip, $familyId, $at); }
 }

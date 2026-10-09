@@ -12,6 +12,8 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
     /** @var array<int,array> */
     public array $rows = [];
     private int $seq = 0;
+    /** test knob: stamped as created on insert */
+    public ?int $now = null;
     /** @var array<int,array{ip:string,family:string,at:int}> */
     public array $attempts = [];
     /** test knob: findByHash returns the snapshot taken when first set (simulates concurrent readers) */
@@ -23,6 +25,7 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
         $row['id'] = ++$this->seq;
         $row['revoked'] = 'No';
         $row['last_used_at'] = null;
+        $row['created'] = $this->now ?? 0;
         $this->rows[$row['id']] = $row;
     }
 
@@ -83,6 +86,46 @@ final class ArrayRefreshTokenStore implements RefreshTokenStore
                 $this->rows[$id]['family_expires'] = 0;   // tombstone, as the Propel store
             }
         }
+    }
+
+    public function revokeAllForUserExcept(int $idAuthy, string $keepFamilyId): void
+    {
+        foreach ($this->rows as $id => $r) {
+            if ($r['id_authy'] === $idAuthy && $r['family_id'] !== $keepFamilyId) {
+                $this->rows[$id]['revoked'] = 'Yes';
+                $this->rows[$id]['family_expires'] = 0;
+            }
+        }
+    }
+
+    public function liveFamilies(int $idAuthy, int $now): array
+    {
+        $by = [];
+        foreach ($this->rows as $r) {
+            if ($r['id_authy'] !== $idAuthy) {
+                continue;
+            }
+            $f = $r['family_id'];
+            $by[$f]['first'] = $by[$f]['first'] ?? $r['id'];
+            $by[$f]['created'] = min($by[$f]['created'] ?? PHP_INT_MAX, $r['created'] ?? 0);
+            $used = $r['last_used_at'];
+            $by[$f]['used'] = ($used === null) ? ($by[$f]['used'] ?? null) : max($by[$f]['used'] ?? 0, $used);
+            if ($r['revoked'] === 'No' && $r['expires'] >= $now && $r['family_expires'] >= $now) {
+                $by[$f]['live'] = $r;
+            }
+        }
+        $out = [];
+        foreach ($by as $fam => $g) {
+            if (!isset($g['live'])) {
+                continue;
+            }
+            $out[] = [
+                'id' => $g['first'], 'family_id' => $fam, 'created' => $g['created'], 'last_used' => $g['used'],
+                'expires' => $g['live']['family_expires'],
+                'user_agent' => $g['live']['user_agent'] ?? null, 'ip' => $g['live']['ip'] ?? null,
+            ];
+        }
+        return $out;
     }
 
     public function recentAttemptCount(string $ip, string $familyId, int $since): int

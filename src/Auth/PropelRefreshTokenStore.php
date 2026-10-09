@@ -20,6 +20,10 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
         $m->setExpires($row['expires']);
         $m->setFamilyExpires($row['family_expires']);
         $m->setRevoked('No');
+        if (method_exists($m, 'setUserAgent')) {   // columns arrive with the emitter that adds them
+            $m->setUserAgent(isset($row['user_agent']) ? mb_substr((string) $row['user_agent'], 0, 255) : null);
+            $m->setIp(isset($row['ip']) ? mb_substr((string) $row['ip'], 0, 45) : null);
+        }
         $m->setCreatedAt(new \DateTime());
         $m->save();
     }
@@ -51,6 +55,8 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
             'family_expires' => (int) $m->getFamilyExpires(),
             'revoked'        => (string) $m->getRevoked(),
             'last_used_at'   => $m->getLastUsedAt('U') !== null ? (int) $m->getLastUsedAt('U') : null,
+            'user_agent'     => method_exists($m, 'getUserAgent') ? $m->getUserAgent() : null,
+            'ip'             => method_exists($m, 'getIp') ? $m->getIp() : null,
         ];
     }
 
@@ -99,6 +105,49 @@ final class PropelRefreshTokenStore implements RefreshTokenStore
         \App\AuthyRefreshTokenQuery::create()
             ->filterByIdAuthy($idAuthy)
             ->update(['Revoked' => 1, 'FamilyExpires' => 0]);
+    }
+
+    /** Same tombstone as revokeFamily(), for every family of the user but one. */
+    public function revokeAllForUserExcept(int $idAuthy, string $keepFamilyId): void
+    {
+        \App\AuthyRefreshTokenQuery::create()
+            ->filterByIdAuthy($idAuthy)
+            ->filterByFamilyId($keepFamilyId, \Criteria::NOT_EQUAL)
+            ->update(['Revoked' => 1, 'FamilyExpires' => 0]);
+    }
+
+    public function liveFamilies(int $idAuthy, int $now): array
+    {
+        $hasDevice = method_exists('\App\AuthyRefreshToken', 'getUserAgent');
+        // The live row of a family is its newest non-revoked one (a rotation
+        // revokes the parent); revoked = 0 is 'No' in the tinyint ENUM.
+        $con = \Propel::getConnection();
+        $st = $con->prepare(
+            'SELECT t.family_id, t.family_expires, ' . ($hasDevice ? 't.user_agent, t.ip' : 'NULL AS user_agent, NULL AS ip') . ',
+                    (SELECT MIN(a.id_authy_refresh_token) FROM authy_refresh_token a WHERE a.family_id = t.family_id) AS first_id,
+                    (SELECT MIN(a.created_at) FROM authy_refresh_token a WHERE a.family_id = t.family_id) AS created_at,
+                    (SELECT MAX(a.last_used_at) FROM authy_refresh_token a WHERE a.family_id = t.family_id) AS last_used_at
+               FROM authy_refresh_token t
+              WHERE t.id_authy = :u AND t.revoked = 0 AND t.expires >= :n AND t.family_expires >= :n2
+                AND t.id_authy_refresh_token = (SELECT MAX(b.id_authy_refresh_token) FROM authy_refresh_token b
+                                                 WHERE b.family_id = t.family_id AND b.revoked = 0)'
+        );
+        $st->execute([':u' => $idAuthy, ':n' => $now, ':n2' => $now]);
+        $out = [];
+        foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $r) {
+            $created = $r['created_at'] !== null ? strtotime((string) $r['created_at']) : false;
+            $used    = $r['last_used_at'] !== null ? strtotime((string) $r['last_used_at']) : false;
+            $out[] = [
+                'id'         => (int) $r['first_id'],
+                'family_id'  => (string) $r['family_id'],
+                'created'    => $created !== false ? (int) $created : 0,
+                'last_used'  => $used !== false ? (int) $used : null,
+                'expires'    => (int) $r['family_expires'],
+                'user_agent' => $r['user_agent'] !== null ? (string) $r['user_agent'] : null,
+                'ip'         => $r['ip'] !== null ? (string) $r['ip'] : null,
+            ];
+        }
+        return $out;
     }
 
     public function recentAttemptCount(string $ip, string $familyId, int $since): int
