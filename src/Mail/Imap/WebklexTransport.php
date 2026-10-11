@@ -424,6 +424,7 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport, ImapP
                     'auth_results'    => HeaderRecord::topmostHeader($rawHeader, HeaderRecord::AUTH_RESULTS_HEADER),
                     'references'      => HeaderRecord::topmostHeader($rawHeader, 'References'),
                     'reply_to'        => HeaderRecord::topmostHeader($rawHeader, 'Reply-To'),
+                    'headers'         => HeaderRecord::headerMap(HeaderRecord::allHeaders($rawHeader)),
                 ] + HeaderRecord::bulkHeaders($rawHeader);
             }
             foreach ($this->gmailThreadIds($folder, array_keys($out)) as $uid => $thrid) {

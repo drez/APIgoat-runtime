@@ -169,4 +169,54 @@ final class HeaderRecordTest extends TestCase
         $this->assertSame('', $empty['references']);
         $this->assertSame(HeaderRecord::KEYS, array_keys($empty));
     }
+
+    public function testAllHeadersUnfoldsKeepsRepeatsAndDecodesWords(): void
+    {
+        $raw = "Received: from a\r\n\tby b;\r\n  Mon\r\nReceived: from c by d\r\nX-Odd: \r\nbroken line without colon\r\n"
+            . "Subject: =?UTF-8?B?w6l0w6k=?=\r\nX-Tag:   spaced  \r\n\r\nBody: not-a-header\r\n";
+        $this->assertSame([
+            ['Received', 'from a by b; Mon'],
+            ['Received', 'from c by d'],
+            ['X-Odd', ''],
+            ['Subject', 'été'],
+            ['X-Tag', 'spaced'],
+        ], HeaderRecord::allHeaders($raw));
+        $this->assertSame([['A', '1'], ['b', '2']], HeaderRecord::allHeaders("A: 1\nb: 2\n\nC: 3"));
+        $this->assertSame([], HeaderRecord::allHeaders(''));
+    }
+
+    public function testHeaderMapLowercasesAndKeepsOrderAndRepeats(): void
+    {
+        $m = HeaderRecord::headerMap([['Received', 'one'], ['X-Foo', 'a'], ['RECEIVED', 'two'], ['x-foo', 'b']]);
+        $this->assertSame(['received' => ['one', 'two'], 'x-foo' => ['a', 'b']], $m);
+        $this->assertSame(['received', 'x-foo'], array_keys($m));
+        $this->assertSame([], HeaderRecord::headerMap([]));
+    }
+
+    public function testHeaderMapCapTruncatesDeterministicallyAndMarks(): void
+    {
+        $pairs = [['Subject', 'short'], ['X-Big', str_repeat('é', 200000)], ['X-Mid', str_repeat('m', 30000)]];
+        $a = HeaderRecord::headerMap($pairs);
+        $b = HeaderRecord::headerMap($pairs);
+        $this->assertSame($a, $b);
+        $this->assertSame(['1'], $a['x-apigmail-truncated']);
+        $this->assertSame(['short'], $a['subject']);
+        $this->assertLessThanOrEqual(HeaderRecord::HEADERS_MAX, strlen((string) json_encode($a, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)));
+        $this->assertNotFalse(mb_check_encoding($a['x-big'][0], 'UTF-8'));
+        $this->assertLessThan(200000, mb_strlen($a['x-big'][0]));
+        $small = HeaderRecord::headerMap([['A', 'b']]);
+        $this->assertArrayNotHasKey('x-apigmail-truncated', $small);
+    }
+
+    public function testNormalisePassesHeadersMapElseEmpty(): void
+    {
+        $this->assertContains('headers', HeaderRecord::KEYS);
+        $map = ['x-a' => ['1', '2'], 'b' => ['3']];
+        $this->assertSame($map, HeaderRecord::normalise(['headers' => $map])['headers']);
+        $this->assertSame([], HeaderRecord::normalise([])['headers'], 'empty = the connector gave none');
+        $this->assertSame([], HeaderRecord::normalise(['headers' => 'nope'])['headers']);
+        $this->assertSame([], HeaderRecord::normalise(['headers' => ['x' => 'string']])['headers']);
+        $this->assertSame([], HeaderRecord::normalise(['headers' => [0 => ['a']]])['headers']);
+        $this->assertSame([], HeaderRecord::normalise(['headers' => ['x' => [['nested']]]])['headers']);
+    }
 }

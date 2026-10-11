@@ -195,4 +195,13 @@ final class GraphConnectorTest extends TestCase
         (new GraphConnector($this->tokens, '/users/' . rawurlencode('a@b.com'), $this->http()))->verify();
         $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/users/a%40b.com/', $this->calls[0]['url']);
     }
+
+    public function test_per_message_record_carries_every_header(): void
+    {
+        $m = $this->fixture('message1.json');
+        $h = GraphConnector::normalise($m, 'inbox');
+        $this->assertSame(['spf=pass dkim=pass dmarc=pass'], $h['headers']['authentication-results']);
+        $this->assertSame(['x-test-token-1', 'x-test-token-2'], $h['headers']['x-test']);
+        $this->assertSame([], GraphConnector::normalise(['id' => 'z'], 'inbox')['headers']);
+    }
 }

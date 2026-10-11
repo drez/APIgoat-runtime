@@ -660,6 +660,7 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter,
             'auto_submitted'      => (string) ($r['auto_submitted'] ?? ''),
             'references'          => (string) ($r['references'] ?? ''),
             'reply_to'            => (string) ($r['reply_to'] ?? ''),
+            'headers'             => $r['headers'] ?? [],
         ]);
     }
 

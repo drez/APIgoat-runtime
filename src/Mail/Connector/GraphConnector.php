@@ -600,6 +600,10 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
             'precedence'          => self::header($h, 'Precedence'),
             'auto_submitted'      => self::header($h, 'Auto-Submitted'),
             'references'          => self::header($h, 'References'),
+            'headers'             => HeaderRecord::headerMap(array_map(
+                static fn ($x) => [(string) ($x['name'] ?? ''), (string) ($x['value'] ?? '')],
+                array_values(array_filter($h, 'is_array'))
+            )),
         ]);
     }
 

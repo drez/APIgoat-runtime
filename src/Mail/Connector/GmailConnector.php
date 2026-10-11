@@ -41,6 +41,12 @@ use ApiGoat\Sync\Exceptions\TransientError;
 class GmailConnector extends BaseConnector implements FolderLister, StateWriter
 {
     public const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
+    /**
+     * The header names this class reads BY NAME from payload.headers. No longer
+     * sent as metadataHeaders: format=metadata without that filter returns every
+     * header (the all-headers map in the record), so this is documentation of
+     * what normalise() depends on.
+     */
     public const METADATA_HEADERS = ['From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To', 'Authentication-Results', 'List-Id', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted', 'References', 'Reply-To'];
     /** listIds() page cap: 200 x 500 ids. A folder bigger than that is reported incomplete, never truncated silently. */
     public const LIST_IDS_MAX_PAGES = 200;
@@ -320,7 +326,7 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter
     private function metadata(array $ids, string $folder): array
     {
         $rows = [];
-        $qs   = '?format=metadata&' . implode('&', array_map(static fn ($h) => 'metadataHeaders=' . $h, self::METADATA_HEADERS));
+        $qs   = '?format=metadata'; // no metadataHeaders: the API then returns every header
         foreach ($ids as $id) {
             try {
                 $msg = $this->call('GET', '/messages/' . rawurlencode($id) . $qs);
@@ -375,6 +381,10 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter
             'auto_submitted'      => self::header($h, 'Auto-Submitted'),
             'references'          => self::header($h, 'References'),
             'reply_to'            => self::header($h, 'Reply-To'),
+            'headers'             => HeaderRecord::headerMap(array_map(
+                static fn ($x) => [(string) ($x['name'] ?? ''), (string) ($x['value'] ?? '')],
+                array_values(array_filter((array) $h, 'is_array'))
+            )),
         ]);
     }
 

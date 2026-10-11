@@ -500,4 +500,13 @@ final class ImapConnectorTest extends TestCase
         $this->assertSame('', $r->headers[1]['references'], 'no References header → empty, never null');
         $this->assertSame([], $r->headers[1]['reply_to']);
     }
+
+    public function testTransportHeadersMapIsPassedThrough(): void
+    {
+        $this->imap->add('INBOX', 3, ['headers' => ['x-mailer' => ['Foo'], 'received' => ['a', 'b']]]);
+        $this->imap->add('INBOX', 4);
+        $r = $this->connector()->fetchHeaders('INBOX', null, 50);
+        $this->assertSame(['x-mailer' => ['Foo'], 'received' => ['a', 'b']], $r->headers[0]['headers']);
+        $this->assertSame([], $r->headers[1]['headers']);
+    }
 }

@@ -17,7 +17,7 @@ final class HeaderRecord
         'from_addr', 'from_name', 'to', 'cc', 'subject', 'date_sent', 'snippet',
         'size_bytes', 'has_attachments', 'folder_at_fetch', 'was_read_at_fetch', 'labels',
         'auth_results', 'list_id', 'list_unsubscribe', 'precedence', 'auto_submitted',
-        'references', 'reply_to',
+        'references', 'reply_to', 'headers',
     ];
 
     /** At most this many ids are kept from a References header: the root and the newest ancestors. */
@@ -44,6 +44,93 @@ final class HeaderRecord
     ];
 
     public const BULK_MAX = 500;
+
+    /** Cap, in bytes of json_encode($map), on the all-headers map a record carries. */
+    public const HEADERS_MAX = 65536;
+
+    /** Marker header added to the map when headerMap() had to truncate values to fit HEADERS_MAX. */
+    public const HEADERS_TRUNCATED = 'x-apigmail-truncated';
+
+    /**
+     * Every header of a raw RFC 5322 header block as ordered [name, value]
+     * pairs: repeats kept, names as written, folds unfolded into one space,
+     * RFC 2047 words decoded, values trimmed. Stops at the first blank line;
+     * lines without a colon are skipped.
+     *
+     * @return array<int,array{0:string,1:string}>
+     */
+    public static function allHeaders(string $raw): array
+    {
+        $head  = preg_split('/\r?\n\r?\n/', $raw, 2)[0] ?? '';
+        $lines = preg_split('/\r?\n/', $head) ?: [];
+        $out   = [];
+        $cur   = null;
+        foreach ($lines as $line) {
+            if ($line !== '' && ($line[0] === ' ' || $line[0] === "\t")) {
+                if ($cur !== null) $cur[1] .= ' ' . trim($line);
+                continue;
+            }
+            if ($cur !== null) $out[] = $cur;
+            $cur = null;
+            $pos = strpos($line, ':');
+            if ($pos === false || $pos === 0) continue;
+            $cur = [substr($line, 0, $pos), trim(substr($line, $pos + 1))];
+        }
+        if ($cur !== null) $out[] = $cur;
+        return array_map(static fn (array $p) => [$p[0], self::decodeWords($p[1])], $out);
+    }
+
+    /**
+     * [name, value] pairs → ['lower-name' => [value, …]] in first-seen name
+     * order and repeat order. Capped at HEADERS_MAX bytes of JSON: over it,
+     * the single longest value is halved (multibyte-safe) until it fits, then
+     * HEADERS_TRUNCATED => ['1'] is added (and counts toward the cap).
+     * Deterministic.
+     *
+     * @param array<int,array{0:string,1:string}> $pairs
+     * @return array<string,string[]>
+     */
+    public static function headerMap(array $pairs): array
+    {
+        $map = [];
+        foreach ($pairs as $p) {
+            $name = strtolower(trim((string) ($p[0] ?? '')));
+            if ($name === '') continue;
+            $map[$name][] = (string) ($p[1] ?? '');
+        }
+        if (self::mapSize($map) <= self::HEADERS_MAX) return $map;
+
+        $map[self::HEADERS_TRUNCATED] = ['1'];
+        while (self::mapSize($map) > self::HEADERS_MAX) {
+            $bk = null; $bi = 0; $bl = 0;
+            foreach ($map as $k => $vals) {
+                foreach ($vals as $i => $v) {
+                    $l = mb_strlen($v, 'UTF-8');
+                    if ($l > $bl) { $bl = $l; $bk = $k; $bi = $i; }
+                }
+            }
+            if ($bk === null || $bl === 0) break; // nothing left to cut
+            $map[$bk][$bi] = mb_substr($map[$bk][$bi], 0, intdiv($bl, 2), 'UTF-8');
+        }
+        return $map;
+    }
+
+    /** @param array<string,string[]> $map */
+    private static function mapSize(array $map): int
+    {
+        return strlen((string) json_encode($map, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
+    /** Pass through a string => string[] map; anything else is [] (callers store NULL for an empty map = "connector gave none"). */
+    private static function headersMap(mixed $v): array
+    {
+        if (!is_array($v)) return [];
+        foreach ($v as $k => $vals) {
+            if (!is_string($k) || !is_array($vals)) return [];
+            foreach ($vals as $x) if (!is_string($x)) return [];
+        }
+        return $v;
+    }
 
     /**
      * The four bulk markers of a raw RFC 822 header block (topmostHeader()
@@ -101,6 +188,9 @@ final class HeaderRecord
             'auto_submitted'      => self::bulkValue($in['auto_submitted'] ?? ''),
             'references'          => self::references($in['references'] ?? ''),
             'reply_to'            => is_array($in['reply_to'] ?? null) ? array_values($in['reply_to']) : self::parseAddressList((string) ($in['reply_to'] ?? '')),
+            // Every raw header, lower-case name => values in order. ALWAYS present;
+            // [] means the connector gave none (callers store NULL, not '[]').
+            'headers'             => self::headersMap($in['headers'] ?? null),
         ];
     }
 

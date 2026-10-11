@@ -132,9 +132,7 @@ final class GmailConnectorTest extends TestCase
         $this->assertSame(['labelIds' => 'INBOX', 'q' => 'newer_than:30d', 'maxResults' => '2'], $q);
         $meta = $this->urls('/messages/a?')[0];
         $this->assertStringContainsString('format=metadata', $meta);
-        foreach (GmailConnector::METADATA_HEADERS as $h) {
-            $this->assertStringContainsString('metadataHeaders=' . $h, $meta);
-        }
+        $this->assertStringNotContainsString('metadataHeaders', $meta, 'no header filter: Gmail then returns every header');
 
         // Second call keeps draining the window with the same pinned history id.
         $this->calls = [];
@@ -362,5 +360,17 @@ final class GmailConnectorTest extends TestCase
         $this->assertSame('<https://x/u>', $h['list_unsubscribe']);
         $this->assertSame('bulk', $h['precedence']);
         $this->assertSame('', $h['auto_submitted']);
+    }
+
+    public function testPerMessageRecordCarriesEveryHeader(): void
+    {
+        $m = $this->msg('c');
+        $m['payload']['headers'][] = ['name' => 'X-Spam-Score', 'value' => '9'];
+        $m['payload']['headers'][] = ['name' => 'Received', 'value' => 'one'];
+        $m['payload']['headers'][] = ['name' => 'Received', 'value' => 'two'];
+        $h = GmailConnector::normalise($m, 'INBOX');
+        $this->assertSame(['9'], $h['headers']['x-spam-score']);
+        $this->assertSame(['one', 'two'], $h['headers']['received']);
+        $this->assertSame(['Subject c'], $h['headers']['subject']);
     }
 }
