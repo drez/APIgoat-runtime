@@ -219,4 +219,38 @@ final class HeaderRecordTest extends TestCase
         $this->assertSame([], HeaderRecord::normalise(['headers' => [0 => ['a']]])['headers']);
         $this->assertSame([], HeaderRecord::normalise(['headers' => ['x' => [['nested']]]])['headers']);
     }
+
+    public function testCapAppliesToInvalidUtf8AndResultEncodes(): void
+    {
+        $m = HeaderRecord::headerMap([['X-Latin', str_repeat('a', 100000) . "\xE9" . str_repeat('b', 100000)]]);
+        $json = json_encode($m, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $this->assertNotFalse($json);
+        $this->assertLessThanOrEqual(HeaderRecord::HEADERS_MAX, strlen($json));
+        $this->assertSame(['1'], $m['x-apigmail-truncated']);
+    }
+
+    public function testManyTinyHeadersAreBoundedAndFast(): void
+    {
+        $raw = str_repeat("a: b\r\n", 50000) . "\r\n";
+        $t = microtime(true);
+        $m = HeaderRecord::headerMap(HeaderRecord::allHeaders($raw));
+        $this->assertLessThan(1.0, microtime(true) - $t);
+        $this->assertCount(HeaderRecord::HEADERS_COUNT_MAX, $m['a']);
+        $this->assertCount(HeaderRecord::HEADERS_COUNT_MAX, HeaderRecord::allHeaders($raw));
+    }
+
+    public function testNamesAloneOverTheCapAreDropped(): void
+    {
+        $pairs = [];
+        for ($i = 0; $i < 1000; $i++) $pairs[] = [str_pad((string) $i, 200, 'n'), ''];
+        $m = HeaderRecord::headerMap($pairs);
+        $this->assertLessThanOrEqual(HeaderRecord::HEADERS_MAX, strlen((string) json_encode($m, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)));
+        $this->assertSame(['1'], $m['x-apigmail-truncated']);
+        $this->assertArrayHasKey(strtolower(str_pad('0', 200, 'n')), $m, 'first-seen names survive');
+    }
+
+    public function testContinuationAfterEmptyValueHasNoLeadingSpace(): void
+    {
+        $this->assertSame([['X', 'foo']], HeaderRecord::allHeaders("X: \r\n foo\r\n"));
+    }
 }

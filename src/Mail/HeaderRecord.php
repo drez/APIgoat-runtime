@@ -48,6 +48,12 @@ final class HeaderRecord
     /** Cap, in bytes of json_encode($map), on the all-headers map a record carries. */
     public const HEADERS_MAX = 65536;
 
+    /** allHeaders() reads at most this many bytes of the raw header block (bounds parsing work). */
+    public const HEADERS_RAW_MAX = 262144;
+
+    /** allHeaders()/headerMap() keep at most this many header lines/pairs (bounds the cap loop). */
+    public const HEADERS_COUNT_MAX = 1000;
+
     /** Marker header added to the map when headerMap() had to truncate values to fit HEADERS_MAX. */
     public const HEADERS_TRUNCATED = 'x-apigmail-truncated';
 
@@ -61,11 +67,12 @@ final class HeaderRecord
      */
     public static function allHeaders(string $raw): array
     {
-        $head  = preg_split('/\r?\n\r?\n/', $raw, 2)[0] ?? '';
+        $head  = preg_split('/\r?\n\r?\n/', substr($raw, 0, self::HEADERS_RAW_MAX), 2)[0] ?? '';
         $lines = preg_split('/\r?\n/', $head) ?: [];
         $out   = [];
         $cur   = null;
         foreach ($lines as $line) {
+            if (count($out) >= self::HEADERS_COUNT_MAX) { $cur = null; break; }
             if ($line !== '' && ($line[0] === ' ' || $line[0] === "\t")) {
                 if ($cur !== null) $cur[1] .= ' ' . trim($line);
                 continue;
@@ -77,7 +84,7 @@ final class HeaderRecord
             $cur = [substr($line, 0, $pos), trim(substr($line, $pos + 1))];
         }
         if ($cur !== null) $out[] = $cur;
-        return array_map(static fn (array $p) => [$p[0], self::decodeWords($p[1])], $out);
+        return array_map(static fn (array $p) => [$p[0], trim(self::decodeWords(trim($p[1])))], $out);
     }
 
     /**
@@ -93,10 +100,10 @@ final class HeaderRecord
     public static function headerMap(array $pairs): array
     {
         $map = [];
-        foreach ($pairs as $p) {
-            $name = strtolower(trim((string) ($p[0] ?? '')));
+        foreach (array_slice($pairs, 0, self::HEADERS_COUNT_MAX) as $p) {
+            $name = strtolower(trim(mb_scrub((string) ($p[0] ?? ''), 'UTF-8')));
             if ($name === '') continue;
-            $map[$name][] = (string) ($p[1] ?? '');
+            $map[$name][] = mb_scrub((string) ($p[1] ?? ''), 'UTF-8');
         }
         if (self::mapSize($map) <= self::HEADERS_MAX) return $map;
 
@@ -104,6 +111,7 @@ final class HeaderRecord
         while (self::mapSize($map) > self::HEADERS_MAX) {
             $bk = null; $bi = 0; $bl = 0;
             foreach ($map as $k => $vals) {
+                if ($k === self::HEADERS_TRUNCATED) continue;
                 foreach ($vals as $i => $v) {
                     $l = mb_strlen($v, 'UTF-8');
                     if ($l > $bl) { $bl = $l; $bk = $k; $bi = $i; }
@@ -112,13 +120,22 @@ final class HeaderRecord
             if ($bk === null || $bl === 0) break; // nothing left to cut
             $map[$bk][$bi] = mb_substr($map[$bk][$bi], 0, intdiv($bl, 2), 'UTF-8');
         }
+        // Names alone can exceed the cap: drop whole entries from the end (never the marker).
+        while (self::mapSize($map) > self::HEADERS_MAX) {
+            $last = null;
+            foreach (array_reverse(array_keys($map)) as $k) {
+                if ($k !== self::HEADERS_TRUNCATED) { $last = $k; break; }
+            }
+            if ($last === null) break;
+            unset($map[$last]);
+        }
         return $map;
     }
 
     /** @param array<string,string[]> $map */
     private static function mapSize(array $map): int
     {
-        return strlen((string) json_encode($map, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        return strlen((string) json_encode($map, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
     }
 
     /** Pass through a string => string[] map; anything else is [] (callers store NULL for an empty map = "connector gave none"). */
