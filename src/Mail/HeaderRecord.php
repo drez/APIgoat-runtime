@@ -89,7 +89,7 @@ final class HeaderRecord
 
     /**
      * [name, value] pairs → ['lower-name' => [value, …]] in first-seen name
-     * order and repeat order. Capped at HEADERS_MAX bytes of JSON: over it,
+     * order and repeat order. Total input bytes are bounded by HEADERS_RAW_MAX (the rest is dropped, marked). Capped at HEADERS_MAX bytes of JSON: over it,
      * the single longest value is halved (multibyte-safe) until it fits, then
      * HEADERS_TRUNCATED => ['1'] is added (and counts toward the cap).
      * Deterministic.
@@ -99,26 +99,44 @@ final class HeaderRecord
      */
     public static function headerMap(array $pairs): array
     {
-        $map = [];
+        $map   = [];
+        $bytes = 0;
+        $cut   = false;
         foreach (array_slice($pairs, 0, self::HEADERS_COUNT_MAX) as $p) {
             $name = strtolower(trim(mb_scrub((string) ($p[0] ?? ''), 'UTF-8')));
             if ($name === '') continue;
-            $map[$name][] = mb_scrub((string) ($p[1] ?? ''), 'UTF-8');
+            $value = mb_scrub((string) ($p[1] ?? ''), 'UTF-8');
+            // Total bytes are bounded like allHeaders() bounds the raw block: connectors that
+            // hand over pairs (Gmail, Graph) are otherwise only count-bounded.
+            $room = self::HEADERS_RAW_MAX - $bytes - strlen($name);
+            if ($room <= 0) { $cut = true; break; }
+            if (strlen($value) > $room) { $value = mb_strcut($value, 0, $room, 'UTF-8'); $cut = true; }
+            $bytes += strlen($name) + strlen($value);
+            $map[$name][] = $value;
+            if ($cut) break;
         }
-        if (self::mapSize($map) <= self::HEADERS_MAX) return $map;
+        $size = self::mapSize($map);
+        if (!$cut && $size <= self::HEADERS_MAX) return $map;
 
         $map[self::HEADERS_TRUNCATED] = ['1'];
-        while (self::mapSize($map) > self::HEADERS_MAX) {
+        $size = self::mapSize($map);
+        // The JSON size is tracked incrementally: a string value encodes independently of its
+        // neighbours, so halving one value changes the total by exactly the difference of the two encodings.
+        $enc = static fn (string $v): int => strlen((string) json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+        while ($size > self::HEADERS_MAX) {
             $bk = null; $bi = 0; $bl = 0;
             foreach ($map as $k => $vals) {
                 if ($k === self::HEADERS_TRUNCATED) continue;
                 foreach ($vals as $i => $v) {
-                    $l = mb_strlen($v, 'UTF-8');
+                    $l = strlen($v);
                     if ($l > $bl) { $bl = $l; $bk = $k; $bi = $i; }
                 }
             }
             if ($bk === null || $bl === 0) break; // nothing left to cut
-            $map[$bk][$bi] = mb_substr($map[$bk][$bi], 0, intdiv($bl, 2), 'UTF-8');
+            $old = $map[$bk][$bi];
+            $new = mb_substr($old, 0, intdiv(mb_strlen($old, 'UTF-8'), 2), 'UTF-8');
+            $map[$bk][$bi] = $new;
+            $size -= $enc($old) - $enc($new);
         }
         // Names alone can exceed the cap: drop whole entries from the end (never the marker).
         while (self::mapSize($map) > self::HEADERS_MAX) {

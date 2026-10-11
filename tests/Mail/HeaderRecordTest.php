@@ -253,4 +253,18 @@ final class HeaderRecordTest extends TestCase
     {
         $this->assertSame([['X', 'foo']], HeaderRecord::allHeaders("X: \r\n foo\r\n"));
     }
+
+    public function testHeaderMapBoundsTotalBytesAndIsFast(): void
+    {
+        $pairs = [];
+        for ($i = 0; $i < 1000; $i++) $pairs[] = ['X-H' . $i, str_repeat('v', 2048)];
+        $t = microtime(true);
+        $m = HeaderRecord::headerMap($pairs);
+        $dt = microtime(true) - $t;
+        $this->assertLessThan(0.5, $dt, 'bounded work');
+        $this->assertLessThanOrEqual(HeaderRecord::HEADERS_MAX, strlen((string) json_encode($m, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)));
+        $this->assertSame(['1'], $m['x-apigmail-truncated']);
+        $this->assertLessThan(HeaderRecord::HEADERS_RAW_MAX / 2000, count($m), 'pairs past the raw byte bound are never added');
+        $this->assertSame($m, HeaderRecord::headerMap($pairs), 'deterministic');
+    }
 }
