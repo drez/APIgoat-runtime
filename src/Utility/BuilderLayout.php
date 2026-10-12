@@ -165,7 +165,7 @@ class BuilderLayout
 
         if (! empty($content['html']) || ! empty($content['js']) || ! empty($content['onReadyJs'])) {
             return $content['html'] . ($content['js'] ?? '')
-            . scriptReady(trim($content['onReadyJs']));
+            . scriptReady(trim($content['onReadyJs'] ?? ''));
         } else {
             if (! is_array($content)) {
                 return $content;
@@ -278,8 +278,8 @@ class BuilderLayout
             ),
             " id='html' "
         )
-        . $content['js']
-        . scriptReady(trim($content['onReadyJs']));
+        . ($content['js'] ?? '')
+        . scriptReady(trim($content['onReadyJs'] ?? ''));
 
         return $print;
     }
