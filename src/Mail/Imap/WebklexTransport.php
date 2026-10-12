@@ -391,41 +391,37 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport, ImapP
         }, "search {$folder}");
     }
 
+    /** Most uids in one `UID FETCH` set: keeps the command line and the single response bounded. */
+    private const HEADER_BATCH = 200;
+
     public function headers(string $folder, array $uids): array
     {
         if ($uids === []) return [];
         return $this->guard(function () use ($folder, $uids) {
-            $f   = $this->folder($folder);
-            $out = [];
+            $f     = $this->folder($folder);
+            $out   = [];
+            $batch = $this->headerBatch($folder, array_map('intval', $uids));
             foreach ($uids as $uid) {
-                $m = $f->query()->setFetchBody(false)->setFetchFlags(true)->leaveUnread()->getMessageByUid((int) $uid);
+                $uid = (int) $uid;
+                if (isset($batch[$uid])) {
+                    try {
+                        $b = $batch[$uid];
+                        $h = new \Webklex\PHPIMAP\Header($b['raw'], $this->client->getConfig());
+                        $out[$uid] = $this->headerRow($uid, $h, $b['flags'], $b['size'], false, $b['raw']);
+                        continue;
+                    } catch (\Throwable) {
+                        // unparseable in the batch: let the per-uid path give its own verdict below
+                    }
+                }
+                try {
+                    $m = $f->query()->setFetchBody(false)->setFetchFlags(true)->leaveUnread()->getMessageByUid($uid);
+                } catch (\Webklex\PHPIMAP\Exceptions\MessageNotFoundException | \Webklex\PHPIMAP\Exceptions\MessageHeaderFetchingException) {
+                    continue; // expunged/moved between SEARCH and FETCH: not here, not an error
+                }
                 if (!$m) continue;
                 $flags = [];
                 foreach ($m->getFlags() as $flag) $flags[] = (string) $flag;
-                $rawHeader = (string) ($m->getHeader()?->raw ?? '');
-                $out[(int) $uid] = [
-                    'uid'             => (int) $uid,
-                    'message_id'      => (string) $m->getMessageId(),
-                    'in_reply_to'     => (string) $m->getInReplyTo(),
-                    'from'            => self::addr($m->getFrom()),
-                    'to'              => self::addr($m->getTo()),
-                    'cc'              => self::addr($m->getCc()),
-                    'subject'         => (string) $m->getSubject(),
-                    'date'            => self::headerDate($m->getDate()),
-                    'size'            => (int) $m->getSize(),
-                    'has_attachments' => (bool) $m->hasAttachments(),
-                    'seen'            => in_array('Seen', $flags, true),
-                    'flags'           => $flags,
-                    'thread_id'       => '',
-                    // The header fetch already carries the whole raw header
-                    // block; the TOPMOST Authentication-Results is read from
-                    // it by position, never from webklex's parsed get() (which
-                    // merges repeats, and the order is the trust).
-                    'auth_results'    => HeaderRecord::topmostHeader($rawHeader, HeaderRecord::AUTH_RESULTS_HEADER),
-                    'references'      => HeaderRecord::topmostHeader($rawHeader, 'References'),
-                    'reply_to'        => HeaderRecord::topmostHeader($rawHeader, 'Reply-To'),
-                    'headers'         => HeaderRecord::headerMap(HeaderRecord::allHeaders($rawHeader)),
-                ] + HeaderRecord::bulkHeaders($rawHeader);
+                $out[$uid] = $this->headerRow($uid, $m, $flags, (int) $m->getSize(), (bool) $m->hasAttachments(), (string) ($m->getHeader()?->raw ?? ''));
             }
             foreach ($this->gmailThreadIds($folder, array_keys($out)) as $uid => $thrid) {
                 $out[$uid]['thread_id'] = $thrid;
@@ -436,6 +432,77 @@ final class WebklexTransport implements ImapTransport, ImapDraftTransport, ImapP
             }
             return $out;
         }, "fetch headers {$folder}");
+    }
+
+    /**
+     * The whole page in ONE `UID FETCH <set> (UID FLAGS RFC822.SIZE BODY.PEEK[HEADER])`
+     * (per chunk of {@see HEADER_BATCH}): PEEK, so nothing is marked read, and no body.
+     * Best effort by design: a chunk the server refuses, or a uid it does not
+     * answer for, simply is not in the result and the caller reads it the slow way.
+     *
+     * @param int[] $uids
+     * @return array<int,array{raw:string,flags:string[],size:int}> uid => parts
+     */
+    private function headerBatch(string $folder, array $uids): array
+    {
+        $out = [];
+        foreach (array_chunk($uids, self::HEADER_BATCH) as $chunk) {
+            try {
+                $this->client->openFolder($folder);
+                $rows = (array) $this->client->getConnection()
+                    ->fetch(['UID', 'FLAGS', 'RFC822.SIZE', 'BODY.PEEK[HEADER]'], $chunk, null, \Webklex\PHPIMAP\IMAP::ST_UID)
+                    ->setCanBeEmpty(true)->validatedData();
+            } catch (\Throwable) {
+                continue;
+            }
+            $allowed = $this->client->getConfig()->get('flags');
+            foreach ($rows as $uid => $v) {
+                if (!is_array($v) || !is_string($v['BODY[HEADER]'] ?? null) || !isset($v['RFC822.SIZE'])) continue;
+                $flags = [];
+                foreach ((array) ($v['FLAGS'] ?? []) as $flag) {
+                    $flag = (string) $flag;
+                    if (str_starts_with($flag, '\\')) $flag = substr($flag, 1);
+                    // webklex's own filter (config 'flags'): the same flags the per-uid path reports
+                    if ($flag !== '' && (!is_array($allowed) || in_array(strtolower($flag), $allowed, true))) $flags[] = $flag;
+                }
+                $out[(int) $uid] = ['raw' => $v['BODY[HEADER]'], 'flags' => $flags, 'size' => (int) $v['RFC822.SIZE']];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * One header row. $src is a webklex Message (per-uid path) or Header (batch):
+     * both answer get('<attribute>') identically.
+     *
+     * @param string[] $flags
+     * @return array<string,mixed>
+     */
+    private function headerRow(int $uid, object $src, array $flags, int $size, bool $hasAttachments, string $rawHeader): array
+    {
+        return [
+            'uid'             => $uid,
+            'message_id'      => (string) $src->get('message_id'),
+            'in_reply_to'     => (string) $src->get('in_reply_to'),
+            'from'            => self::addr($src->get('from')),
+            'to'              => self::addr($src->get('to')),
+            'cc'              => self::addr($src->get('cc')),
+            'subject'         => (string) $src->get('subject'),
+            'date'            => self::headerDate($src->get('date')),
+            'size'            => $size,
+            'has_attachments' => $hasAttachments,
+            'seen'            => in_array('Seen', $flags, true),
+            'flags'           => $flags,
+            'thread_id'       => '',
+            // The header fetch already carries the whole raw header
+            // block; the TOPMOST Authentication-Results is read from
+            // it by position, never from webklex's parsed get() (which
+            // merges repeats, and the order is the trust).
+            'auth_results'    => HeaderRecord::topmostHeader($rawHeader, HeaderRecord::AUTH_RESULTS_HEADER),
+            'references'      => HeaderRecord::topmostHeader($rawHeader, 'References'),
+            'reply_to'        => HeaderRecord::topmostHeader($rawHeader, 'Reply-To'),
+            'headers'         => HeaderRecord::headerMap(HeaderRecord::allHeaders($rawHeader)),
+        ] + HeaderRecord::bulkHeaders($rawHeader);
     }
 
     /**
