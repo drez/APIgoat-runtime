@@ -86,8 +86,10 @@ class RouteParser implements MiddlewareInterface
             'application/json'
         ];
 
+        // Absent on bodiless POSTs (probes, bots): used to warn on every read.
+        $this->headers['Content-Type'] = $this->headers['Content-Type'] ?? '';
         if (is_array($this->headers['Content-Type'])) {
-            $this->headers['Content-Type'] = $this->headers['Content-Type'][0];
+            $this->headers['Content-Type'] = $this->headers['Content-Type'][0] ?? '';
         }
 
         if (!empty($this->headers['Content-Type']) && !in_array($this->headers['Content-Type'], $contentTypes)) {
@@ -98,9 +100,7 @@ class RouteParser implements MiddlewareInterface
             ));
         }
 
-        if ($this->headers['Content-Type']) {
-            return $this->headers['Content-Type'];
-        }
+        return (string) $this->headers['Content-Type'];
     }
 
     private function setAction()
@@ -125,10 +125,11 @@ class RouteParser implements MiddlewareInterface
                     $body = ($this->args['method'] == 'GET') ? $this->args['query'] : $this->args['data'];
                     $this->args['data'] = $body;
 
-                    if (($body['query'] && count($body) == 1) || ($body['query'] && count($body) == 2 && isset($body['debug'])) || isset($body['ms'])) {
+                    $hasQuery = !empty($body['query']);
+                    if (($hasQuery && count($body) == 1) || ($hasQuery && count($body) == 2 && isset($body['debug'])) || isset($body['ms'])) {
                         $this->args['action'] = 'list';
                     } elseif ($this->args['method'] == 'POST' || $this->args['method'] == 'PATCH') {
-                        if (!empty($this->args['id']) || $this->args['method'] == 'PATCH' || $body['query']) {
+                        if (!empty($this->args['id']) || $this->args['method'] == 'PATCH' || $hasQuery) {
                             $this->args['action'] = 'update';
                         } else {
                             $this->args['action'] = 'create';
