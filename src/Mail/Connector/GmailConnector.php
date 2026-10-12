@@ -4,12 +4,14 @@ namespace ApiGoat\Mail\Connector;
 
 use ApiGoat\Google\ErrorMapper;
 use ApiGoat\Google\HttpTransport;
+use ApiGoat\Mail\BackfillResult;
 use ApiGoat\Mail\BaseConnector;
 use ApiGoat\Mail\FetchResult;
 use ApiGoat\Mail\FolderLister;
 use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\FolderRole;
 use ApiGoat\Mail\HeaderRecord;
+use ApiGoat\Mail\HistoryCounter;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
 use ApiGoat\Mail\MailConnector;
@@ -38,7 +40,7 @@ use ApiGoat\Sync\Exceptions\TransientError;
  *                                        'history_expired', coldStart=true — surface it.
  *   - otherwise                       → history.list startHistoryId, messageAdded only.
  */
-class GmailConnector extends BaseConnector implements FolderLister, StateWriter
+class GmailConnector extends BaseConnector implements FolderLister, StateWriter, HistoryCounter
 {
     public const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
     /**
@@ -63,16 +65,15 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter
     }
 
     /**
-     * No CAP_BACKFILL: history walking needs a stable "older than X" cursor.
-     * The Gmail list API pages newest-first with an opaque pageToken that is
-     * not resumable across runs, so fetchBefore() stays unsupported here
-     * (BaseConnector throws) until a q=before:<date> walk is written.
+     * CAP_BACKFILL: {@see fetchBefore()} walks history with a
+     * `q=before:<epoch>` keyset (the list API's own pageToken is not
+     * resumable across runs, so it is never persisted).
      */
     public function capabilities(): array
     {
         return [
             self::CAP_LIST_FOLDERS, self::CAP_FETCH_BODY, self::CAP_THREADS, self::CAP_LABELS,
-            self::CAP_MARK_READ, self::CAP_MOVE, self::CAP_TRASH,
+            self::CAP_MARK_READ, self::CAP_MOVE, self::CAP_TRASH, self::CAP_BACKFILL,
         ];
     }
 
@@ -121,6 +122,95 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter
             }
             throw $e;
         }
+    }
+
+    /**
+     * History walk, downwards: the NEWEST $max messages of the label strictly
+     * older than the watermark, oldest first within the page.
+     *
+     * Token (`$before` / {@see BackfillResult::$next}): "<epoch>|<id>,<id>…" — the
+     * internalDate (whole seconds, what Gmail's `before:` compares) of the OLDEST
+     * message of the page already returned, and the ids returned AT that second.
+     * The next page asks `q=before:<epoch+1>` (before: is exclusive; +1 keeps the
+     * whole boundary second so messages sharing it are never dropped) and skips the
+     * ids already returned, so no message is lost or repeated however many share a
+     * second. The folder is a label id passed as `labelIds` (as fetchHeaders does,
+     * so user labels work), not as a `label:` term in q. null token = newest page
+     * (no q at all). `next` is null on the page that reached the bottom
+     * (`complete`: messages.list had no nextPageToken). A token that does not parse
+     * restarts from the newest message with `restarted` (Gmail has no UIDVALIDITY;
+     * only a mangled token can be stale). The poll cursor (history_id) is never
+     * touched.
+     */
+    public function fetchBefore(string $folder, ?string $before, int $max): BackfillResult
+    {
+        $folder    = $folder !== '' ? $folder : 'INBOX';
+        $max       = self::clampMax($max);
+        $boundary  = null;
+        $seen      = [];
+        $restarted = false;
+        if ($before !== null && $before !== '') {
+            if (preg_match('/^(\d{1,12})\|([^,|]+(?:,[^,|]+)*)$/', $before, $m)) {
+                $boundary = (int) $m[1];
+                $seen     = array_fill_keys(explode(',', $m[2]), true);
+            } else {
+                $restarted = true;
+            }
+        }
+
+        $params = [
+            'labelIds'   => $folder,
+            'maxResults' => (string) min(500, $max + count($seen)),
+        ] + self::labelParams($folder);
+        if ($boundary !== null) {
+            $params['q'] = 'before:' . ($boundary + 1);
+        }
+        $list = $this->call('GET', '/messages?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986));
+        $ids  = [];
+        foreach ($list['messages'] ?? [] as $m) {
+            $id = (string) ($m['id'] ?? '');
+            if ($id !== '' && !isset($seen[$id])) $ids[] = $id;   // returned by the previous page
+        }
+        $complete = (string) ($list['nextPageToken'] ?? '') === '';
+        $msgs     = $this->metadataRaw($ids);   // newest first
+
+        $at   = [];     // id => internalDate seconds
+        foreach ($msgs as $msg) {
+            if (!isset($msg['internalDate']) || !ctype_digit((string) $msg['internalDate'])) {
+                throw new TransientError('Gmail returned message ' . ($msg['id'] ?? '?') . ' without an internalDate: cannot page past it');
+            }
+            $at[(string) $msg['id']] = intdiv((int) $msg['internalDate'], 1000);
+        }
+        $rows = [];
+        foreach (array_reverse($msgs) as $msg) {
+            $rows[] = self::normalise($msg, $folder);
+        }
+        if ($complete || $at === []) {
+            return new BackfillResult($rows, null, true, $restarted);
+        }
+        $oldest = min($at);
+        $same   = array_keys(array_filter($at, static fn ($ts) => $ts === $oldest));
+        if ($boundary !== null && $oldest === $boundary) {
+            $same = array_merge($same, array_keys($seen));   // still on the boundary second: the set grows, the walk moves
+        }
+        return new BackfillResult($rows, $oldest . '|' . implode(',', array_unique($same)), false, $restarted);
+    }
+
+    /**
+     * Messages in the label from $since on: one messages.list with
+     * `q=after:<epoch>&maxResults=1`, read from resultSizeEstimate (an
+     * estimate, by Google's own word). Epoch (or earlier) = no date term.
+     * Null when the response carries no estimate.
+     */
+    public function countSince(string $folder, \DateTimeImmutable $since): ?int
+    {
+        $folder = $folder !== '' ? $folder : 'INBOX';
+        $params = ['labelIds' => $folder, 'maxResults' => '1', 'fields' => 'resultSizeEstimate'] + self::labelParams($folder);
+        if ($since->getTimestamp() > 0) {
+            $params['q'] = 'after:' . $since->getTimestamp();
+        }
+        $n = $this->call('GET', '/messages?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986))['resultSizeEstimate'] ?? null;
+        return is_int($n) || (is_string($n) && ctype_digit($n)) ? (int) $n : null;
     }
 
     public function fetchBody(string $providerId): MailBody
@@ -326,17 +416,32 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter
     private function metadata(array $ids, string $folder): array
     {
         $rows = [];
-        $qs   = '?format=metadata'; // no metadataHeaders: the API then returns every header
+        foreach ($this->metadataRaw($ids) as $msg) {
+            $rows[] = self::normalise($msg, $folder);
+        }
+        return $rows;
+    }
+
+    /**
+     * The raw users.messages.get(format=metadata) payloads, in $ids order; a
+     * message deleted between list and get is skipped.
+     *
+     * @param string[] $ids
+     * @return array<int,array<string,mixed>>
+     */
+    private function metadataRaw(array $ids): array
+    {
+        $out = [];
+        $qs  = '?format=metadata'; // no metadataHeaders: the API then returns every header
         foreach ($ids as $id) {
             try {
-                $msg = $this->call('GET', '/messages/' . rawurlencode($id) . $qs);
+                $out[] = $this->call('GET', '/messages/' . rawurlencode($id) . $qs);
             } catch (TransientError $e) {
                 if ($e->getCode() === 404) continue; // deleted between list and get
                 throw $e;
             }
-            $rows[] = self::normalise($msg, $folder);
         }
-        return $rows;
+        return $out;
     }
 
     /**

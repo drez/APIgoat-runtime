@@ -10,6 +10,7 @@ use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\FolderLister;
 use ApiGoat\Mail\FolderWriter;
 use ApiGoat\Mail\HeaderRecord;
+use ApiGoat\Mail\HistoryCounter;
 use ApiGoat\Mail\MailBody;
 use ApiGoat\Mail\MailboxState;
 use ApiGoat\Mail\MailConnector;
@@ -41,7 +42,7 @@ use ApiGoat\Sync\Exceptions\ValidationRejected;
  *                                           watermark only moves when a deltaLink arrives.
  *   - delta set                          → follow it; 410 ⇒ cold start 'delta_expired'.
  */
-class GraphConnector extends BaseConnector implements FolderLister, StateWriter, FolderWriter, DraftStore, PartReader
+class GraphConnector extends BaseConnector implements FolderLister, StateWriter, FolderWriter, DraftStore, PartReader, HistoryCounter
 {
     public const SELECT = 'id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,parentFolderId,internetMessageHeaders';
 
@@ -374,6 +375,24 @@ class GraphConnector extends BaseConnector implements FolderLister, StateWriter,
             $out[] = self::normalise($m, $folder);
         }
         return new BackfillResult($out, $next, $next === null);
+    }
+
+    /**
+     * `$count=true&$top=1&$select=id` with a receivedDateTime filter: Graph
+     * answers `@odata.count` without paging the folder. The count on a
+     * filtered collection needs `ConsistencyLevel: eventual`. Epoch (or
+     * earlier) $since = no filter. Null when the response carries no count.
+     */
+    public function countSince(string $folder, \DateTimeImmutable $since): ?int
+    {
+        $folder = $folder !== '' ? $folder : 'inbox';
+        $url    = $this->folderPath($folder) . '/messages?$count=true&$top=1&$select=id';
+        if ($since->getTimestamp() > 0) {
+            $url .= '&$filter=' . rawurlencode('receivedDateTime ge ' . gmdate('Y-m-d\TH:i:s\Z', $since->getTimestamp()));
+        }
+        $resp  = $this->graph->call('GET', $url, null, ['ConsistencyLevel: eventual']);
+        $count = is_array($resp) ? ($resp['@odata.count'] ?? null) : null;
+        return is_int($count) || (is_string($count) && ctype_digit($count)) ? (int) $count : null;
     }
 
     /** Graph's largest $top on a message collection. */

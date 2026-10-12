@@ -373,4 +373,187 @@ final class GmailConnectorTest extends TestCase
         $this->assertSame(['one', 'two'], $h['headers']['received']);
         $this->assertSame(['Subject c'], $h['headers']['subject']);
     }
+
+    // ---- fetchBefore(): the backwards history walk -----------------------------
+
+    /**
+     * A fake mailbox behind messages.list: honours labelIds, q=before:/after:<epoch>, maxResults
+     * and pageToken (an offset), newest first, like the real API. Registers a metadata route per message.
+     *
+     * @param array<string,int|array{0:int,1?:array<int,string>}> $mailbox id => internalDate seconds | [seconds, labelIds]
+     */
+    private function mailbox(array $mailbox): void
+    {
+        $rows = [];
+        foreach ($mailbox as $id => $v) {
+            [$ts, $labels] = is_array($v) ? [$v[0], $v[1] ?? ['INBOX']] : [$v, ['INBOX']];
+            $rows[(string) $id] = ['ts' => $ts, 'labels' => $labels];
+            $this->routes["/messages/{$id}?"] = ['status' => 200, 'body' => $this->msg((string) $id, ['internalDate' => (string) ($ts * 1000), 'labelIds' => $labels])];
+        }
+        $this->routes['/messages?'] = function ($m, $url) use ($rows) {
+            parse_str((string) parse_url($url, PHP_URL_QUERY), $q);
+            $pick = [];
+            foreach ($rows as $id => $r) {
+                if (isset($q['labelIds']) && !in_array($q['labelIds'], $r['labels'], true)) continue;
+                if (preg_match('/before:(\d+)/', (string) ($q['q'] ?? ''), $b) && !($r['ts'] < (int) $b[1])) continue;
+                if (preg_match('/after:(\d+)/', (string) ($q['q'] ?? ''), $a) && !($r['ts'] >= (int) $a[1])) continue;
+                $pick[(string) $id] = $r['ts'];
+            }
+            uksort($pick, fn ($x, $y) => [$pick[$y], $y] <=> [$pick[$x], $x]); // newest first
+            $off  = (int) ($q['pageToken'] ?? 0);
+            $take = array_slice(array_keys($pick), $off, (int) ($q['maxResults'] ?? 100));
+            $body = ['resultSizeEstimate' => count($pick)];
+            if ($take) $body['messages'] = array_map(fn ($id) => ['id' => (string) $id, 'threadId' => 't'], $take);
+            if ($off + count($take) < count($pick)) $body['nextPageToken'] = (string) ($off + count($take));
+            return ['status' => 200, 'body' => $body];
+        };
+    }
+
+    /** @return string[] */
+    private function walk(GmailConnector $c, string $folder, int $max, int $guard = 20): array
+    {
+        $seen = [];
+        $tok  = null;
+        for ($i = 0; $i < $guard; $i++) {
+            $r = $c->fetchBefore($folder, $tok, $max);
+            foreach ($r->headers as $h) $seen[] = $h['provider_message_id'];
+            if ($r->complete) {
+                $this->assertNull($r->next, 'a complete page has nothing older');
+                return $seen;
+            }
+            $this->assertNotNull($r->next);
+            $tok = $r->next;
+        }
+        $this->fail('walk did not terminate');
+    }
+
+    public function testBackfillIsAdvertised(): void
+    {
+        $this->assertContains(MailConnector::CAP_BACKFILL, $this->connector()->capabilities());
+    }
+
+    public function testFetchBeforePagesOldestFirstWithinAPageAndNewestPageFirst(): void
+    {
+        $this->mailbox(['m1' => 1000, 'm2' => 2000, 'm3' => 3000, 'm4' => 4000, 'm5' => 5000, 'm6' => 6000, 'm7' => 7000]);
+        $c = $this->connector();
+
+        $p1 = $c->fetchBefore('INBOX', null, 3);
+        $this->assertSame(['m5', 'm6', 'm7'], array_column($p1->headers, 'provider_message_id'), 'the NEWEST 3, oldest first');
+        $this->assertFalse($p1->complete);
+        $this->assertFalse($p1->restarted);
+        $this->assertStringStartsWith('5000|', (string) $p1->next, 'watermark = the oldest internalDate (epoch seconds) of the page');
+
+        $p2 = $c->fetchBefore('INBOX', $p1->next, 3);
+        $this->assertSame(['m2', 'm3', 'm4'], array_column($p2->headers, 'provider_message_id'));
+        $this->assertFalse($p2->complete);
+
+        $p3 = $c->fetchBefore('INBOX', $p2->next, 3);
+        $this->assertSame(['m1'], array_column($p3->headers, 'provider_message_id'));
+        $this->assertTrue($p3->complete);
+        $this->assertNull($p3->next);
+    }
+
+    public function testFetchBeforeAsksForOlderThanTheWatermarkInclusiveOfItsSecond(): void
+    {
+        $this->mailbox(['m1' => 1000, 'm2' => 2000, 'm3' => 3000]);
+        $this->connector()->fetchBefore('INBOX', '3000|m3', 5);
+        parse_str((string) parse_url($this->urls('/messages?')[0], PHP_URL_QUERY), $q);
+        $this->assertSame('before:3001', $q['q'], 'before: is exclusive; +1s keeps the whole boundary second, the seen ids are skipped');
+        $this->assertSame('INBOX', $q['labelIds']);
+        $this->assertSame('6', $q['maxResults'], 'max + the ids already returned at the boundary');
+    }
+
+    public function testFetchBeforeFirstPageHasNoDateQuery(): void
+    {
+        $this->mailbox(['m1' => 1000]);
+        $this->connector()->fetchBefore('', null, 5);
+        parse_str((string) parse_url($this->urls('/messages?')[0], PHP_URL_QUERY), $q);
+        $this->assertArrayNotHasKey('q', $q);
+        $this->assertSame('INBOX', $q['labelIds'], "'' = INBOX, as in fetchHeaders");
+    }
+
+    public function testMessagesSharingTheBoundarySecondAreNeitherLostNorRepeated(): void
+    {
+        $this->mailbox(['a' => 1000, 'b' => 2000, 'c' => 2000, 'd' => 2000, 'e' => 2000, 'f' => 3000]);
+        foreach ([1, 2, 3, 4] as $max) {
+            $got = $this->walk($this->connector(), 'INBOX', $max);
+            $ids = array_map(fn ($p) => explode(':', $p)[0], $got);
+            $this->assertEqualsCanonicalizing(['a', 'b', 'c', 'd', 'e', 'f'], $ids, "max {$max}: each exactly once");
+        }
+    }
+
+    public function testFetchBeforeFiltersOnTheFolderLabelAndSpamNeedsIncludeSpamTrash(): void
+    {
+        $this->mailbox(['i1' => [1000, ['INBOX']], 'c1' => [2000, ['Label_12']], 'c2' => [3000, ['Label_12']], 's1' => [4000, ['SPAM']]]);
+        $c = $this->connector();
+        $this->assertSame(['c1', 'c2'], array_map(fn ($h) => $h['provider_message_id'], $c->fetchBefore('Label_12', null, 10)->headers));
+        $r = $c->fetchBefore('Label_12', null, 10);
+        $this->assertSame('Label_12', $r->headers[0]['folder_at_fetch']);
+        $c->fetchBefore('SPAM', null, 10);
+        $this->assertStringContainsString('includeSpamTrash=true', $this->urls('labelIds=SPAM')[0]);
+        $this->assertStringNotContainsString('includeSpamTrash', $this->urls('labelIds=Label_12')[0]);
+    }
+
+    public function testFetchBeforeRecordsCarryEveryHeader(): void
+    {
+        $this->mailbox(['m1' => 1000]);
+        $h = $this->connector()->fetchBefore('INBOX', null, 5)->headers[0];
+        $this->assertSame('m1', $h['provider_message_id']);
+        $this->assertSame(['Subject m1'], $h['headers']['subject']);
+        $this->assertStringContainsString('format=metadata', $this->urls('/messages/m1?')[0]);
+        $this->assertStringNotContainsString('metadataHeaders', $this->urls('/messages/m1?')[0]);
+    }
+
+    public function testFetchBeforeSkipsAMessageDeletedBetweenListAndGet(): void
+    {
+        $this->mailbox(['m1' => 1000, 'm2' => 2000]);
+        $this->routes = ['/messages/m2?' => ['status' => 404, 'body' => '{}']] + $this->routes;
+        $r = $this->connector()->fetchBefore('INBOX', null, 5);
+        $this->assertSame(['m1'], array_column($r->headers, 'provider_message_id'));
+        $this->assertTrue($r->complete);
+    }
+
+    public function testFetchBeforeOnAnEmptyFolderIsCompleteAtOnce(): void
+    {
+        $this->mailbox([]);
+        $r = $this->connector()->fetchBefore('INBOX', null, 5);
+        $this->assertSame([], $r->headers);
+        $this->assertTrue($r->complete);
+        $this->assertNull($r->next);
+    }
+
+    public function testAGarbageTokenRestartsFromTheNewestAndSaysSo(): void
+    {
+        $this->mailbox(['m1' => 1000, 'm2' => 2000]);
+        $r = $this->connector()->fetchBefore('INBOX', 'not-a-token', 5);
+        $this->assertTrue($r->restarted);
+        $this->assertSame(['m1', 'm2'], array_column($r->headers, 'provider_message_id'));
+        $this->assertStringNotContainsString('before%3A', $this->urls('/messages?')[0]);
+    }
+
+    // ---- countSince(): HistoryCounter ------------------------------------------
+
+    public function testCountSinceIsOneListCallReadingResultSizeEstimate(): void
+    {
+        $this->mailbox(['m1' => 1000, 'm2' => 2000, 'm3' => 3000]);
+        $c = $this->connector();
+        $this->assertInstanceOf(\ApiGoat\Mail\HistoryCounter::class, $c);
+        $this->assertSame(2, $c->countSince('INBOX', (new \DateTimeImmutable('@0'))->setTimestamp(2000)));
+        $this->assertCount(1, $this->calls, 'no messages.get');
+        parse_str((string) parse_url($this->calls[0]['url'], PHP_URL_QUERY), $q);
+        $this->assertSame('after:2000', $q['q']);
+        $this->assertSame('1', $q['maxResults']);
+        $this->assertSame('INBOX', $q['labelIds']);
+    }
+
+    public function testCountSinceEpochHasNoDateQueryAndAMissingEstimateIsNull(): void
+    {
+        $this->mailbox(['m1' => 1000, 'm2' => 2000]);
+        $c = $this->connector();
+        $this->assertSame(2, $c->countSince('', new \DateTimeImmutable('@0')));
+        $this->assertArrayNotHasKey('q', (function () { parse_str((string) parse_url($this->calls[0]['url'], PHP_URL_QUERY), $q); return $q; })->call($this));
+
+        $this->routes = ['/messages?' => ['status' => 200, 'body' => ['messages' => []]]];
+        $this->assertNull($this->connector()->countSince('INBOX', new \DateTimeImmutable('2026-01-01')));
+    }
 }

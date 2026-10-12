@@ -317,6 +317,46 @@ final class ImapConnectorTest extends TestCase
         $this->assertSame('T-9', $h['thread_id']);
     }
 
+    // ---- countSince(): HistoryCounter ----------------------------------------
+
+    public function testCountSinceIsOneSearchAndNoFetch(): void
+    {
+        $this->imap->add('INBOX', 1, ['date' => gmdate('r', strtotime('2026-01-01'))]);
+        $this->imap->add('INBOX', 2, ['date' => gmdate('r', strtotime('2026-06-01'))]);
+        $this->imap->add('INBOX', 3, ['date' => gmdate('r', strtotime('2026-07-01'))]);
+        $c = $this->connector();
+        $this->assertInstanceOf(\ApiGoat\Mail\HistoryCounter::class, $c);
+        $this->assertSame(2, $c->countSince('INBOX', new \DateTimeImmutable('2026-05-01')));
+        $this->assertSame(['connect', 'uids:INBOX:-:2026-05-01'], $this->imap->log, 'SEARCH SINCE only: no status, no header FETCH');
+    }
+
+    public function testCountSinceEpochIsTheWholeFolderAndEmptyFolderIsZero(): void
+    {
+        $this->assertSame(0, $this->connector()->countSince('INBOX', new \DateTimeImmutable('@0')));
+        $this->imap->add('INBOX', 1, ['date' => gmdate('r', strtotime('2001-01-01'))]);
+        $this->imap->add('INBOX', 2);
+        $this->assertSame(2, $this->connector()->countSince('INBOX', new \DateTimeImmutable('@0')));
+    }
+
+    public function testCountSinceDefaultsToTheConfiguredFolder(): void
+    {
+        $this->imap->add('INBOX', 1);
+        $this->assertSame(1, $this->connector()->countSince('', new \DateTimeImmutable('2020-01-01')));
+    }
+
+    public function testCountSinceIsNullWhenTheTransportThrows(): void
+    {
+        $this->imap->connectError = new \ApiGoat\Sync\Exceptions\TransientError('down');
+        $this->assertNull($this->connector()->countSince('INBOX', new \DateTimeImmutable('2020-01-01')));
+    }
+
+    public function testAFetchBeforePageAsksTheTransportForHeadersOnce(): void
+    {
+        for ($u = 1; $u <= 6; $u++) $this->imap->add('INBOX', $u);
+        $this->connector()->fetchBefore('INBOX', null, 5);
+        $this->assertCount(1, array_filter($this->imap->log, fn ($l) => str_starts_with($l, 'headers:')), 'one headers() call per page');
+    }
+
     public function testListIdsIsOneSearchWithNoHeaderFetch(): void
     {
         foreach ([3, 7, 9] as $uid) {

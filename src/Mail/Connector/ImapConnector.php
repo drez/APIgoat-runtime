@@ -11,6 +11,7 @@ use ApiGoat\Mail\FolderRole;
 use ApiGoat\Mail\FolderListing;
 use ApiGoat\Mail\FolderWriter;
 use ApiGoat\Mail\HeaderRecord;
+use ApiGoat\Mail\HistoryCounter;
 use ApiGoat\Mail\BodyStructure;
 use ApiGoat\Mail\Imap\ImapDraftTransport;
 use ApiGoat\Mail\Imap\ImapPartTransport;
@@ -45,7 +46,7 @@ use ApiGoat\Sync\Exceptions\ValidationRejected;
  * was returned (uidnext = last returned uid + 1, or the server's UIDNEXT
  * once the window is drained), so the next call is a plain increment.
  */
-class ImapConnector extends BaseConnector implements FolderLister, FolderWriter, StateWriter, DraftStore, PartReader
+class ImapConnector extends BaseConnector implements FolderLister, FolderWriter, StateWriter, DraftStore, PartReader, HistoryCounter
 {
     private ImapTransport $imap;
     private string $folder;
@@ -206,6 +207,24 @@ class ImapConnector extends BaseConnector implements FolderLister, FolderWriter,
         $rows     = $this->rows($folder, $picked);
         $next     = $picked === [] ? null : $uidvalidity . ':' . min($picked);
         return new BackfillResult($rows, $next, $complete, $restarted);
+    }
+
+    /**
+     * One `UID SEARCH SINCE <date>`, no FETCH. SINCE compares INTERNALDATE at
+     * DAY granularity (the server ignores time and zone), so the count can
+     * include a few hours of mail before $since — fine for a progress bar.
+     * An epoch (or earlier) $since is the whole folder. Null on any
+     * transport failure: "cannot say" must never fail the caller's import.
+     */
+    public function countSince(string $folder, \DateTimeImmutable $since): ?int
+    {
+        try {
+            $this->connect();
+            $folder = $folder !== '' ? $folder : $this->folder;
+            return count($this->imap->uids($folder, null, $since->getTimestamp() > 0 ? $since : null));
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

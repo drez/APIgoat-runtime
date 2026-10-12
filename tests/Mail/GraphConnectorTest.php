@@ -204,4 +204,34 @@ final class GraphConnectorTest extends TestCase
         $this->assertSame(['x-test-token-1', 'x-test-token-2'], $h['headers']['x-test']);
         $this->assertSame([], GraphConnector::normalise(['id' => 'z'], 'inbox')['headers']);
     }
+
+    public function test_countSince_asks_for_an_eventual_consistency_count_filtered_on_received_date(): void
+    {
+        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['@odata.count' => 1234, 'value' => [['id' => 'A']]]];
+        $n = $this->connector()->countSince('inbox', new \DateTimeImmutable('2026-05-01 10:30:00', new \DateTimeZone('+02:00')));
+        $this->assertSame(1234, $n);
+        $this->assertCount(1, $this->calls);
+        $c = $this->calls[0];
+        $this->assertSame('GET', $c['method']);
+        $this->assertStringStartsWith('https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?', $c['url']);
+        parse_str((string) parse_url($c['url'], PHP_URL_QUERY), $q);
+        $this->assertSame('true', $q['$count']);
+        $this->assertSame('1', $q['$top']);
+        $this->assertSame('id', $q['$select']);
+        $this->assertSame('receivedDateTime ge 2026-05-01T08:30:00Z', $q['$filter'], 'ISO-8601 UTC');
+        $this->assertContains('ConsistencyLevel: eventual', $c['headers']);
+    }
+
+    public function test_countSince_epoch_has_no_filter_and_an_empty_folder_defaults_to_inbox(): void
+    {
+        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['@odata.count' => 0, 'value' => []]];
+        $this->assertSame(0, $this->connector()->countSince('', new \DateTimeImmutable('@0')));
+        $this->assertStringNotContainsString('filter', $this->calls[0]['url']);
+    }
+
+    public function test_countSince_is_null_when_graph_returns_no_count(): void
+    {
+        $this->routes['/mailFolders/inbox/messages?'] = ['status' => 200, 'body' => ['value' => []]];
+        $this->assertNull($this->connector()->countSince('inbox', new \DateTimeImmutable('2026-05-01')));
+    }
 }
