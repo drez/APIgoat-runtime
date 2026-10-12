@@ -141,12 +141,19 @@ final class IpInfo
     private static function pending(\PDO $pdo, int $now, int $limit): array
     {
         $since = $now - self::TTL;
-        $sources = ['SELECT ip, MAX(created_at) seen FROM ops_sec_event WHERE created_at >= ' . $since . ' AND ip IS NOT NULL AND ip <> \'\' GROUP BY ip'];
+        // Every ip is coerced to ONE collation: authy_log.ip carries the project
+        // schema's collation (utf8mb4_unicode_ci) while ops_sec_event / ops_ip_info
+        // were created by the runtime under the server default (utf8mb4_general_ci
+        // on the prods) — the UNION and the join died with 1271 "Illegal mix of
+        // collations" on every ops tick. CONVERT() first so a utf8mb3 column cannot
+        // refuse the utf8mb4 collation; binary is exact for IP strings.
+        $ip = static fn (string $col): string => 'CONVERT(' . $col . ' USING utf8mb4) COLLATE utf8mb4_bin';
+        $sources = ['SELECT ' . $ip('ip') . ' ip, MAX(created_at) seen FROM ops_sec_event WHERE created_at >= ' . $since . ' AND ip IS NOT NULL AND ip <> \'\' GROUP BY ip'];
         if (self::tableExists($pdo, 'authy_log')) {
-            $sources[] = 'SELECT ip, MAX(UNIX_TIMESTAMP(timestamp)) seen FROM authy_log WHERE timestamp >= FROM_UNIXTIME(' . $since . ') AND ip IS NOT NULL AND ip <> \'\' GROUP BY ip';
+            $sources[] = 'SELECT ' . $ip('ip') . ' ip, MAX(UNIX_TIMESTAMP(timestamp)) seen FROM authy_log WHERE timestamp >= FROM_UNIXTIME(' . $since . ') AND ip IS NOT NULL AND ip <> \'\' GROUP BY ip';
         }
         $sql = 'SELECT s.ip FROM (' . \implode(' UNION ALL ', $sources) . ') s
-                LEFT JOIN ops_ip_info i ON i.ip = s.ip AND i.created_at >= ' . $since . '
+                LEFT JOIN ops_ip_info i ON ' . $ip('i.ip') . ' = s.ip AND i.created_at >= ' . $since . '
                 WHERE i.ip IS NULL
                 GROUP BY s.ip
                 ORDER BY MAX(s.seen) DESC
