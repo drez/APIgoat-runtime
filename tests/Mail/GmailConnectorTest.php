@@ -513,6 +513,52 @@ final class GmailConnectorTest extends TestCase
         $this->assertTrue($r->complete);
     }
 
+    public function testAFullPageOfDeletedMessagesDoesNotEndTheWalk(): void
+    {
+        $this->mailbox(['m1' => 1000, 'm2' => 2000, 'm3' => 3000, 'm4' => 4000, 'm5' => 5000, 'm6' => 6000]);
+        foreach (['m6', 'm5', 'm4', 'm3'] as $dead) {
+            $this->routes = ["/messages/{$dead}?" => ['status' => 404, 'body' => '{}']] + $this->routes;
+        }
+        $r = $this->connector()->fetchBefore('INBOX', null, 2);
+        $this->assertSame(['m1', 'm2'], array_column($r->headers, 'provider_message_id'), 'read on past the dead pages');
+        $this->assertTrue($r->complete);
+        $this->assertNull($r->next);
+    }
+
+    public function testMoreDeadPagesThanTheBoundReturnAnEmptyPageWithAResumableToken(): void
+    {
+        $mb = [];
+        for ($i = 1; $i <= 14; $i++) $mb['m' . $i] = $i * 1000;
+        $this->mailbox($mb);
+        for ($i = 5; $i <= 14; $i++) {
+            $this->routes = ["/messages/m{$i}?" => ['status' => 404, 'body' => '{}']] + $this->routes;
+        }
+        $c = $this->connector();
+        $r = $c->fetchBefore('INBOX', null, 1);
+        $this->assertSame([], $r->headers);
+        $this->assertFalse($r->complete, 'older mail exists: never complete here');
+        $this->assertNotNull($r->next);
+        $this->assertEqualsCanonicalizing(['m1', 'm2', 'm3', 'm4'], $this->walk($c, 'INBOX', 1), 'the walk resumes and finishes');
+    }
+
+    public function testBoundaryIdsAreDroppedFromTheTokenOnceTheWalkMovesPastTheirSecond(): void
+    {
+        $this->mailbox(['a' => 1000, 'b' => 2000, 'c' => 2000, 'd' => 3000]);
+        $r = $this->connector()->fetchBefore('INBOX', '2000|b,c', 1);
+        $this->assertSame(['a'], array_column($r->headers, 'provider_message_id'));
+        $this->assertTrue($r->complete);
+        $r = $this->connector()->fetchBefore('INBOX', '3000|d', 2);
+        $this->assertSame(['b', 'c'], array_column($r->headers, 'provider_message_id'));
+        $this->assertFalse($r->complete, 'a is older');
+        [$ts, $idl] = explode('|', (string) $r->next);
+        $ids = explode(',', $idl);
+        sort($ids);
+        $this->assertSame(['2000', ['b', 'c']], [$ts, $ids], 'the d of the old boundary second is gone');
+        $r = $this->connector()->fetchBefore('INBOX', $r->next, 1);
+        $this->assertNull($r->next);
+        $this->assertSame(['a'], array_column($r->headers, 'provider_message_id'));
+    }
+
     public function testFetchBeforeOnAnEmptyFolderIsCompleteAtOnce(): void
     {
         $this->mailbox([]);

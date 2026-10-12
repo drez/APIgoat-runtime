@@ -19,6 +19,10 @@ interface HistoryCounter
      * resultSizeEstimate). A $since at or before the Unix epoch means the
      * whole folder.
      *
+     * Only IMAP maps every failure to null; Gmail and Graph may throw
+     * AuthFailed / RateLimited / TransientError. Callers must treat ANY
+     * throwable as "unknown".
+     *
      * @return int|null null = the provider cannot say cheaply; the caller
      *                  shows an indeterminate bar
      */

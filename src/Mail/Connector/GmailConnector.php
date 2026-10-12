@@ -53,6 +53,9 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter,
     /** listIds() page cap: 200 x 500 ids. A folder bigger than that is reported incomplete, never truncated silently. */
     public const LIST_IDS_MAX_PAGES = 200;
 
+    /** fetchBefore(): extra list pages read in one call when a whole page of messages vanished. */
+    private const BACKFILL_DEAD_PAGES = 5;
+
     /** @var callable */
     private $http;
     private int $coldStartDays;
@@ -165,14 +168,31 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter,
         if ($boundary !== null) {
             $params['q'] = 'before:' . ($boundary + 1);
         }
-        $list = $this->call('GET', '/messages?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986));
-        $ids  = [];
-        foreach ($list['messages'] ?? [] as $m) {
-            $id = (string) ($m['id'] ?? '');
-            if ($id !== '' && !isset($seen[$id])) $ids[] = $id;   // returned by the previous page
+        // A page whose every message vanished (404 between list and get) must not end the walk:
+        // keep reading list pages (bounded) until something survives or the list is exhausted.
+        $dead = [];
+        $msgs = [];
+        $more = false;
+        for ($extra = 0; $extra <= self::BACKFILL_DEAD_PAGES; $extra++) {
+            $list = $this->call('GET', '/messages?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986));
+            $ids  = [];
+            foreach ($list['messages'] ?? [] as $m) {
+                $id = (string) ($m['id'] ?? '');
+                if ($id !== '' && !isset($seen[$id])) $ids[] = $id;   // returned by the previous page
+            }
+            $pageToken = (string) ($list['nextPageToken'] ?? '');
+            $more      = $pageToken !== '';
+            $msgs      = $this->metadataRaw($ids);   // newest first
+            if ($msgs !== [] || !$more) break;
+            foreach ($ids as $id) $dead[$id] = true;
+            $params['pageToken'] = $pageToken;
         }
-        $complete = (string) ($list['nextPageToken'] ?? '') === '';
-        $msgs     = $this->metadataRaw($ids);   // newest first
+        // complete ONLY when the list itself ran out; every id on the pages read was gone, yet more exist:
+        // hand back a token that skips the dead ids (the watermark stays valid, the walk resumes past them).
+        if ($msgs === [] && $more) {
+            $skip = $seen + $dead;
+            return new BackfillResult([], ($boundary ?? 99999999999) . '|' . implode(',', array_keys($skip)), false, $restarted);
+        }
 
         $at   = [];     // id => internalDate seconds
         foreach ($msgs as $msg) {
@@ -185,7 +205,7 @@ class GmailConnector extends BaseConnector implements FolderLister, StateWriter,
         foreach (array_reverse($msgs) as $msg) {
             $rows[] = self::normalise($msg, $folder);
         }
-        if ($complete || $at === []) {
+        if (!$more) {
             return new BackfillResult($rows, null, true, $restarted);
         }
         $oldest = min($at);
