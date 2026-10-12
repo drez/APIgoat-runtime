@@ -399,7 +399,7 @@ final class Stats
         ));
     }
 
-    /** @return list<array{route:string, method:string, n:int, avg_ms:float, p95_ms:int, n_5xx:int}> */
+    /** @return list<array{route:string, method:string, n:int, sum_ms:int, avg_ms:float, p95_ms:int, n_5xx:int}> */
     public function slowestRoutes(int $from, int $to, int $limit): array
     {
         $limit = self::clampLimit($limit);
@@ -427,6 +427,7 @@ final class Stats
                 'route'   => (string) $r['route'],
                 'method'  => (string) $r['method'],
                 'n'       => $n,
+                'sum_ms'  => (int) $r['sum_ms'],
                 'avg_ms'  => $n > 0 ? \round(((int) $r['sum_ms']) / $n, 1) : 0.0,
                 'p95_ms'  => self::p95FromBuckets(self::bucketsFromRow($r)),
                 'n_5xx'   => (int) $r['n_5xx'],
@@ -446,12 +447,12 @@ final class Stats
         $limit = self::clampLimit($limit);
         $rows = $this->all(
             "SELECT site_id, COALESCE(route, path, '') grp, COALESCE(method, '') method,
-                    COUNT(*) n, AVG(ms) avg_ms, MAX(ms) max_ms, AVG(queries) avg_queries,
+                    COUNT(*) n, SUM(ms) sum_ms, AVG(ms) avg_ms, MAX(ms) max_ms, AVG(queries) avg_queries,
                     SUM(status >= 500) n_5xx, MAX(created_at) last_at
              FROM ops_req_slow
              WHERE created_at BETWEEN ? AND ? /*SITE*/
              GROUP BY site_id, grp, method
-             ORDER BY n DESC, max_ms DESC
+             ORDER BY sum_ms DESC, n DESC
              LIMIT " . $limit,
             [$from, $to]
         );
@@ -461,6 +462,7 @@ final class Stats
             'route'       => (string) $r['grp'],
             'method'      => (string) $r['method'],
             'n'           => (int) $r['n'],
+            'sum_ms'      => (int) $r['sum_ms'],
             'avg_ms'      => \round((float) $r['avg_ms'], 1),
             'max_ms'      => (int) $r['max_ms'],
             'avg_queries' => $r['avg_queries'] !== null ? \round((float) $r['avg_queries'], 1) : null,
@@ -529,12 +531,12 @@ final class Stats
         $limit = self::clampLimit($limit);
         $rows = $this->all(
             "SELECT site_id, COALESCE(sql_hash, sql_text, '') grp, MAX(sql_hash) sql_hash, MAX(sql_text) sql_text,
-                    COUNT(*) n, AVG(ms) avg_ms, MAX(ms) max_ms, MAX(created_at) last_at,
+                    COUNT(*) n, SUM(ms) sum_ms, AVG(ms) avg_ms, MAX(ms) max_ms, MAX(created_at) last_at,
                     GROUP_CONCAT(DISTINCT route ORDER BY route SEPARATOR '\n') routes
              FROM ops_query_slow
              WHERE created_at BETWEEN ? AND ? /*SITE*/
              GROUP BY site_id, grp
-             ORDER BY n DESC, max_ms DESC
+             ORDER BY sum_ms DESC, n DESC
              LIMIT " . $limit,
             [$from, $to]
         );
@@ -544,6 +546,7 @@ final class Stats
             'sql_hash' => $r['sql_hash'] !== null ? (string) $r['sql_hash'] : null,
             'sql_text' => $r['sql_text'] !== null ? (string) $r['sql_text'] : null,
             'n'        => (int) $r['n'],
+            'sum_ms'   => (int) $r['sum_ms'],
             'avg_ms'   => \round((float) $r['avg_ms'], 1),
             'max_ms'   => (int) $r['max_ms'],
             'last_at'  => (int) $r['last_at'],
@@ -567,7 +570,7 @@ final class Stats
                  FROM ops_mcp_hour
                  WHERE hour BETWEEN ? AND ? /*SITE*/
                  GROUP BY site_id, tool, client
-                 ORDER BY n DESC
+                 ORDER BY sum_ms DESC, n DESC
                  LIMIT ' . $limit,
                 [$from, $to]
             );
@@ -585,6 +588,7 @@ final class Stats
                 'n'        => $n,
                 'n_err'    => (int) $r['n_err'],
                 'n_denied' => (int) $r['n_denied'],
+                'sum_ms'   => (int) $r['sum_ms'],
                 'avg_ms'   => $n > 0 ? \round(((int) $r['sum_ms']) / $n, 1) : 0.0,
                 'max_ms'   => (int) $r['max_ms'],
             ];
@@ -618,14 +622,19 @@ final class Stats
     }
 
     /** @return list<array{job:string, started_at:?int, ms:?int, ok:bool, summary:?string, created_at:int}> */
-    public function cronRuns(int $limit): array
+    public function cronRuns(int $limit, bool $significantFirst = false): array
     {
         $limit = self::clampLimit($limit);
+        // Default = a log (newest first; the MCP health tool reads it that
+        // way). The dashboard asks for significant first: failed runs, then
+        // the slowest, newest breaking ties — so a routine job every minute
+        // cannot bury the one that broke.
+        $order = $significantFirst ? 'ok ASC, ms DESC, created_at DESC' : 'created_at DESC';
         $rows = $this->all(
             'SELECT site_id, job, started_at, ms, ok, summary, created_at
              FROM ops_cron_run
              WHERE 1 = 1 /*SITE*/
-             ORDER BY created_at DESC
+             ORDER BY ' . $order . '
              LIMIT ' . $limit
         );
 

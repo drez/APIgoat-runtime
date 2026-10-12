@@ -59,7 +59,7 @@ final class PerformanceView
         $slowRequests = $st->slowRequestGroups($f, $t, 50);
         $slowQueries = $st->slowQueryGroups($f, $t, 50);
         $tableSizes = $st->tableSizes(20);
-        $cronRuns = $st->cronRuns(20);
+        $cronRuns = $st->cronRuns(20, true);
         $serverSt = new Stats($pdo, $scope->serverSites());
         $server = $serverSt->serverLatest();
         $serverTrend = $serverSt->serverTrend(time() - 86400, time());
@@ -72,6 +72,9 @@ final class PerformanceView
         $unavailable = _('unavailable');
         // Header with a hover description (native title tooltip).
         $th = fn ($label, $tip) => '<th class="ops-tip" title="' . $e($tip) . '">' . $e($label) . '</th>';
+        // Every aggregate table sorts by this column: summed server time
+        // (count × avg), the share of the server the row actually costs.
+        $totalTh = $th(_('Total'), _('Summed server time over the range (count × average). Rows are sorted by it: most time consumed first.'));
         // '(unmatched)' = no route was resolved; explain it on hover.
         $routeCell = fn ($route) => $route === '(unmatched)'
             ? '<td><span class="ops-tip" title="' . $e(_('No application route handled these requests: they were stopped before routing (not logged in / RBAC or token refusal, e.g. a redirect to login or a 401/403) or matched no route at all (404/405: bots, scanners, typos, removed URLs). Their time is mostly the security checks, not page code.')) . '">' . $e($route) . '</span></td>'
@@ -80,37 +83,37 @@ final class PerformanceView
 
         $slowestRoutesRows = '';
         foreach ($slowestRoutes as $r) {
-            $slowestRoutesRows .= '<tr>' . $siteTd($r) . $routeCell($r['route']) . '<td>' . $e($r['method']) . '</td><td>' . (int) $r['n'] . '</td>'
+            $slowestRoutesRows .= '<tr>' . $siteTd($r) . $routeCell($r['route']) . '<td>' . $e($r['method']) . '</td><td>' . (int) $r['n'] . '</td><td>' . $e(self::fmtTotal((int) $r['sum_ms'])) . '</td>'
                 . '<td>' . $pill('avg_ms', $r['avg_ms']) . '</td><td>' . $pill('p95_ms', $r['p95_ms'], self::fmtP95($r['p95_ms'])) . '</td><td>' . $pill('count_5xx', (int) $r['n_5xx']) . '</td></tr>';
         }
         $slowestRoutesTable = '<div class="ops-card"><h3>' . $e(_('Slowest routes')) . '</h3>'
-            . '<table class="ops-t"><tr>' . $siteTh . $th(_('Route'), _('Matched route pattern (e.g. /Client/edit/{id}); all URLs of one pattern are summed. (unmatched) = requests no route handled.')) . '<th>' . $e(_('Method')) . '</th><th>' . $e(_('Requests')) . '</th><th>' . $e(_('Avg ms')) . '</th><th>' . $e(_('p95')) . '</th><th>' . $e(_('5xx')) . '</th></tr>'
-            . $slowestRoutesRows . ($slowestRoutes ? '' : '<tr><td colspan="' . ($siteCol ? 7 : 6) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
+            . '<table class="ops-t"><tr>' . $siteTh . $th(_('Route'), _('Matched route pattern (e.g. /Client/edit/{id}); all URLs of one pattern are summed. (unmatched) = requests no route handled.')) . '<th>' . $e(_('Method')) . '</th><th>' . $e(_('Requests')) . '</th>' . $totalTh . '<th>' . $e(_('Avg ms')) . '</th><th>' . $e(_('p95')) . '</th><th>' . $e(_('5xx')) . '</th></tr>'
+            . $slowestRoutesRows . ($slowestRoutes ? '' : '<tr><td colspan="' . ($siteCol ? 8 : 7) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
             . '</table></div>';
 
         $slowRequestsRows = '';
         foreach ($slowRequests as $r) {
-            $slowRequestsRows .= '<tr>' . $siteTd($r) . $routeCell($r['route']) . '<td>' . $e($r['method']) . '</td><td>' . (int) $r['n'] . '</td>'
+            $slowRequestsRows .= '<tr>' . $siteTd($r) . $routeCell($r['route']) . '<td>' . $e($r['method']) . '</td><td>' . (int) $r['n'] . '</td><td>' . $e(self::fmtTotal((int) $r['sum_ms'])) . '</td>'
                 . '<td>' . $pill('slow_req_ms', $r['avg_ms']) . '</td><td>' . $pill('slow_req_ms', (int) $r['max_ms']) . '</td>'
                 . '<td>' . ($r['avg_queries'] !== null ? $pill('queries', $r['avg_queries']) : '') . '</td><td>' . $pill('count_5xx', (int) $r['n_5xx']) . '</td>'
                 . '<td>' . $e(date('Y-m-d H:i:s', $r['last_at'])) . '</td></tr>';
         }
         $slowRequestsTable = '<div class="ops-card"><h3>' . $e(_('Slow requests')) . '</h3>'
-            . '<table class="ops-t"><tr>' . $siteTh . '<th>' . $e(_('Route')) . '</th><th>' . $e(_('Method')) . '</th><th>' . $e(_('Count')) . '</th><th>' . $e(_('Avg ms')) . '</th><th>' . $e(_('Max ms')) . '</th><th>' . $e(_('Avg queries')) . '</th><th>' . $e(_('5xx')) . '</th><th>' . $e(_('Last seen')) . '</th></tr>'
-            . $slowRequestsRows . ($slowRequests ? '' : '<tr><td colspan="' . ($siteCol ? 9 : 8) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
+            . '<table class="ops-t"><tr>' . $siteTh . '<th>' . $e(_('Route')) . '</th><th>' . $e(_('Method')) . '</th><th>' . $e(_('Count')) . '</th>' . $totalTh . '<th>' . $e(_('Avg ms')) . '</th><th>' . $e(_('Max ms')) . '</th><th>' . $e(_('Avg queries')) . '</th><th>' . $e(_('5xx')) . '</th><th>' . $e(_('Last seen')) . '</th></tr>'
+            . $slowRequestsRows . ($slowRequests ? '' : '<tr><td colspan="' . ($siteCol ? 10 : 9) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
             . '</table></div>';
 
         $slowQueriesRows = '';
         foreach ($slowQueries as $r) {
             $routes = $r['routes'];
             $routeCell = $e(implode(', ', \array_slice($routes, 0, 3))) . (\count($routes) > 3 ? ' ' . $e(sprintf(_('+%d more'), \count($routes) - 3)) : '');
-            $slowQueriesRows .= '<tr>' . $siteTd($r) . '<td><code>' . $e($r['sql_text'] ?? '') . '</code></td><td>' . (int) $r['n'] . '</td>'
+            $slowQueriesRows .= '<tr>' . $siteTd($r) . '<td><code>' . $e($r['sql_text'] ?? '') . '</code></td><td>' . (int) $r['n'] . '</td><td>' . $e(self::fmtTotal((int) $r['sum_ms'])) . '</td>'
                 . '<td>' . $pill('query_ms', $r['avg_ms']) . '</td><td>' . $pill('query_ms', (int) $r['max_ms']) . '</td>'
                 . '<td>' . $routeCell . '</td><td>' . $e(date('Y-m-d H:i:s', $r['last_at'])) . '</td></tr>';
         }
         $slowQueriesTable = '<div class="ops-card"><h3>' . $e(_('Slow queries')) . '</h3>'
-            . '<table class="ops-t"><tr>' . $siteTh . '<th>' . $e(_('SQL')) . '</th><th>' . $e(_('Count')) . '</th><th>' . $e(_('Avg ms')) . '</th><th>' . $e(_('Max ms')) . '</th><th>' . $e(_('Routes')) . '</th><th>' . $e(_('Last seen')) . '</th></tr>'
-            . $slowQueriesRows . ($slowQueries ? '' : '<tr><td colspan="' . ($siteCol ? 7 : 6) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
+            . '<table class="ops-t"><tr>' . $siteTh . '<th>' . $e(_('SQL')) . '</th><th>' . $e(_('Count')) . '</th>' . $totalTh . '<th>' . $e(_('Avg ms')) . '</th><th>' . $e(_('Max ms')) . '</th><th>' . $e(_('Routes')) . '</th><th>' . $e(_('Last seen')) . '</th></tr>'
+            . $slowQueriesRows . ($slowQueries ? '' : '<tr><td colspan="' . ($siteCol ? 8 : 7) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
             . '</table></div>';
 
         $tableSizesRows = '';
@@ -139,7 +142,7 @@ final class PerformanceView
                 . '<td>' . $e(date('Y-m-d H:i:s', $r['created_at'])) . '</td></tr>';
         }
         $cronRunsTable = '<div class="ops-card"><h3>' . $e(_('Cron runs')) . '</h3>'
-            . ($remote || $siteCol ? '<p class="ops-foot">' . $e(_('Other sites send failed runs only.')) . '</p>' : '')
+            . '<p class="ops-foot">' . $e(_('Failed runs first, then the slowest.')) . ($remote || $siteCol ? ' ' . $e(_('Other sites send failed runs only.')) : '') . '</p>'
             . '<table class="ops-t"><tr>' . $siteTh . '<th>' . $e(_('Job')) . '</th><th>' . $e(_('Started')) . '</th><th>' . $e(_('ms')) . '</th><th>' . $e(_('Status')) . '</th><th>' . $e(_('Summary')) . '</th><th>' . $e(_('When')) . '</th></tr>'
             . $cronRunsRows . ($cronRuns ? '' : '<tr><td colspan="' . ($siteCol ? 7 : 6) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
             . '</table></div>';
@@ -169,7 +172,7 @@ final class PerformanceView
             foreach ($mcp as $r) {
                 $errCls = $r['n_err'] > 0 ? 'high' : 'low';
                 $mcpRows .= '<tr>' . $siteTd($r) . '<td>' . $e($r['tool']) . '</td><td>' . $e($r['client'] !== '' ? $r['client'] : '—') . '</td>'
-                    . '<td>' . (int) $r['n'] . '</td>'
+                    . '<td>' . (int) $r['n'] . '</td><td>' . $e(self::fmtTotal((int) $r['sum_ms'])) . '</td>'
                     . '<td>' . ($r['n_err'] > 0 ? '<span class="cl-status cl-status-' . $errCls . '">' . (int) $r['n_err'] . '</span>' : '0') . '</td>'
                     . '<td>' . $pill('denied', (int) $r['n_denied']) . '</td>'
                     . '<td>' . $pill('mcp_ms', $r['avg_ms']) . '</td><td>' . (int) $r['max_ms'] . '</td></tr>';
@@ -179,12 +182,13 @@ final class PerformanceView
                 . $th(_('Tool'), _('MCP tool called (tools/call), or the protocol method (initialize, tools/list).'))
                 . $th(_('Client'), _('OAuth client the AI assistant connected with (the access token audience).'))
                 . $th(_('Calls'), _('Calls in the selected range.'))
+                . $totalTh
                 . $th(_('Errors'), _('Calls that failed: tool error, unknown tool/method or an exception.'))
                 . $th(_('Denied'), _('Calls refused because the user has no access to the tool.'))
                 . $th(_('Avg ms'), _('Average server time per call.'))
                 . $th(_('Max ms'), _('Slowest single call.'))
                 . '</tr>'
-                . $mcpRows . ($mcp ? '' : '<tr><td colspan="' . ($siteCol ? 8 : 7) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
+                . $mcpRows . ($mcp ? '' : '<tr><td colspan="' . ($siteCol ? 9 : 8) . '" class="ops-empty">' . $e(_('No data')) . '</td></tr>')
                 . '</table></div>';
         }
 
@@ -233,6 +237,19 @@ final class PerformanceView
      * mean "the p95 is somewhere past the last known bound"), any p95 over
      * 2500 renders the same way.
      */
+    /** Summed time: "850 ms", "12.3 s", "4.2 min". */
+    private static function fmtTotal(int $ms): string
+    {
+        if ($ms >= 60_000) {
+            return round($ms / 60_000, 1) . ' min';
+        }
+        if ($ms >= 1000) {
+            return round($ms / 1000, 1) . ' s';
+        }
+
+        return $ms . ' ms';
+    }
+
     private static function fmtP95(int $ms): string
     {
         return $ms > 2500 ? '>2500 ms' : $ms . ' ms';
