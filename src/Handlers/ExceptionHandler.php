@@ -335,6 +335,23 @@ class ExceptionHandler implements ErrorHandlerInterface
      */
     protected function writeToErrorLog(): void
     {
+        // A JWT auth failure is an expected client 401 (MCP clients before
+        // OAuth, the mobile app before login, scanners), not a server fault:
+        // one line naming the request, never the "Slim Application Error"
+        // block + trace that made it the top ops-report signature.
+        if ($this->exception instanceof \JimTools\JwtAuth\Exceptions\AuthorizationException) {
+            $server = $this->request->getServerParams();
+            $this->logError(sprintf(
+                '401 %s: %s %s ua="%s" ip=%s',
+                rtrim($this->exception->getMessage(), '.') ?: 'Unauthorized',
+                $this->method,
+                $this->request->getUri()->getPath(),
+                $this->request->getHeaderLine('User-Agent'),
+                $server['REMOTE_ADDR'] ?? '-'
+            ));
+            return;
+        }
+
         $renderer = $this->callableResolver->resolve($this->logErrorRenderer);
         $error = $renderer($this->exception, $this->logErrorDetails);
         if (!$this->displayErrorDetails) {
